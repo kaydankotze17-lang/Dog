@@ -573,5 +573,344 @@ fn forge_scaffolds_bot_and_web_templates() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn term_capability_detection_and_fallbacks() {
+    use dog_lang::term::TermCapabilities;
+    use std::collections::HashMap;
 
+    let mut env_no_color = HashMap::new();
+    env_no_color.insert("NO_COLOR", "1");
+    env_no_color.insert("LANG", "en_US.UTF-8");
+    env_no_color.insert("COLUMNS", "120");
+    let caps_no_color = TermCapabilities::detect_with(true, true, |k| {
+        env_no_color.get(k).map(|s| (*s).to_string())
+    });
+    assert!(caps_no_color.is_tty);
+    assert!(!caps_no_color.color, "NO_COLOR must disable ANSI color");
+    assert!(caps_no_color.unicode);
+    assert_eq!(caps_no_color.width, 120);
 
+    let mut env_dumb = HashMap::new();
+    env_dumb.insert("TERM", "dumb");
+    env_dumb.insert("COLUMNS", "15");
+    let caps_dumb = TermCapabilities::detect_with(true, false, |k| {
+        env_dumb.get(k).map(|s| (*s).to_string())
+    });
+    assert!(!caps_dumb.color, "TERM=dumb must disable ANSI color");
+    assert!(!caps_dumb.unicode, "TERM=dumb must fall back to ASCII");
+    assert_eq!(caps_dumb.width, 40, "width should clamp to minimum 40");
+
+    let mut env_force = HashMap::new();
+    env_force.insert("CLICOLOR_FORCE", "1");
+    env_force.insert("LANG", "C");
+    let caps_force = TermCapabilities::detect_with(false, false, |k| {
+        env_force.get(k).map(|s| (*s).to_string())
+    });
+    assert!(caps_force.color, "CLICOLOR_FORCE should enable color on non-TTY");
+    assert!(!caps_force.unicode, "LANG=C must select ASCII fallback");
+}
+
+#[test]
+fn term_themes_prefixes_timestamps_and_levels() {
+    use dog_lang::term::{
+        format_utc_datetime, format_utc_hms, DogMessenger, MsgLevel, TermCapabilities,
+        TermStyleConfig, TermTheme,
+    };
+
+    assert_eq!(format_utc_hms(0), "00:00:00");
+    assert_eq!(format_utc_datetime(0), "1970-01-01 00:00:00");
+    assert_eq!(TermTheme::parse("kali"), Some(TermTheme::Kali));
+    assert_eq!(TermTheme::parse("DRACULA"), Some(TermTheme::Dracula));
+    assert_eq!(TermTheme::parse("solarized"), Some(TermTheme::Solar));
+    assert_eq!(TermTheme::parse("mono"), Some(TermTheme::Mono));
+
+    let plain_cfg = TermStyleConfig {
+        theme: TermTheme::Kali,
+        timestamps: true,
+        prefix: "kennel".to_string(),
+        debug: true,
+        ..TermStyleConfig::default()
+    };
+    let plain_msg = DogMessenger::new(plain_cfg.clone(), TermCapabilities::plain());
+    let line = plain_msg.render_line(MsgLevel::Success, "Boot ready", Some(3661));
+    assert!(!line.contains('\x1b'), "plain fallback must emit zero ANSI codes");
+    assert!(line.contains("[01:01:01]"), "timestamp must format UTC HH:MM:SS");
+    assert!(line.contains("[kennel]"), "custom prefix must appear");
+    assert!(line.contains("[+ OK] Boot ready"), "ASCII success badge expected: {line}");
+
+    for lvl in [
+        MsgLevel::Info,
+        MsgLevel::Success,
+        MsgLevel::Warning,
+        MsgLevel::Error,
+        MsgLevel::Debug,
+        MsgLevel::Progress,
+    ] {
+        let rich = DogMessenger::new(plain_cfg.clone(), TermCapabilities::rich());
+        let colored = rich.render_line(lvl, "msg", Some(0));
+        assert!(colored.contains('\x1b'), "rich Kali theme must include ANSI escapes");
+    }
+
+    let mono_cfg = TermStyleConfig {
+        theme: TermTheme::Mono,
+        ..plain_cfg
+    };
+    let mono_on_rich = DogMessenger::new(mono_cfg, TermCapabilities::rich());
+    assert!(!mono_on_rich.use_color());
+    assert!(!mono_on_rich.render_line(MsgLevel::Info, "hi", None).contains('\x1b'));
+}
+
+#[test]
+fn progress_bar_and_spinner_real_calculations_and_fallbacks() {
+    use dog_lang::term::{
+        DogMessenger, ProgressBar, ProgressUnit, Spinner, TermCapabilities, TermStyleConfig,
+    };
+
+    let ascii_m = DogMessenger::new(TermStyleConfig::default(), TermCapabilities::plain());
+    let mut bar = ProgressBar::new("Transfer", 2048, ProgressUnit::Bytes, ascii_m.clone());
+    bar.set(1024);
+    assert_eq!(bar.percent(), 50);
+    let rendered_50 = bar.render();
+    assert!(rendered_50.contains(" 50%"), "50% expected: {rendered_50}");
+    assert!(rendered_50.contains("1.0 KiB / 2.0 KiB"), "{rendered_50}");
+    assert!(rendered_50.contains('#') && rendered_50.contains('-'));
+
+    let empty_bar = ProgressBar::new("Empty", 0, ProgressUnit::Items, ascii_m.clone());
+    assert_eq!(empty_bar.percent(), 100);
+
+    let spin_ascii = Spinner::new("Verifying", ascii_m);
+    assert_eq!(Spinner::glyph(0, false), "|");
+    assert_eq!(Spinner::glyph(1, false), "/");
+    assert!(spin_ascii.render_step(2, "sha256").contains("- Verifying — sha256"));
+
+    let rich_m = DogMessenger::new(TermStyleConfig::default(), TermCapabilities::rich());
+    let mut rich_bar = ProgressBar::new("Install", 10, ProgressUnit::Items, rich_m);
+    rich_bar.set(10);
+    let rendered_100 = rich_bar.render();
+    assert!(rendered_100.contains("100%") && rendered_100.contains('█'));
+}
+
+#[test]
+fn config_persists_theme_timestamps_prefix_and_install_style() {
+    use dog_lang::config::{DogConfig, Personality};
+    use dog_lang::term::{InstallStyle, TermTheme};
+
+    let legacy = DogConfig::parse_str("personality=professional\nruns_completed=9\n");
+    assert_eq!(legacy.personality, Personality::Professional);
+    assert_eq!(legacy.runs_completed, 9);
+    assert_eq!(legacy.theme, TermTheme::Default);
+    assert!(!legacy.timestamps);
+    assert_eq!(legacy.prefix, "dog");
+
+    let custom = DogConfig {
+        personality: Personality::Chaotic,
+        runs_completed: 14,
+        theme: TermTheme::Kali,
+        timestamps: true,
+        prefix: "wolf".to_string(),
+        debug_logs: false,
+        install_style: InstallStyle::Compact,
+    };
+    let serialized = custom.render();
+    let parsed = DogConfig::parse_str(&serialized);
+    assert_eq!(parsed.personality, Personality::Chaotic);
+    assert_eq!(parsed.runs_completed, 14);
+    assert_eq!(parsed.theme, TermTheme::Kali);
+    assert!(parsed.timestamps);
+    assert_eq!(parsed.prefix, "wolf");
+    assert!(!parsed.debug_logs);
+    assert_eq!(parsed.install_style, InstallStyle::Compact);
+}
+
+#[test]
+fn dog_script_cli_builtins_work_through_interpreter_io() {
+    let src = "\
+cli_theme(\"mono\")
+cli_prefix(\"mybot\")
+cli_timestamps(true)
+cli_info(\"starting\")
+cli_success(\"ready\")
+cli_warn(\"low disk\")
+cli_error(\"bad packet\")
+cli_debug(\"trace 1\")
+cli_progress(\"Sync\", 3, 4)
+cli_spinner(1, \"Indexing\")
+";
+    let mut io = MockIo::new(vec![]);
+    run_source_with_io("cli_api.dg", src, &mut io).expect("cli_* builtins must run");
+    assert!(io.output.contains("[mybot]"));
+    assert!(io.output.contains("INFO") && io.output.contains("starting"));
+    assert!(io.output.contains("OK") && io.output.contains("ready"));
+    assert!(io.output.contains("WARN") && io.output.contains("low disk"));
+    assert!(io.output.contains("ERR") && io.output.contains("bad packet"));
+    assert!(io.output.contains("DEBUG") && io.output.contains("trace 1"));
+    assert!(io.output.contains(" 75% (3/4)"), "progress bar missing: {}", io.output);
+    assert!(io.output.contains("Indexing"));
+
+    let bad = "cli_theme(\"unknown_theme\")\n";
+    let mut bad_io = MockIo::new(vec![]);
+    let err = run_source_with_io("bad_theme.dg", bad, &mut bad_io)
+        .expect_err("invalid cli_theme must error");
+    assert_eq!(err.code, "E030");
+
+    let showcase = include_str!("../examples/cli_experience.dg");
+    let mut showcase_io = MockIo::new(vec![]);
+    run_source_with_io("examples/cli_experience.dg", showcase, &mut showcase_io)
+        .expect("examples/cli_experience.dg must run cleanly");
+    assert!(showcase_io.output.contains("[pack-sync]"));
+    assert!(showcase_io.output.contains("All stages completed cleanly!"));
+}
+
+#[test]
+fn hub_package_install_uninstall_with_custom_messages_deps_bytes_and_sha256() {
+    use dog_lang::hub::{compute_dir_sha256, install_package_in, remove_package_in};
+    use dog_lang::term::{DogMessenger, TermCapabilities, TermStyleConfig};
+
+    let root = env::temp_dir().join("dog_hub_custom_lifecycle_test");
+    let _ = fs::remove_dir_all(&root);
+    let project_dir = root.join("app");
+    let cache_root = root.join("cache");
+    let dep_src = root.join("dep_core");
+    let pkg_src = root.join("fancy_pkg");
+
+    fs::create_dir_all(&project_dir).unwrap();
+    fs::create_dir_all(dep_src.join("src")).unwrap();
+    fs::create_dir_all(pkg_src.join("src")).unwrap();
+
+    fs::write(
+        dep_src.join("dog.pack"),
+        "[package]\nname = \"dep_core\"\nversion = \"0.1.0\"\nentry = \"src/lib.dg\"\n",
+    )
+    .unwrap();
+    fs::write(dep_src.join("src/lib.dg"), "fn ping() -> text\n    return \"pong\"\nend\n").unwrap();
+
+    fs::write(
+        pkg_src.join("dog.pack"),
+        "\
+[package]
+name = \"fancy_pkg\"
+version = \"1.2.0\"
+entry = \"src/main.dg\"
+description = \"Custom CLI toolkit\"
+
+[dependencies]
+dep_core = \"0.1.0\"
+
+[messages]
+install_banner = \"Welcome to Fancy Package!\"
+pre_install = \"Preparing fancy assets...\"
+post_install = \"Run dog run examples/demo.dg to get started!\"
+uninstall_banner = \"Saying goodbye to Fancy Package\"
+pre_uninstall = \"Cleaning up fancy hooks...\"
+post_uninstall = \"Fancy Package cleanly uninstalled.\"
+",
+    )
+    .unwrap();
+    fs::write(pkg_src.join("src/main.dg"), "say(\"fancy\")\n").unwrap();
+
+    let messenger = DogMessenger::new(TermStyleConfig::default(), TermCapabilities::plain());
+
+    // Without dep_core in cache, installing fancy_pkg must fail honestly at dependency resolution
+    let missing_err = install_package_in(
+        &[pkg_src.display().to_string()],
+        &project_dir,
+        &cache_root,
+        &messenger,
+        false,
+    )
+    .expect_err("missing transitive dep must fail");
+    assert!(missing_err.contains("dep_core"));
+
+    // Install dep_core first, then fancy_pkg
+    install_package_in(
+        &[dep_src.display().to_string()],
+        &project_dir,
+        &cache_root,
+        &messenger,
+        false,
+    )
+    .expect("dep_core install should succeed");
+
+    let out = install_package_in(
+        &[pkg_src.display().to_string()],
+        &project_dir,
+        &cache_root,
+        &messenger,
+        false,
+    )
+    .expect("fancy_pkg install should succeed");
+
+    let real_sha = compute_dir_sha256(&cache_root.join("fancy_pkg")).unwrap();
+    assert!(out.contains("Welcome to Fancy Package!"));
+    assert!(out.contains("Preparing fancy assets..."));
+    assert!(out.contains("Resolved dep_core@0.1.0 (cached)"));
+    assert!(out.contains("100%"), "real 100% progress expected:\n{out}");
+    assert!(out.contains(&real_sha), "real SHA-256 must appear:\n{out}");
+    assert!(out.contains("Run dog run examples/demo.dg to get started!"));
+    assert!(out.contains("DOG Package Installed"));
+
+    let lock = fs::read_to_string(project_dir.join("dog.lock")).unwrap();
+    assert!(lock.contains(&real_sha), "dog.lock must record verified tree SHA-256");
+
+    let rm_out = remove_package_in(
+        &["fancy_pkg".to_string(), "--purge".to_string()],
+        &project_dir,
+        &cache_root,
+        &messenger,
+        false,
+    )
+    .expect("uninstall should succeed");
+    assert!(rm_out.contains("Saying goodbye to Fancy Package"));
+    assert!(rm_out.contains("Cleaning up fancy hooks..."));
+    assert!(rm_out.contains("Fancy Package cleanly uninstalled."));
+    assert!(rm_out.contains("purged "));
+    assert!(!cache_root.join("fancy_pkg").exists());
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn hub_remote_http_package_download_real_loopback() {
+    use dog_lang::crypto::sha256_hex;
+    use dog_lang::hub::install_package_in;
+    use dog_lang::term::{DogMessenger, TermCapabilities, TermStyleConfig};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let root = env::temp_dir().join("dog_hub_http_download_test");
+    let _ = fs::remove_dir_all(&root);
+    let project_dir = root.join("app");
+    let cache_root = root.join("cache");
+    fs::create_dir_all(&project_dir).unwrap();
+
+    let payload = "fn hello_net() -> text\n    return \"fetched\"\nend\n";
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut req_buf = [0u8; 1024];
+            let _ = stream.read(&mut req_buf);
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                payload.len(),
+                payload
+            );
+            let _ = stream.write_all(resp.as_bytes());
+        }
+    });
+
+    let url = format!("http://127.0.0.1:{port}/remote_util.dg");
+    let messenger = DogMessenger::new(TermStyleConfig::default(), TermCapabilities::plain());
+    let out = install_package_in(&[url], &project_dir, &cache_root, &messenger, false)
+        .expect("HTTP package download should succeed");
+    server.join().unwrap();
+
+    assert!(out.contains("remote_util"));
+    assert!(out.contains("100%"));
+    assert!(out.contains("DOG Package Installed"));
+    let saved = fs::read_to_string(cache_root.join("remote_util/src/remote_util.dg")).unwrap();
+    assert_eq!(saved, payload);
+    assert_eq!(sha256_hex(saved.as_bytes()), sha256_hex(payload.as_bytes()));
+
+    let _ = fs::remove_dir_all(&root);
+}

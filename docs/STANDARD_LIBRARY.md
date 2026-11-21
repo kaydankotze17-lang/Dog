@@ -1,9 +1,13 @@
-# DOG Standard Library (v0.1.0)
+# DOG Standard Library (v0.2.0)
 
-## Core I/O, Logging & Assertions
+## Core I/O, CLI Messaging, Logging & Assertions
 - `say(value) -> void`: Prints value to stdout followed by newline.
 - `answer(prompt?: text) -> text`: Prints optional prompt and reads one line from stdin.
 - `log_info(msg: text) -> void`, `log_warn(msg: text) -> void`, `log_error(msg: text) -> void`
+- `cli_info(msg: text) -> void`, `cli_success(msg: text) -> void`, `cli_warn(msg: text) -> void`, `cli_error(msg: text) -> void`, `cli_debug(msg: text) -> void`
+- `cli_progress(label: text, current: number, total: number) -> void`, `cli_spinner(step: number, label: text) -> void`
+- `cli_theme(name: text) -> void` (`default`, `kali`, `dracula`, `solar`, `mono`), `cli_prefix(prefix: text) -> void`, `cli_timestamps(enabled: bool) -> void`
+- `cli_supports_color() -> bool`, `cli_is_tty() -> bool`
 - `assert(cond: bool, msg?: text) -> void`: Fails with `E033` if `cond` is `false`.
 - `fail(reason: text) -> void`: Raises a catchable `E035` runtime error.
 

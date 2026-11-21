@@ -20,5 +20,6 @@ pub mod sdu;
 pub mod stdlib;
 pub mod studio;
 pub mod sys;
+pub mod term;
 pub mod tester;
 pub mod types;

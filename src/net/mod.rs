@@ -552,6 +552,160 @@ fn https_via_curl(
     }
 }
 
+pub fn http_download_bytes<F>(url: &str, mut on_progress: F) -> Result<Vec<u8>, String>
+where
+    F: FnMut(u64, Option<u64>),
+{
+    if url.starts_with("https://") {
+        let mut cmd = Command::new("curl");
+        cmd.args(["-sSLf", "--connect-timeout", "15", url])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = cmd.spawn().map_err(|e| {
+            format!(
+                "HTTPS download requires `curl` on PATH in this zero-crate build (or use `http://` / local paths): {e}"
+            )
+        })?;
+        let mut out = Vec::new();
+        let mut buf = [0u8; 8192];
+        if let Some(mut stdout) = child.stdout.take() {
+            loop {
+                let n = stdout
+                    .read(&mut buf)
+                    .map_err(|e| format!("Failed reading HTTPS response stream: {e}"))?;
+                if n == 0 {
+                    break;
+                }
+                out.extend_from_slice(&buf[..n]);
+                on_progress(out.len() as u64, None);
+            }
+        }
+        let status = child
+            .wait()
+            .map_err(|e| format!("Failed waiting for curl process: {e}"))?;
+        if !status.success() {
+            let mut err_buf = String::new();
+            if let Some(mut stderr) = child.stderr.take() {
+                let _ = stderr.read_to_string(&mut err_buf);
+            }
+            let trimmed = err_buf.trim();
+            return Err(if trimmed.is_empty() {
+                format!("HTTP/HTTPS download failed for '{url}'.")
+            } else {
+                trimmed.to_string()
+            });
+        }
+        return Ok(out);
+    }
+
+    let rest = url
+        .strip_prefix("http://")
+        .ok_or_else(|| "URL must start with 'http://' or 'https://'".to_string())?;
+    let (host_port, path) = match rest.split_once('/') {
+        Some((hp, p)) => (hp, format!("/{p}")),
+        None => (rest, "/".to_string()),
+    };
+    let (host, addr_str) = if host_port.contains(':') {
+        (
+            host_port.split(':').next().unwrap_or(host_port),
+            host_port.to_string(),
+        )
+    } else {
+        (host_port, format!("{host_port}:80"))
+    };
+
+    let mut addrs = addr_str
+        .to_socket_addrs()
+        .map_err(|e| format!("DNS resolution failed for '{host}': {e}"))?;
+    let addr = addrs
+        .next()
+        .ok_or_else(|| format!("No resolved socket address for '{host}'"))?;
+
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(15))
+        .map_err(|e| format!("Connection to '{addr_str}' failed: {e}"))?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(15)));
+
+    let req = format!(
+        "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: dog-lang/{}\r\n\r\n",
+        env!("CARGO_PKG_VERSION")
+    );
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|e| format!("Failed sending HTTP request: {e}"))?;
+
+    let mut raw = Vec::new();
+    let mut buf = [0u8; 8192];
+    let header_end;
+    loop {
+        let n = stream
+            .read(&mut buf)
+            .map_err(|e| format!("Failed reading HTTP headers: {e}"))?;
+        if n == 0 {
+            return Err("Server closed connection before sending HTTP headers.".to_string());
+        }
+        raw.extend_from_slice(&buf[..n]);
+        if let Some(pos) = find_double_crlf(&raw) {
+            header_end = pos;
+            break;
+        }
+        if raw.len() > 65_536 {
+            return Err("HTTP response headers exceeded 64 KiB.".to_string());
+        }
+    }
+
+    let head = String::from_utf8_lossy(&raw[..header_end]);
+    let status = head
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+    if !(200..=299).contains(&status) {
+        return Err(format!("Remote server returned HTTP {status} for '{url}'."));
+    }
+
+    let mut content_len: Option<u64> = None;
+    let mut is_chunked = false;
+    for line in head.lines().skip(1) {
+        if let Some((k, v)) = line.split_once(':') {
+            if k.trim().eq_ignore_ascii_case("content-length") {
+                content_len = v.trim().parse::<u64>().ok();
+            } else if k.trim().eq_ignore_ascii_case("transfer-encoding")
+                && v.to_ascii_lowercase().contains("chunked")
+            {
+                is_chunked = true;
+            }
+        }
+    }
+
+    let mut body = raw[header_end + 4..].to_vec();
+    if !body.is_empty() {
+        on_progress(body.len() as u64, content_len);
+    }
+    loop {
+        if let Some(expected) = content_len {
+            if body.len() as u64 >= expected {
+                break;
+            }
+        }
+        let n = stream
+            .read(&mut buf)
+            .map_err(|e| format!("Failed reading HTTP body: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&buf[..n]);
+        on_progress(body.len() as u64, content_len);
+    }
+
+    if is_chunked {
+        Ok(decode_chunked_body(&body).into_bytes())
+    } else {
+        Ok(body)
+    }
+}
+
 pub fn url_encode(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for b in input.as_bytes() {

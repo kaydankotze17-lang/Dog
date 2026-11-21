@@ -122,6 +122,18 @@ const STATIC_CANDIDATES: &[&str] = &[
     "log_info(",
     "log_warn(",
     "log_error(",
+    "cli_info(",
+    "cli_success(",
+    "cli_warn(",
+    "cli_error(",
+    "cli_debug(",
+    "cli_progress(",
+    "cli_spinner(",
+    "cli_theme(",
+    "cli_prefix(",
+    "cli_timestamps(",
+    "cli_supports_color()",
+    "cli_is_tty()",
     "let ",
     "var ",
     "const ",
@@ -982,6 +994,18 @@ fn builtin_signature_help(name: &str) -> Option<&'static str> {
         "log_info" => Some("log_info(msg: text) -> void"),
         "log_warn" => Some("log_warn(msg: text) -> void"),
         "log_error" => Some("log_error(msg: text) -> void"),
+        "cli_info" => Some("cli_info(msg: text) -> void  | Print themed info message"),
+        "cli_success" => Some("cli_success(msg: text) -> void  | Print themed success message"),
+        "cli_warn" => Some("cli_warn(msg: text) -> void  | Print themed warning message"),
+        "cli_error" => Some("cli_error(msg: text) -> void  | Print themed error message"),
+        "cli_debug" => Some("cli_debug(msg: text) -> void  | Print themed debug message"),
+        "cli_progress" => Some("cli_progress(label: text, current: number, total: number) -> void  | Render progress bar"),
+        "cli_spinner" => Some("cli_spinner(step: number, label: text) -> void  | Render step spinner frame"),
+        "cli_theme" => Some("cli_theme(name: text) -> void  | Switch CLI theme (default|kali|dracula|solar|mono)"),
+        "cli_prefix" => Some("cli_prefix(prefix: text) -> void  | Set custom CLI message prefix"),
+        "cli_timestamps" => Some("cli_timestamps(enabled: bool) -> void  | Toggle [HH:MM:SS] timestamps"),
+        "cli_supports_color" => Some("cli_supports_color() -> bool  | Detect if ANSI colors are active"),
+        "cli_is_tty" => Some("cli_is_tty() -> bool  | Detect interactive terminal TTY"),
         _ => None,
     }
 }
@@ -1871,6 +1895,18 @@ pub(crate) fn highlight_dog_line(line: &str) -> String {
                     | "log_info"
                     | "log_warn"
                     | "log_error"
+                    | "cli_info"
+                    | "cli_success"
+                    | "cli_warn"
+                    | "cli_error"
+                    | "cli_debug"
+                    | "cli_progress"
+                    | "cli_spinner"
+                    | "cli_theme"
+                    | "cli_prefix"
+                    | "cli_timestamps"
+                    | "cli_supports_color"
+                    | "cli_is_tty"
             ) {
                 out.push_str(&format!("\x1b[38;5;221m{word}\x1b[39m"));
             } else if word.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {

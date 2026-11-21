@@ -43,6 +43,7 @@ pub fn run_tests(target: Option<&str>, personality: Personality) -> Result<TestR
         return Err("No test files (*_test.dg) found.".to_string());
     }
 
+    let messenger = crate::config::DogConfig::load().messenger();
     let mut passed = 0usize;
     let mut failed = 0usize;
     let suite_start = Instant::now();
@@ -52,7 +53,7 @@ pub fn run_tests(target: Option<&str>, personality: Personality) -> Result<TestR
         let source = match fs::read_to_string(path) {
             Ok(s) => s,
             Err(err) => {
-                eprintln!("FAIL {label}: could not read file ({err})");
+                messenger.error(&format!("FAIL {label}: could not read file ({err})"));
                 failed += 1;
                 continue;
             }
@@ -63,11 +64,11 @@ pub fn run_tests(target: Option<&str>, personality: Personality) -> Result<TestR
         match run_source_with_io(&label, &source, &mut io) {
             Ok(()) => {
                 let ms = start.elapsed().as_millis();
-                println!("PASS {label} ({ms} ms)");
+                messenger.success(&format!("PASS {label} ({ms} ms)"));
                 passed += 1;
             }
             Err(diag) => {
-                eprintln!("FAIL {label}");
+                messenger.error(&format!("FAIL {label}"));
                 if !io.output.is_empty() {
                     eprintln!("--- stdout ---\n{}", io.output.trim_end());
                 }
@@ -78,7 +79,12 @@ pub fn run_tests(target: Option<&str>, personality: Personality) -> Result<TestR
     }
 
     let total_ms = suite_start.elapsed().as_millis();
-    println!("\nTest summary: {passed} passed, {failed} failed ({total_ms} ms)");
+    let summary_line = format!("Test summary: {passed} passed, {failed} failed ({total_ms} ms)");
+    if failed == 0 {
+        messenger.success(&summary_line);
+    } else {
+        messenger.error(&summary_line);
+    }
     Ok(TestReport { passed, failed })
 }
 

@@ -1048,6 +1048,85 @@ pub fn call_builtin(
             let seed_b = ctr.wrapping_add(nanos.rotate_left(17));
             Ok(Value::Text(crate::net::format_uuid_v4(seed_a, seed_b)))
         }
+        "cli_info" | "cli_success" | "cli_warn" | "cli_error" | "cli_debug" => {
+            let Some(Value::Text(msg)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let messenger = crate::term::session_messenger();
+            let level = match name {
+                "cli_info" => crate::term::MsgLevel::Info,
+                "cli_success" => crate::term::MsgLevel::Success,
+                "cli_warn" => crate::term::MsgLevel::Warning,
+                "cli_error" => crate::term::MsgLevel::Error,
+                _ => crate::term::MsgLevel::Debug,
+            };
+            if level != crate::term::MsgLevel::Debug || messenger.style.debug {
+                io_host.writeln_stdout(&messenger.render_line(level, &msg, None));
+            }
+            Ok(Value::Void)
+        }
+        "cli_progress" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(label)), Some(Value::Number(cur)), Some(Value::Number(tot))) =
+                (it.next(), it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            let messenger = crate::term::session_messenger();
+            let mut bar = crate::term::ProgressBar::new(
+                label,
+                tot.max(0) as u64,
+                crate::term::ProgressUnit::Items,
+                messenger,
+            );
+            bar.set(cur.max(0) as u64);
+            io_host.writeln_stdout(&bar.render());
+            Ok(Value::Void)
+        }
+        "cli_spinner" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Number(step)), Some(Value::Text(label))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            let messenger = crate::term::session_messenger();
+            let spinner = crate::term::Spinner::new(label, messenger);
+            io_host.writeln_stdout(&spinner.render_step(step.max(0) as usize, ""));
+            Ok(Value::Void)
+        }
+        "cli_theme" => {
+            let Some(Value::Text(theme_name)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            crate::term::set_session_theme(&theme_name).map_err(|msg| {
+                DogDiagnostic::new(
+                    "E030",
+                    format!("Unknown CLI theme '{theme_name}'."),
+                    span.clone(),
+                    msg,
+                    "Pass one of: \"default\", \"kali\", \"dracula\", \"solar\", or \"mono\".",
+                    "Use `dog config theme <name>` to set a persistent default theme.",
+                    "My fur clashes with that palette.",
+                )
+            })?;
+            Ok(Value::Void)
+        }
+        "cli_prefix" => {
+            let Some(Value::Text(prefix)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            crate::term::set_session_prefix(&prefix);
+            Ok(Value::Void)
+        }
+        "cli_timestamps" => {
+            let Some(Value::Bool(enabled)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            crate::term::set_session_timestamps(enabled);
+            Ok(Value::Void)
+        }
+        "cli_supports_color" => Ok(Value::Bool(crate::term::session_messenger().use_color())),
+        "cli_is_tty" => Ok(Value::Bool(crate::term::session_messenger().caps.is_tty)),
         _ => unreachable!("Type checker validates built-in function names"),
     }
 }

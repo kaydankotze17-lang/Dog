@@ -26,8 +26,10 @@ const BUILTIN_NAMES: &[&str] = &[
     "http_close", "tcp_listen", "tcp_port", "tcp_accept", "tcp_connect", "tcp_send", "tcp_recv",
     "tcp_close", "url_encode", "url_decode", "csv_parse", "kv_set", "kv_get", "kv_has",
     "kv_delete", "kv_keys", "exec_cmd", "os_name", "os_arch", "uuid_v4", "log_info",
-    "log_warn", "log_error", "replace", "starts_with", "ends_with", "slice", "round", "floor",
-    "ceil", "sqrt", "pow", "rand_int", "range", "sort", "reverse", "list_contains",
+    "log_warn", "log_error", "cli_info", "cli_success", "cli_warn", "cli_error", "cli_debug",
+    "cli_progress", "cli_spinner", "cli_theme", "cli_prefix", "cli_timestamps",
+    "cli_supports_color", "cli_is_tty", "replace", "starts_with", "ends_with", "slice", "round",
+    "floor", "ceil", "sqrt", "pow", "rand_int", "range", "sort", "reverse", "list_contains",
 ];
 
 pub struct TypeChecker {
@@ -1963,6 +1965,72 @@ impl TypeChecker {
                     return Err(type_err("text", &arg_types[0].label(), span, "exec_cmd() expects command 'text'."));
                 }
                 Ok(DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text)))
+            }
+            "cli_info" | "cli_success" | "cli_warn" | "cli_error" | "cli_debug" | "cli_theme"
+            | "cli_prefix" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects 'text'."),
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "cli_timestamps" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Bool {
+                    return Err(type_err(
+                        "bool",
+                        &arg_types[0].label(),
+                        span,
+                        "cli_timestamps() expects 'bool'.",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "cli_progress" => {
+                if arg_types.len() != 3 {
+                    return Err(arity_error(callee, 3, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text
+                    || arg_types[1] != DogType::Number
+                    || arg_types[2] != DogType::Number
+                {
+                    return Err(type_err(
+                        "text, number, number",
+                        &format!("{}, {}, {}", arg_types[0], arg_types[1], arg_types[2]),
+                        span,
+                        "cli_progress() expects (label: text, current: number, total: number).",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "cli_spinner" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "number, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "cli_spinner() expects (step: number, label: text).",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "cli_supports_color" | "cli_is_tty" => {
+                if !arg_types.is_empty() {
+                    return Err(arity_error(callee, 0, arg_types.len(), span));
+                }
+                Ok(DogType::Bool)
             }
             other => {
                 let Some(sig) = self.functions.get(other) else {

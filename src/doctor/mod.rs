@@ -56,7 +56,17 @@ pub fn run_doctor() {
     } else {
         "non-unix terminal"
     };
+    let messenger = cfg.messenger();
     println!("Editor/Studio   : {tty_status}");
+    println!("CLI Theme       : {}", cfg.theme.as_str());
+    println!("CLI Prefix      : '{}' (timestamps: {})", cfg.prefix, cfg.timestamps);
+    println!(
+        "Capabilities    : tty={}, color={}, unicode={}, width={}",
+        messenger.caps.is_tty,
+        messenger.use_color(),
+        messenger.use_unicode(),
+        messenger.caps.width
+    );
     println!(
         "Project pack    : {}",
         if Path::new("dog.pack").is_file() {

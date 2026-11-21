@@ -2,7 +2,7 @@
 
 DOG is a strictly typed, readable, general-purpose programming language implemented in Rust with zero external crate dependencies and zero `unsafe` blocks, built to run natively on Linux, macOS, Windows, and Android Termux (ARMv7 & AArch64).
 
-## Implemented Features (v0.1.0)
+## Implemented Features (v0.2.0)
 
 ### Language Engine (`src/`)
 - **Lexer & Recursive-Descent Parser**: Exact `file:line:col` spans and `end`-delimited blocks independent of indentation.
@@ -11,7 +11,7 @@ DOG is a strictly typed, readable, general-purpose programming language implemen
 - **Control Flow & Error Handling**: `if` / `otherwise` / `end`, `match` / `case` / `otherwise` / `end`, `try` / `catch err` / `end`, `while`, `repeat`, `for ... in ...`, `break`, `continue`, `fn ... -> ... end`, and recursion (depth limit 256).
 - **Operators**: `==`, `!=`, `>`, `<`, `>=`, `<=`, `and`, `or`, `not`, `+`, `-`, `*`, `/`, `%`, `.` field/enum access, `[]` indexing.
 - **Standard Library Built-ins**:
-  - I/O & Logging: `say()`, `answer()`, `log_info()`, `log_warn()`, `log_error()`
+  - I/O, Logging & Custom CLI UI: `say()`, `answer()`, `log_info()`, `log_warn()`, `log_error()`, `cli_info()`, `cli_success()`, `cli_warn()`, `cli_error()`, `cli_debug()`, `cli_progress()`, `cli_spinner()`, `cli_theme()`, `cli_prefix()`, `cli_timestamps()`, `cli_supports_color()`, `cli_is_tty()`
   - Text & Casts: `lower()`, `upper()`, `trim()`, `contains()`, `starts_with()`, `ends_with()`, `replace()`, `slice()`, `split()`, `join()`, `len()`, `text()`, `number()`, `decimal()`
   - Math & RNG: `abs()`, `min()`, `max()`, `round()`, `floor()`, `ceil()`, `sqrt()`, `pow()`, `rand_int()`
   - Collections: `push()`, `pop()`, `sort()`, `reverse()`, `list_contains()`, `range()`, `map_get()`, `map_set()`, `map_has()`, `map_keys()`, `map_remove()`
@@ -19,22 +19,22 @@ DOG is a strictly typed, readable, general-purpose programming language implemen
   - JSON, CSV, URL & Crypto: `json_parse()`, `json_stringify()`, `csv_parse()`, `url_encode()`, `url_decode()`, `hex_encode()`, `hex_decode()`, `base64_encode()`, `base64_decode()`, `sha256()`, `hmac_sha256()`
   - Networking (Local Websites, Bots & Raw TCP): `http_listen()`, `http_port()`, `http_accept()`, `http_reply()`, `http_serve_file()`, `http_close()`, `http_get()`, `http_post()`, `http_request()` (supports `http://` & `https://`), `tcp_listen()`, `tcp_port()`, `tcp_accept()`, `tcp_connect()`, `tcp_send()`, `tcp_recv()`, `tcp_close()`
   - Errors: `assert()`, `fail()`
-- **Diagnostics**: Structured 4-part error messages (`What / WHY / FIX / TIP + DOG`) with configurable personality (`normal`, `sarcastic`, `chaotic`, `professional`, `silent`).
+- **Diagnostics & Terminal Capabilities**: Structured 4-part error messages (`What / WHY / FIX / TIP + DOG`) with configurable personality, configurable terminal themes (`default`, `kali`, `dracula`, `solar`, `mono`), timestamps/prefixes, and automatic capability fallback (`NO_COLOR`, `TERM=dumb`, `CLICOLOR_FORCE`, UTF-8/ASCII) — see [`docs/CLI_EXPERIENCE.md`](docs/CLI_EXPERIENCE.md).
 
 ### CLI, Compiler, IDEs & Tooling
-- `dog run <file.dg | file.dgb> [-- args...]` — Execute `.dg` scripts or `.dgb` bytecode bundles (see `examples/web_server.dg` and `examples/discord_bot.dg`)
+- `dog run <file.dg | file.dgb> [-- args...]` — Execute `.dg` scripts or `.dgb` bytecode bundles (see `examples/web_server.dg`, `examples/discord_bot.dg`, and `examples/cli_experience.dg`)
 - `dog build <file.dg> [--out <path>] [--native]` — Compile SHA-256 verified `.dgb` bundle (or native binary when `rustc` is on `PATH`)
 - `dog check <file.dg>` / `dog format [--check] <file.dg>` (alias: `fmt`) / `dog test [path]`
-- `dog inspect <file.dg>` / `dog profile <file.dg>` / `dog docs [topic]` / `dog forge new <name>` (alias: `new`)
+- `dog inspect <file.dg>` / `dog profile <file.dg>` / `dog docs [topic]` / `dog forge new <name>` (alias: `new` / `init` / `innit`)
 - `dog edit [file.dg]` / `dog studio [dir]` — Polished 256-color dark-slate editor and split-pane IDE with auto-pairing, `Tab` autocomplete, live signature tooltips, and command palette
 - `dog prompt <preview|install|uninstall|status|init>` — Add the git-aware Kali-style `┌──(user⩫dog)-[path]` prompt and tab completions directly to your Termux/Linux shell
 - `dog completions [bash|zsh|fish]` — Print shell completion script
 - `dog repl` — Stateful multi-line terminal with git-aware Kali-inspired `┌──(user⩫dog)-[path]` prompt
-- `dog add` / `dog remove` / `dog search` / `dog list` / `dog info` — Offline DOG Hub (`dog.pack`, `dog.lock`, `~/.dog/cache`)
+- `dog add <path|pkg|url>` / `dog remove <pkg> [--purge]` / `dog search` / `dog list` / `dog info` — DOG Hub (`dog.pack` with custom `[messages]`, real SHA-256 `dog.lock`, real progress bars)
 - `dog server [dir] [port] [--host 0.0.0.0]` — Multi-threaded local/LAN static HTTP file server
 - `dog sdu <status|auth|permissions|revoke|logs|doctor>` — Super Dog User scoped privilege & audit subsystem
 - `dog doctor` / `dog system` / `dog status` / `dog env` / `dog process` / `dog permissions` / `dog logs` / `dog clean` / `dog update` (`upgrade`)
-- `dog config personality <mode>`
+- `dog config <show|theme|timestamps|prefix|debug|install-style|personality>`
 
 ## Building & Running (Requires Rust >= 1.70)
 

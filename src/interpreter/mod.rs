@@ -34,6 +34,7 @@ pub struct Interpreter<'a> {
 
 impl<'a> Interpreter<'a> {
     pub fn new(io: &'a mut dyn InterpreterIo) -> Self {
+        crate::term::reset_session_style_to(crate::config::DogConfig::load().term_style());
         Self {
             env: Environment::new(),
             functions: HashMap::new(),

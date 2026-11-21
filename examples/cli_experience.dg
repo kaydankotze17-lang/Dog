@@ -1,0 +1,24 @@
+# Custom DOG CLI Experience Showcase
+# Run with: dog run examples/cli_experience.dg
+# Try fallback modes: NO_COLOR=1 dog run examples/cli_experience.dg
+#                     TERM=dumb dog run examples/cli_experience.dg
+
+cli_info("Starting DOG custom CLI showcase")
+cli_debug("Detected color=" + text(cli_supports_color()) + ", tty=" + text(cli_is_tty()))
+
+cli_theme("kali")
+cli_prefix("pack-sync")
+cli_timestamps(true)
+
+cli_spinner(0, "Checking environment")
+cli_spinner(1, "Loading configuration")
+
+let steps = 4
+var idx = 1
+while idx <= steps
+    cli_progress("Staging assets", idx, steps)
+    idx = idx + 1
+end
+
+cli_warn("Cache threshold at 80% capacity")
+cli_success("All stages completed cleanly!")

@@ -1,11 +1,13 @@
 use crate::bytecode::{build_bundle, build_native, is_dgb_path, run_bundle_with_io};
 use crate::checker::TypeChecker;
-use crate::config::{DogConfig, Personality};
+use crate::config::{parse_bool_flag, DogConfig, Personality};
 use crate::diagnostics::{achievement_for_runs, welcome_banner};
 use crate::doctor::run_doctor;
 use crate::editor::launch_editor;
 use crate::formatter::format_source;
-use crate::hub::{handle_add, handle_info, handle_list, handle_remove, handle_search};
+use crate::hub::{
+    handle_info, handle_list, handle_search, install_package_live, remove_package_live,
+};
 use crate::interpreter::{check_source, run_source_with_io, Interpreter};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
@@ -18,6 +20,7 @@ use crate::sys::{
     handle_permissions, handle_process, handle_profile, handle_server, handle_status,
     handle_system, handle_update,
 };
+use crate::term::{InstallStyle, TermTheme};
 use crate::tester::run_tests;
 use std::env;
 use std::fs::{self, OpenOptions};
@@ -30,6 +33,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub fn run() {
     let args: Vec<String> = env::args().skip(1).collect();
     let mut config = DogConfig::load();
+    let messenger = config.messenger();
 
     if args.is_empty() {
         print_help();
@@ -104,21 +108,21 @@ pub fn run() {
             };
             if native {
                 match build_native(input, out_path) {
-                    Ok(out) => println!("Built native binary: {}", out.display()),
+                    Ok(out) => messenger.success(&format!("Built native binary: {}", out.display())),
                     Err(e) => {
-                        eprintln!("{e}");
+                        messenger.error(&e);
                         process::exit(1);
                     }
                 }
             } else {
                 match build_bundle(input, out_path) {
-                    Ok((out, bundle)) => println!(
+                    Ok((out, bundle)) => messenger.success(&format!(
                         "Built DOG bundle: {} (sha256:{})",
                         out.display(),
                         &bundle.sha256[..16]
-                    ),
+                    )),
                     Err(e) => {
-                        eprintln!("{e}");
+                        messenger.error(&e);
                         process::exit(1);
                     }
                 }
@@ -131,7 +135,7 @@ pub fn run() {
             };
             let source = read_file_or_exit(path);
             match check_source(path, &source) {
-                Ok(_) => println!("OK: {path} passed syntax and strict type checks."),
+                Ok(_) => messenger.success(&format!("{path} passed syntax and strict type checks.")),
                 Err(diag) => {
                     eprintln!("{}", diag.format_with(config.personality, Some(&source)));
                     process::exit(1);
@@ -153,16 +157,16 @@ pub fn run() {
             let formatted = format_source(&source);
             if check_only {
                 if source == formatted {
-                    println!("OK: {path} is already formatted.");
+                    messenger.success(&format!("{path} is already formatted."));
                 } else {
-                    eprintln!("Needs formatting: {path}");
+                    messenger.warn(&format!("Needs formatting: {path}"));
                     process::exit(1);
                 }
             } else if let Err(err) = fs::write(path, &formatted) {
-                eprintln!("Failed to write '{path}': {err}");
+                messenger.error(&format!("Failed to write '{path}': {err}"));
                 process::exit(1);
             } else {
-                println!("Formatted {path}");
+                messenger.success(&format!("Formatted {path}"));
             }
         }
         "test" => {
@@ -194,32 +198,7 @@ pub fn run() {
                 process::exit(1);
             }
         }
-        "config" => {
-            if args.get(1).map(String::as_str) == Some("personality") {
-                if let Some(mode_raw) = args.get(2) {
-                    if let Some(mode) = Personality::parse(mode_raw) {
-                        config.personality = mode;
-                        if let Err(err) = config.save() {
-                            eprintln!("{err}");
-                            process::exit(1);
-                        }
-                        println!("DOG personality set to '{}'.", mode.as_str());
-                    } else {
-                        eprintln!(
-                            "Invalid personality '{mode_raw}'. Valid modes: normal, sarcastic, chaotic, professional, silent."
-                        );
-                        process::exit(2);
-                    }
-                } else {
-                    println!("Current personality: {}", config.personality.as_str());
-                }
-            } else {
-                eprintln!(
-                    "Usage: dog config personality [normal|sarcastic|chaotic|professional|silent]"
-                );
-                process::exit(2);
-            }
-        }
+        "config" => handle_config_cmd(&args[1..], &mut config),
         "repl" => {
             config.record_run();
             run_repl(&config);
@@ -232,7 +211,7 @@ pub fn run() {
             match handle_inspect(path) {
                 Ok(out) => println!("{out}"),
                 Err(e) => {
-                    eprintln!("{e}");
+                    messenger.error(&e);
                     process::exit(1);
                 }
             }
@@ -245,7 +224,7 @@ pub fn run() {
             match handle_profile(path) {
                 Ok(out) => println!("{out}"),
                 Err(e) => {
-                    eprintln!("{e}");
+                    messenger.error(&e);
                     process::exit(1);
                 }
             }
@@ -254,9 +233,9 @@ pub fn run() {
             println!("{}", handle_docs(args.get(1).map(String::as_str)));
         }
         "forge" => match handle_forge(&args[1..]) {
-            Ok(out) => println!("{out}"),
+            Ok(out) => messenger.success(&out),
             Err(e) => {
-                eprintln!("{e}");
+                messenger.error(&e);
                 process::exit(1);
             }
         },
@@ -264,20 +243,20 @@ pub fn run() {
             let mut forge_args = vec!["new".to_string()];
             forge_args.extend(args[1..].iter().cloned());
             match handle_forge(&forge_args) {
-                Ok(out) => println!("{out}"),
+                Ok(out) => messenger.success(&out),
                 Err(e) => {
-                    eprintln!("{e}");
+                    messenger.error(&e);
                     process::exit(1);
                 }
             }
         }
-        "init" => {
+        "init" | "innit" => {
             let mut forge_args = vec!["new".to_string(), ".".to_string()];
             forge_args.extend(args[1..].iter().cloned());
             match handle_forge(&forge_args) {
-                Ok(out) => println!("{out}"),
+                Ok(out) => messenger.success(&out),
                 Err(e) => {
-                    eprintln!("{e}");
+                    messenger.error(&e);
                     process::exit(1);
                 }
             }
@@ -316,17 +295,25 @@ pub fn run() {
                 process::exit(1);
             }
         },
-        "add" => match handle_add(&args[1..]) {
-            Ok(out) => println!("{out}"),
+        "add" => match install_package_live(&args[1..], &config) {
+            Ok(out) => {
+                if !out.is_empty() {
+                    println!("{out}");
+                }
+            }
             Err(e) => {
-                eprintln!("{e}");
+                messenger.error(&e);
                 process::exit(1);
             }
         },
-        "remove" => match handle_remove(&args[1..]) {
-            Ok(out) => println!("{out}"),
+        "remove" => match remove_package_live(&args[1..], &config) {
+            Ok(out) => {
+                if !out.is_empty() {
+                    println!("{out}");
+                }
+            }
             Err(e) => {
-                eprintln!("{e}");
+                messenger.error(&e);
                 process::exit(1);
             }
         },
@@ -458,6 +445,159 @@ fn run_repl(config: &DogConfig) {
     }
 }
 
+fn handle_config_cmd(args: &[String], config: &mut DogConfig) {
+    let messenger = config.messenger();
+    match args.first().map(String::as_str) {
+        None | Some("show") => {
+            let summary = messenger.render_summary(
+                "DOG Configuration & Terminal Capabilities",
+                &[
+                    ("Personality", config.personality.as_str().to_string()),
+                    ("Theme", config.theme.as_str().to_string()),
+                    ("Timestamps", config.timestamps.to_string()),
+                    ("Prefix", config.prefix.clone()),
+                    ("Debug Logs", config.debug_logs.to_string()),
+                    ("Install Style", config.install_style.as_str().to_string()),
+                    ("TTY", messenger.caps.is_tty.to_string()),
+                    ("ANSI Color", messenger.use_color().to_string()),
+                    ("Unicode", messenger.use_unicode().to_string()),
+                    ("Term Width", messenger.caps.width.to_string()),
+                ],
+            );
+            println!("{summary}");
+        }
+        Some("personality") => {
+            if let Some(mode_raw) = args.get(1) {
+                if let Some(mode) = Personality::parse(mode_raw) {
+                    config.personality = mode;
+                    if let Err(err) = config.save() {
+                        messenger.error(&err);
+                        process::exit(1);
+                    }
+                    config
+                        .messenger()
+                        .success(&format!("DOG personality set to '{}'.", mode.as_str()));
+                } else {
+                    messenger.error(&format!(
+                        "Invalid personality '{mode_raw}'. Valid modes: normal, sarcastic, chaotic, professional, silent."
+                    ));
+                    process::exit(2);
+                }
+            } else {
+                messenger.info(&format!("Current personality: {}", config.personality.as_str()));
+            }
+        }
+        Some("theme") => {
+            if let Some(theme_raw) = args.get(1) {
+                if let Some(theme) = TermTheme::parse(theme_raw) {
+                    config.theme = theme;
+                    if let Err(err) = config.save() {
+                        messenger.error(&err);
+                        process::exit(1);
+                    }
+                    config
+                        .messenger()
+                        .success(&format!("DOG terminal theme set to '{}'.", theme.as_str()));
+                } else {
+                    messenger.error(&format!(
+                        "Invalid theme '{theme_raw}'. Valid themes: {}.",
+                        TermTheme::available().join(", ")
+                    ));
+                    process::exit(2);
+                }
+            } else {
+                messenger.info(&format!("Current theme: {}", config.theme.as_str()));
+            }
+        }
+        Some("timestamps") => {
+            if let Some(flag_raw) = args.get(1) {
+                if let Some(enabled) = parse_bool_flag(flag_raw) {
+                    config.timestamps = enabled;
+                    if let Err(err) = config.save() {
+                        messenger.error(&err);
+                        process::exit(1);
+                    }
+                    config.messenger().success(&format!(
+                        "DOG CLI timestamps {}.",
+                        if enabled { "enabled" } else { "disabled" }
+                    ));
+                } else {
+                    messenger.error(&format!(
+                        "Invalid timestamps value '{flag_raw}'. Use on|off or true|false."
+                    ));
+                    process::exit(2);
+                }
+            } else {
+                messenger.info(&format!("Timestamps enabled: {}", config.timestamps));
+            }
+        }
+        Some("prefix") => {
+            if let Some(pref) = args.get(1) {
+                config.prefix = pref.clone();
+                if let Err(err) = config.save() {
+                    messenger.error(&err);
+                    process::exit(1);
+                }
+                config
+                    .messenger()
+                    .success(&format!("DOG CLI prefix set to '{}'.", config.prefix));
+            } else {
+                messenger.info(&format!("Current CLI prefix: '{}'", config.prefix));
+            }
+        }
+        Some("debug") => {
+            if let Some(flag_raw) = args.get(1) {
+                if let Some(enabled) = parse_bool_flag(flag_raw) {
+                    config.debug_logs = enabled;
+                    if let Err(err) = config.save() {
+                        messenger.error(&err);
+                        process::exit(1);
+                    }
+                    config.messenger().success(&format!(
+                        "DOG debug messages {}.",
+                        if enabled { "enabled" } else { "disabled" }
+                    ));
+                } else {
+                    messenger.error(&format!(
+                        "Invalid debug value '{flag_raw}'. Use on|off or true|false."
+                    ));
+                    process::exit(2);
+                }
+            } else {
+                messenger.info(&format!("Debug messages enabled: {}", config.debug_logs));
+            }
+        }
+        Some("install-style") | Some("install_style") => {
+            if let Some(style_raw) = args.get(1) {
+                if let Some(style) = InstallStyle::parse(style_raw) {
+                    config.install_style = style;
+                    if let Err(err) = config.save() {
+                        messenger.error(&err);
+                        process::exit(1);
+                    }
+                    config
+                        .messenger()
+                        .success(&format!("Install output style set to '{}'.", style.as_str()));
+                } else {
+                    messenger.error(&format!(
+                        "Invalid install style '{style_raw}'. Use detailed, compact, or minimal."
+                    ));
+                    process::exit(2);
+                }
+            } else {
+                messenger.info(&format!("Current install style: {}", config.install_style.as_str()));
+            }
+        }
+        Some(other) => {
+            messenger.error(&format!("Unknown config option '{other}'."));
+            eprintln!(
+                "Usage:\n  dog config show\n  dog config personality [normal|sarcastic|chaotic|professional|silent]\n  dog config theme [default|kali|dracula|solar|mono]\n  dog config timestamps [on|off]\n  dog config prefix <label>\n  dog config debug [on|off]\n  dog config install-style [detailed|compact|minimal]"
+            );
+            process::exit(2);
+        }
+    }
+}
+
 fn print_help() {
     println!(
         "DOG Programming Language CLI ({VERSION})
@@ -480,20 +620,20 @@ Interactive, Prompt & Workspace IDEs:
   dog forge new <name> [--web|--bot] Scaffold a new project (alias: dog new / dog init)
 
 Packages (DOG Hub & dog.pack):
-  dog add <path | pkg>              Add local package or cached dependency
-  dog remove <pkg>                  Remove dependency from dog.pack
+  dog add <path | pkg | url>        Staged install with dependency, progress & SHA-256 checks
+  dog remove <pkg> [--purge]        Remove dependency from dog.pack (optionally purge cache)
   dog search [query]                Search local ~/.dog/cache package index
   dog list                          List project dependencies
   dog info [pkg]                    Inspect project or cached package metadata
 
-System, Server, Docs & SDU:
-  dog docs [topic]                  Offline language/stdlib/network/CLI docs
+System, Server, CLI Themes, Docs & SDU:
+  dog docs [topic]                  Offline language/stdlib/network/cli/hub/sdu docs
   dog server [dir] [port] [--host]  Multi-threaded static HTTP file server
-  dog doctor                        Inspect environment, Termux, rustc, and config
+  dog doctor                        Inspect environment, Termux, rustc, capabilities & config
   dog system | status | env         Inspect host, project state, and masked env
   dog process | permissions         Inspect PID/memory and filesystem privileges
   dog logs [sdu] | clean | update   View logs, remove .dgb artifacts, check version
-  dog config personality <mode>     Set normal|sarcastic|chaotic|professional|silent
+  dog config <setting> [value]      Configure theme, timestamps, prefix, personality & style
   dog sdu <subcommand>              Super Dog User status, scoped auth, and audit logs
   dog version | help                Print version or this help message"
     );

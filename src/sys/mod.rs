@@ -140,6 +140,9 @@ pub fn handle_docs(topic: Option<&str>) -> String {
             "DOG Standard Library\n\
              --------------------\n\
              I/O     : say(), answer(), log_info(), log_warn(), log_error()\n\
+             CLI UI  : cli_info(), cli_success(), cli_warn(), cli_error(), cli_debug(),\n\
+                       cli_progress(), cli_spinner(), cli_theme(), cli_prefix(),\n\
+                       cli_timestamps(), cli_supports_color(), cli_is_tty()\n\
              Text    : lower(), upper(), trim(), contains(), starts_with(), ends_with(),\n\
                        replace(), slice(), split(), join(), len()\n\
              Cast    : text(), number(), decimal()\n\
@@ -210,13 +213,27 @@ pub fn handle_docs(topic: Option<&str>) -> String {
              dog completions [bash|zsh|fish] Print tab completion script"
                 .to_string()
         }
+        "cli" | "themes" | "term" => {
+            "DOG CLI Experience & Custom Terminal Output\n\
+             ------------------------------------------\n\
+             Config   : dog config show | theme <default|kali|dracula|solar|mono>\n\
+                        dog config timestamps <on|off> | prefix <label> | debug <on|off>\n\
+             Scripts  : cli_theme(\"kali\"), cli_prefix(\"bot\"), cli_timestamps(true)\n\
+                        cli_info(m), cli_success(m), cli_warn(m), cli_error(m), cli_debug(m)\n\
+                        cli_progress(\"Sync\", done, total), cli_spinner(step, \"Working\")\n\
+                        cli_supports_color(), cli_is_tty()\n\
+             Fallback : Automatically respects NO_COLOR, TERM=dumb, CLICOLOR_FORCE, UTF-8/ASCII"
+                .to_string()
+        }
         "hub" => {
-            "DOG Hub (Offline Package & Project Manifest)\n\
-             --------------------------------------------\n\
-             Manifest : dog.pack ([package], [dependencies], [scripts])\n\
-             Lockfile : dog.lock (SHA-256 hashes)\n\
-             Commands : dog add <path|pkg>, dog remove <pkg>, dog search [q],\n\
-                        dog list, dog info [pkg], dog forge new <name>"
+            "DOG Hub (Package Manager & Custom Lifecycle Messages)\n\
+             -----------------------------------------------------\n\
+             Manifest : dog.pack ([package], [dependencies], [scripts], [messages])\n\
+             Custom   : Under [messages], developers can define install_banner, pre_install,\n\
+                        post_install, uninstall_banner, pre_uninstall, post_uninstall\n\
+             Lockfile : dog.lock (real verified SHA-256 tree digests)\n\
+             Commands : dog add <path|pkg|http(s)://url>, dog remove <pkg> [--purge],\n\
+                        dog search [q], dog list, dog info [pkg], dog forge new <name>"
                 .to_string()
         }
         "sdu" => {
@@ -233,7 +250,7 @@ pub fn handle_docs(topic: Option<&str>) -> String {
             "DOG Documentation Topics\n\
              ------------------------\n\
              Run `dog docs <topic>` with one of:\n\
-               syntax, types, stdlib, network, errors, editor, prompt, hub, sdu"
+               syntax, types, stdlib, cli, network, errors, editor, prompt, hub, sdu"
                 .to_string()
         }
     }
