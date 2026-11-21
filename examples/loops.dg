@@ -1,0 +1,19 @@
+var items = ["alpha", "beta", "gamma"]
+push(items, "delta")
+
+for item in items
+    if item == "beta"
+        continue
+    end
+    say(upper(item))
+end
+
+var count = 0
+while count < 3
+    say("tick " + text(count))
+    count = count + 1
+end
+
+repeat 2
+    say("bark!")
+end

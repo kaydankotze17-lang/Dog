@@ -1,0 +1,13 @@
+fn factorial(n: number) -> number
+    if n <= 1
+        return 1
+    end
+    return n * factorial(n - 1)
+end
+
+fn greet(name: text) -> text
+    return "Hello, " + trim(name)
+end
+
+say(greet("  DOG Developer  "))
+say("5! = " + text(factorial(5)))

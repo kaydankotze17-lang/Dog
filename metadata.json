@@ -1,0 +1,6 @@
+{
+  "name": "DOG Studio & Language Workbench",
+  "description": "Rust language engine explorer, .dg specification previewer, 1,000+ capability roadmap, and Gemini 3.8 Flash TTS voice companion for the DOG programming language.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

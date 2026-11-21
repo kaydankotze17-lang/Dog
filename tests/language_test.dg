@@ -1,0 +1,17 @@
+fn add(a: number, b: number) -> number
+    return a + b
+end
+
+assert(add(2, 3) == 5, "add should sum two numbers")
+assert(lower("DOG") == "dog", "lower() must lowercase text")
+assert(upper("dog") == "DOG", "upper() must uppercase text")
+assert(number("42") == 42, "number() must parse integers")
+assert(decimal("3.5") == 3.5, "decimal() must parse floats")
+
+var tags: list<text> = []
+push(tags, "rust")
+push(tags, "termux")
+assert(len(tags) == 2, "push() must append items")
+assert(join(tags, ",") == "rust,termux", "join() must join text lists")
+assert(pop(tags) == "termux", "pop() must return last element")
+assert(len(tags) == 1, "pop() must remove last element")

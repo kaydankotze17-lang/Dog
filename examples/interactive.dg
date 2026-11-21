@@ -1,0 +1,9 @@
+say("Hello from DOG!")
+
+let username = answer("What's your name? ")
+say("Welcome, " + upper(username))
+
+let raw_price = answer("Enter item price: ")
+let price = decimal(raw_price)
+let tax = price * 0.1
+say(price + tax)

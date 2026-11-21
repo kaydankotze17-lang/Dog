@@ -1,0 +1,15 @@
+let age = number(answer("Enter your age: "))
+
+if age >= 18
+    say("Welcome!")
+otherwise
+    say("Access restricted.")
+end
+
+let response = lower(answer("Continue? "))
+
+if response == "yes" or response == "y"
+    say("Let's go.")
+otherwise
+    say("No problem.")
+end

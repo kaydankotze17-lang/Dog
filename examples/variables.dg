@@ -1,0 +1,9 @@
+const APP_NAME = "DOG Language"
+let greeting = "Hello from " + APP_NAME
+var counter = 1
+
+say(greeting)
+say(number(counter))
+
+counter = counter + 4
+say(counter)
