@@ -705,6 +705,58 @@ fn emit_expr(expr: &Expr) -> Result<String, String> {
                     Err("Expected variable in pop()".to_string())
                 }
             }
+            "replace" => Ok(format!(
+                "({}).replace(&({}), &({}))",
+                emit_expr(&args[0])?,
+                emit_expr(&args[1])?,
+                emit_expr(&args[2])?
+            )),
+            "starts_with" => Ok(format!(
+                "({}).starts_with(&({}))",
+                emit_expr(&args[0])?,
+                emit_expr(&args[1])?
+            )),
+            "ends_with" => Ok(format!(
+                "({}).ends_with(&({}))",
+                emit_expr(&args[0])?,
+                emit_expr(&args[1])?
+            )),
+            "round" => Ok(format!("(({}) as f64).round() as i64", emit_expr(&args[0])?)),
+            "floor" => Ok(format!("(({}) as f64).floor() as i64", emit_expr(&args[0])?)),
+            "ceil" => Ok(format!("(({}) as f64).ceil() as i64", emit_expr(&args[0])?)),
+            "sqrt" => Ok(format!("(({}) as f64).sqrt()", emit_expr(&args[0])?)),
+            "pow" => Ok(format!(
+                "(({}) as f64).powf(({}) as f64)",
+                emit_expr(&args[0])?,
+                emit_expr(&args[1])?
+            )),
+            "cwd" => Ok(
+                "std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default()"
+                    .to_string(),
+            ),
+            "mkdir" => Ok(format!(
+                "std::fs::create_dir_all(&({})).expect(\"mkdir failed\")",
+                emit_expr(&args[0])?
+            )),
+            "range" => Ok(format!(
+                "(({})..({})).collect::<Vec<i64>>()",
+                emit_expr(&args[0])?,
+                emit_expr(&args[1])?
+            )),
+            "sort" => {
+                if let Expr::Identifier { name, .. } = &args[0] {
+                    Ok(format!("{name}.sort()"))
+                } else {
+                    Err("Expected variable in sort()".to_string())
+                }
+            }
+            "reverse" => {
+                if let Expr::Identifier { name, .. } = &args[0] {
+                    Ok(format!("{name}.reverse()"))
+                } else {
+                    Err("Expected variable in reverse()".to_string())
+                }
+            }
             other => {
                 let mut parts = Vec::new();
                 for a in args {

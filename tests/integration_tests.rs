@@ -1,10 +1,13 @@
 use dog_lang::bytecode::{build_bundle, decode_bundle, run_bundle_with_io};
-use dog_lang::crypto::{base64_decode, base64_encode, hex_decode, hex_encode, sha256_hex};
+use dog_lang::crypto::{
+    base64_decode, base64_encode, hex_decode, hex_encode, hmac_sha256_hex, sha256_hex,
+};
 use dog_lang::editor::EditorBuffer;
 use dog_lang::formatter::format_source;
 use dog_lang::hub::DogPack;
 use dog_lang::interpreter::{check_source, run_source_with_io};
 use dog_lang::json::parse_json;
+use dog_lang::prompt::{handle_completions, handle_prompt};
 use dog_lang::sdu::handle_sdu;
 use dog_lang::stdlib::InterpreterIo;
 use std::collections::VecDeque;
@@ -273,3 +276,115 @@ fn editor_buffer_auto_indents_undoes_and_replaces() {
     assert!(buf.redo());
     assert!(buf.lines[1].contains("dog"));
 }
+
+#[test]
+fn editor_buffer_enhanced_helpers_autocomplete_hints_and_snippets() {
+    let mut buf = EditorBuffer::empty("app.dg");
+    assert!(buf.insert_snippet("fn"));
+    assert_eq!(buf.lines[0], "fn my_fn(x: number) -> number");
+    let outline = buf.extract_outline();
+    assert_eq!(outline.len(), 1);
+    assert_eq!(outline[0].0, 1);
+
+    buf.cursor_row = 1;
+    buf.cursor_col = 4;
+    buf.toggle_comment();
+    assert_eq!(buf.lines[1], "    # return x");
+    buf.toggle_comment();
+    assert_eq!(buf.lines[1], "    return x");
+
+    buf.duplicate_line();
+    assert_eq!(buf.lines.len(), 4);
+    buf.delete_line();
+    assert_eq!(buf.lines.len(), 3);
+
+    let mut ac_buf = EditorBuffer::empty("ac.dg");
+    for ch in "hmac_s".chars() {
+        ac_buf.insert_char_smart(ch);
+    }
+    assert!(ac_buf.accept_autocomplete());
+    assert_eq!(ac_buf.lines[0], "hmac_sha256()");
+    assert!(ac_buf.contextual_hint().is_some());
+}
+
+#[test]
+fn prompt_install_uninstall_and_completions_round_trip() {
+    let dir = env::temp_dir().join("dog_prompt_test");
+    let _ = fs::create_dir_all(&dir);
+    let rc_file = dir.join(".bashrc");
+    fs::write(&rc_file, "export FOO=bar\n").unwrap();
+
+    let rc_str = rc_file.display().to_string();
+    let msg = handle_prompt(&[
+        "install".to_string(),
+        "--shell".to_string(),
+        "bash".to_string(),
+        "--rc".to_string(),
+        rc_str.clone(),
+    ])
+    .expect("prompt install should succeed");
+    assert!(msg.contains("Installed DOG terminal prompt"));
+
+    let contents = fs::read_to_string(&rc_file).unwrap();
+    assert!(contents.contains("export FOO=bar"));
+    assert!(contents.contains("__dog_prompt_cmd"));
+    assert!(contents.contains("⩫dog"));
+
+    let rm_msg = handle_prompt(&[
+        "uninstall".to_string(),
+        "--rc".to_string(),
+        rc_str,
+    ])
+    .expect("prompt uninstall should succeed");
+    assert!(rm_msg.contains("Removed DOG terminal prompt"));
+
+    let restored = fs::read_to_string(&rc_file).unwrap();
+    assert!(restored.contains("export FOO=bar"));
+    assert!(!restored.contains("__dog_prompt_cmd"));
+
+    let zsh_comp = handle_completions(Some("zsh")).unwrap();
+    assert!(zsh_comp.contains("#compdef dog"));
+
+    assert_eq!(
+        hmac_sha256_hex(b"key", b"The quick brown fox jumps over the lazy dog"),
+        "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+struct ArgsMockIo {
+    args: Vec<String>,
+    output: String,
+}
+
+impl InterpreterIo for ArgsMockIo {
+    fn write_stdout(&mut self, text: &str) {
+        self.output.push_str(text);
+    }
+
+    fn writeln_stdout(&mut self, text: &str) {
+        self.output.push_str(text);
+        self.output.push('\n');
+    }
+
+    fn read_line(&mut self) -> Result<String, String> {
+        Ok(String::new())
+    }
+
+    fn script_args(&self) -> Vec<String> {
+        self.args.clone()
+    }
+}
+
+#[test]
+fn passes_script_args_to_args_builtin() {
+    let mut io = ArgsMockIo {
+        args: vec!["alpha".to_string(), "beta".to_string()],
+        output: String::new(),
+    };
+    let src = "let a = args()\nsay(join(a, \":\"))\n";
+    run_source_with_io("args.dg", src, &mut io).expect("args() should work");
+    assert_eq!(io.output, "alpha:beta\n");
+}
+

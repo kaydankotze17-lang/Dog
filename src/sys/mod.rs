@@ -137,15 +137,18 @@ pub fn handle_docs(topic: Option<&str>) -> String {
             "DOG Standard Library\n\
              --------------------\n\
              I/O     : say(), answer(), log_info(), log_warn(), log_error()\n\
-             Text    : lower(), upper(), trim(), contains(), split(), join(), len()\n\
+             Text    : lower(), upper(), trim(), contains(), starts_with(), ends_with(),\n\
+                       replace(), slice(), split(), join(), len()\n\
              Cast    : text(), number(), decimal()\n\
-             Math    : abs(), min(), max()\n\
-             List    : push(), pop(), len()\n\
+             Math    : abs(), min(), max(), round(), floor(), ceil(), sqrt(), pow(), rand_int()\n\
+             List    : push(), pop(), sort(), reverse(), list_contains(), range(), len()\n\
              Map     : map_get(), map_set(), map_has(), map_keys(), map_remove()\n\
-             Files   : file_read(), file_write(), file_exists(), file_delete(), dir_list()\n\
-             System  : env_get(), env_set(), time_now_ms(), sleep_ms()\n\
+             Files   : file_read(), file_write(), file_append(), file_exists(), file_delete(),\n\
+                       dir_list(), mkdir(), cwd()\n\
+             System  : args(), env_get(), env_set(), time_now_ms(), sleep_ms()\n\
              JSON    : json_parse(), json_stringify()\n\
-             Crypto  : hex_encode(), hex_decode(), base64_encode(), base64_decode(), sha256()\n\
+             Crypto  : hex_encode(), hex_decode(), base64_encode(), base64_decode(),\n\
+                       sha256(), hmac_sha256()\n\
              Network : http_get() (plain http://)\n\
              Errors  : assert(), fail()"
                 .to_string()
@@ -164,10 +167,22 @@ pub fn handle_docs(topic: Option<&str>) -> String {
             "DOG Editor & Studio Shortcuts\n\
              -----------------------------\n\
              Ctrl+S Save   | Ctrl+O Open   | Ctrl+R Run\n\
-             Ctrl+L Format | Ctrl+F Find   | Ctrl+Z/Y Undo/Redo\n\
-             Ctrl+T NewTab | Ctrl+N Next   | Ctrl+G Help\n\
-             Ctrl+W Switch Pane (Studio)   | Ctrl+P Palette (Studio)\n\
-             Ctrl+Q Quit   | Ctrl+X Force Quit"
+             Ctrl+L Format | Ctrl+F Find   | Ctrl+P Palette (:line, snippet)\n\
+             Ctrl+D Dup Ln | Ctrl+K Del Ln | Ctrl+U Toggle # Comment\n\
+             Tab    Accept Autocomplete / 4-Space Indent\n\
+             Ctrl+Z/Y Undo/Redo | Ctrl+T NewTab | Ctrl+N Next | Ctrl+G Help\n\
+             Ctrl+W Switch Pane (Studio)   | Ctrl+Q Quit / Ctrl+X Force Quit"
+                .to_string()
+        }
+        "prompt" => {
+            "DOG Terminal Prompt & Shell Integration\n\
+             --------------------------------------\n\
+             dog prompt preview              Preview Kali-style 2-line DOG prompt\n\
+             dog prompt install              Install into ~/.bashrc, ~/.zshrc, or fish\n\
+             dog prompt install --no-banner  Skip shell login greeting\n\
+             dog prompt uninstall            Remove DOG prompt block cleanly\n\
+             dog prompt status               Check installed RC files\n\
+             dog completions [bash|zsh|fish] Print tab completion script"
                 .to_string()
         }
         "hub" => {
@@ -193,7 +208,7 @@ pub fn handle_docs(topic: Option<&str>) -> String {
             "DOG Documentation Topics\n\
              ------------------------\n\
              Run `dog docs <topic>` with one of:\n\
-               syntax, types, stdlib, errors, editor, hub, sdu"
+               syntax, types, stdlib, errors, editor, prompt, hub, sdu"
                 .to_string()
         }
     }
@@ -555,17 +570,19 @@ pub fn handle_permissions() -> String {
 
 pub fn handle_update() -> String {
     let version = env!("CARGO_PKG_VERSION");
+    let is_termux = env::var("PREFIX").is_ok_and(|p| p.contains("com.termux"));
     let mut msg = format!("Current DOG CLI version: {version}\n");
+    if is_termux {
+        msg.push_str("Termux APT update : pkg update && pkg upgrade -y dog\n");
+    }
     if Path::new(".git").exists() {
         if let Ok(out) = Command::new("git").args(["status", "-sb"]).output() {
             let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
             msg.push_str(&format!("Local git checkout : {branch}\n"));
         }
         msg.push_str("To update from source: git pull && cargo install --path .");
-    } else {
-        msg.push_str(
-            "Self-update from a remote binary host is not configured in v0.1.0.\nUpdate via git & cargo: `git pull && cargo install --path .`",
-        );
+    } else if !is_termux {
+        msg.push_str("Update from source: `git pull && cargo install --path .`");
     }
     msg
 }

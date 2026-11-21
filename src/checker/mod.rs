@@ -18,10 +18,12 @@ struct FnSig {
 const BUILTIN_NAMES: &[&str] = &[
     "say", "answer", "lower", "upper", "trim", "contains", "split", "join", "len", "text",
     "number", "decimal", "push", "pop", "abs", "min", "max", "assert", "fail", "map_get",
-    "map_set", "map_has", "map_keys", "map_remove", "file_read", "file_write", "file_exists",
-    "file_delete", "dir_list", "env_get", "env_set", "time_now_ms", "sleep_ms", "json_parse",
-    "json_stringify", "hex_encode", "hex_decode", "base64_encode", "base64_decode", "sha256",
-    "http_get", "log_info", "log_warn", "log_error",
+    "map_set", "map_has", "map_keys", "map_remove", "file_read", "file_write", "file_append",
+    "file_exists", "file_delete", "dir_list", "mkdir", "cwd", "args", "env_get", "env_set",
+    "time_now_ms", "sleep_ms", "json_parse", "json_stringify", "hex_encode", "hex_decode",
+    "base64_encode", "base64_decode", "sha256", "hmac_sha256", "http_get", "log_info",
+    "log_warn", "log_error", "replace", "starts_with", "ends_with", "slice", "round", "floor",
+    "ceil", "sqrt", "pow", "rand_int", "range", "sort", "reverse", "list_contains",
 ];
 
 pub struct TypeChecker {
@@ -1281,6 +1283,56 @@ impl TypeChecker {
             return Ok(DogType::Bool);
         }
 
+        if callee == "sort" {
+            if args.len() != 1 {
+                return Err(arity_error(callee, 1, args.len(), span));
+            }
+            let inner_ty = self.require_mutable_list_arg(&args[0], callee)?;
+            if !matches!(
+                inner_ty,
+                DogType::Text | DogType::Number | DogType::Decimal
+            ) {
+                return Err(type_err(
+                    "list<text | number | decimal>",
+                    &format!("list<{}>", inner_ty.label()),
+                    span,
+                    "sort() only supports lists of text, number, or decimal.",
+                ));
+            }
+            return Ok(DogType::Void);
+        }
+        if callee == "reverse" {
+            if args.len() != 1 {
+                return Err(arity_error(callee, 1, args.len(), span));
+            }
+            self.require_mutable_list_arg(&args[0], callee)?;
+            return Ok(DogType::Void);
+        }
+        if callee == "list_contains" {
+            if args.len() != 2 {
+                return Err(arity_error(callee, 2, args.len(), span));
+            }
+            let list_ty = self.check_expr(&args[0])?;
+            let DogType::List(inner) = list_ty else {
+                return Err(type_err(
+                    "list<T>",
+                    &list_ty.label(),
+                    args[0].span(),
+                    "list_contains() expects a list as first argument.",
+                ));
+            };
+            let item_ty = self.check_expr_with_hint(&args[1], Some(&inner))?;
+            if item_ty != *inner {
+                return Err(type_err(
+                    &inner.label(),
+                    &item_ty.label(),
+                    args[1].span(),
+                    "list_contains() search item type must match the list element type.",
+                ));
+            }
+            return Ok(DogType::Bool);
+        }
+
         let mut arg_types = Vec::with_capacity(args.len());
         for arg in args {
             arg_types.push(self.check_expr(arg)?);
@@ -1536,6 +1588,170 @@ impl TypeChecker {
                     }
                 }
                 Ok(DogType::Void)
+            }
+            "replace" => {
+                if arg_types.len() != 3 {
+                    return Err(arity_error(callee, 3, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text
+                    || arg_types[1] != DogType::Text
+                    || arg_types[2] != DogType::Text
+                {
+                    return Err(type_err(
+                        "text, text, text",
+                        &format!("{}, {}, {}", arg_types[0], arg_types[1], arg_types[2]),
+                        span,
+                        "replace() expects (text, text, text).",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "starts_with" | "ends_with" | "hmac_sha256" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        &format!("{callee}() expects two 'text' arguments."),
+                    ));
+                }
+                if callee == "hmac_sha256" {
+                    Ok(DogType::Text)
+                } else {
+                    Ok(DogType::Bool)
+                }
+            }
+            "slice" => {
+                if arg_types.len() != 3 {
+                    return Err(arity_error(callee, 3, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text
+                    || arg_types[1] != DogType::Number
+                    || arg_types[2] != DogType::Number
+                {
+                    return Err(type_err(
+                        "text, number, number",
+                        &format!("{}, {}, {}", arg_types[0], arg_types[1], arg_types[2]),
+                        span,
+                        "slice() expects (text, number, number).",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "round" | "floor" | "ceil" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Decimal && arg_types[0] != DogType::Number {
+                    return Err(type_err(
+                        "decimal | number",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects 'decimal' or 'number'."),
+                    ));
+                }
+                Ok(DogType::Number)
+            }
+            "sqrt" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Decimal && arg_types[0] != DogType::Number {
+                    return Err(type_err(
+                        "decimal | number",
+                        &arg_types[0].label(),
+                        span,
+                        "sqrt() expects 'decimal' or 'number'.",
+                    ));
+                }
+                Ok(DogType::Decimal)
+            }
+            "pow" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if (arg_types[0] != DogType::Decimal && arg_types[0] != DogType::Number)
+                    || (arg_types[1] != DogType::Decimal && arg_types[1] != DogType::Number)
+                {
+                    return Err(type_err(
+                        "decimal, decimal",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "pow() expects two numeric arguments.",
+                    ));
+                }
+                Ok(DogType::Decimal)
+            }
+            "rand_int" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number || arg_types[1] != DogType::Number {
+                    return Err(type_err(
+                        "number, number",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "rand_int() expects (min: number, max: number).",
+                    ));
+                }
+                Ok(DogType::Number)
+            }
+            "range" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number || arg_types[1] != DogType::Number {
+                    return Err(type_err(
+                        "number, number",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "range() expects (start: number, end: number).",
+                    ));
+                }
+                Ok(DogType::List(Box::new(DogType::Number)))
+            }
+            "file_append" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "file_append() expects (path: text, content: text).",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "mkdir" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        "mkdir() expects directory path 'text'.",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "cwd" => {
+                if !arg_types.is_empty() {
+                    return Err(arity_error(callee, 0, arg_types.len(), span));
+                }
+                Ok(DogType::Text)
+            }
+            "args" => {
+                if !arg_types.is_empty() {
+                    return Err(arity_error(callee, 0, arg_types.len(), span));
+                }
+                Ok(DogType::List(Box::new(DogType::Text)))
             }
             other => {
                 let Some(sig) = self.functions.get(other) else {

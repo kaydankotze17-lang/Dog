@@ -1,18 +1,26 @@
 use crate::ast::Span;
-use crate::crypto::{base64_decode, base64_encode, hex_decode, hex_encode, sha256_hex};
+use crate::crypto::{
+    base64_decode, base64_encode, hex_decode, hex_encode, hmac_sha256_hex, sha256_hex,
+};
 use crate::diagnostics::DogDiagnostic;
 use crate::json::{parse_json, JsonValue};
 use crate::runtime::Value;
 use std::collections::BTreeMap;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+static RNG_COUNTER: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
 
 pub trait InterpreterIo {
     fn write_stdout(&mut self, text: &str);
     fn writeln_stdout(&mut self, text: &str);
     fn read_line(&mut self) -> Result<String, String>;
+    fn script_args(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 pub struct StdIo;
@@ -34,6 +42,28 @@ impl InterpreterIo for StdIo {
             .read_line(&mut buf)
             .map_err(|e| e.to_string())?;
         Ok(buf.trim_end_matches(&['\r', '\n'][..]).to_string())
+    }
+}
+
+pub struct StdIoWithArgs {
+    pub args: Vec<String>,
+}
+
+impl InterpreterIo for StdIoWithArgs {
+    fn write_stdout(&mut self, text: &str) {
+        StdIo.write_stdout(text);
+    }
+
+    fn writeln_stdout(&mut self, text: &str) {
+        StdIo.writeln_stdout(text);
+    }
+
+    fn read_line(&mut self) -> Result<String, String> {
+        StdIo.read_line()
+    }
+
+    fn script_args(&self) -> Vec<String> {
+        self.args.clone()
     }
 }
 
@@ -512,6 +542,248 @@ pub fn call_builtin(
             };
             io_host.writeln_stdout(&format!("[ERROR] {msg}"));
             Ok(Value::Void)
+        }
+        "replace" => {
+            let mut it = args.into_iter();
+            match (it.next(), it.next(), it.next()) {
+                (Some(Value::Text(s)), Some(Value::Text(from)), Some(Value::Text(to))) => {
+                    Ok(Value::Text(s.replace(&from, &to)))
+                }
+                _ => unreachable!(),
+            }
+        }
+        "starts_with" => {
+            let mut it = args.into_iter();
+            match (it.next(), it.next()) {
+                (Some(Value::Text(s)), Some(Value::Text(prefix))) => {
+                    Ok(Value::Bool(s.starts_with(&prefix)))
+                }
+                _ => unreachable!(),
+            }
+        }
+        "ends_with" => {
+            let mut it = args.into_iter();
+            match (it.next(), it.next()) {
+                (Some(Value::Text(s)), Some(Value::Text(suffix))) => {
+                    Ok(Value::Bool(s.ends_with(&suffix)))
+                }
+                _ => unreachable!(),
+            }
+        }
+        "slice" => {
+            let mut it = args.into_iter();
+            match (it.next(), it.next(), it.next()) {
+                (Some(Value::Text(s)), Some(Value::Number(start)), Some(Value::Number(end))) => {
+                    let chars: Vec<char> = s.chars().collect();
+                    let len = chars.len() as i64;
+                    let s_idx = start.clamp(0, len) as usize;
+                    let e_idx = end.clamp(0, len) as usize;
+                    if s_idx >= e_idx {
+                        Ok(Value::Text(String::new()))
+                    } else {
+                        let out: String = chars[s_idx..e_idx].iter().collect();
+                        Ok(Value::Text(out))
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+        "round" => match args.into_iter().next() {
+            Some(Value::Decimal(d)) => Ok(Value::Number(d.round() as i64)),
+            Some(Value::Number(n)) => Ok(Value::Number(n)),
+            _ => unreachable!(),
+        },
+        "floor" => match args.into_iter().next() {
+            Some(Value::Decimal(d)) => Ok(Value::Number(d.floor() as i64)),
+            Some(Value::Number(n)) => Ok(Value::Number(n)),
+            _ => unreachable!(),
+        },
+        "ceil" => match args.into_iter().next() {
+            Some(Value::Decimal(d)) => Ok(Value::Number(d.ceil() as i64)),
+            Some(Value::Number(n)) => Ok(Value::Number(n)),
+            _ => unreachable!(),
+        },
+        "sqrt" => {
+            let val = match args.into_iter().next() {
+                Some(Value::Decimal(d)) => d,
+                Some(Value::Number(n)) => n as f64,
+                _ => unreachable!(),
+            };
+            if val < 0.0 {
+                return Err(DogDiagnostic::new(
+                    "E031",
+                    "Cannot take sqrt() of a negative number.",
+                    span.clone(),
+                    format!("Received {val}, which is negative."),
+                    "Pass a non-negative number >= 0.",
+                    "Guard negative inputs with `if x >= 0`.",
+                    "Imaginary numbers live in another kennel.",
+                ));
+            }
+            Ok(Value::Decimal(val.sqrt()))
+        }
+        "pow" => {
+            let mut it = args.into_iter();
+            let base = match it.next() {
+                Some(Value::Decimal(d)) => d,
+                Some(Value::Number(n)) => n as f64,
+                _ => unreachable!(),
+            };
+            let exp = match it.next() {
+                Some(Value::Decimal(d)) => d,
+                Some(Value::Number(n)) => n as f64,
+                _ => unreachable!(),
+            };
+            Ok(Value::Decimal(base.powf(exp)))
+        }
+        "rand_int" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Number(min_v)), Some(Value::Number(max_v))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            if min_v > max_v {
+                return Err(DogDiagnostic::new(
+                    "E032",
+                    "Invalid range in rand_int().",
+                    span.clone(),
+                    format!("min ({min_v}) cannot be greater than max ({max_v})."),
+                    "Ensure min <= max.",
+                    "Swap the bounds if needed.",
+                    "Can't roll dice backwards.",
+                ));
+            }
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(1);
+            let ctr = RNG_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let mut x = nanos ^ ctr.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            x ^= x >> 30;
+            x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            x ^= x >> 27;
+            x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
+            x ^= x >> 31;
+            let span_u = (max_v as i128 - min_v as i128 + 1) as u64;
+            let picked = min_v as i128 + (x % span_u) as i128;
+            Ok(Value::Number(picked as i64))
+        }
+        "range" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Number(start)), Some(Value::Number(end))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            if end <= start {
+                return Ok(Value::List(Vec::new()));
+            }
+            let count = (end as i128 - start as i128) as usize;
+            if count > 1_000_000 {
+                return Err(DogDiagnostic::new(
+                    "E032",
+                    "range() exceeds maximum size (1,000,000).",
+                    span.clone(),
+                    format!("Requested {count} elements in range({start}, {end})."),
+                    "Use a `while` loop for huge numeric ranges.",
+                    "range() materializes a list<number>.",
+                    "Even a golden retriever can't fetch a million sticks at once.",
+                ));
+            }
+            let items = (start..end).map(Value::Number).collect();
+            Ok(Value::List(items))
+        }
+        "list_contains" => {
+            let mut it = args.into_iter();
+            match (it.next(), it.next()) {
+                (Some(Value::List(items)), Some(target)) => {
+                    Ok(Value::Bool(items.iter().any(|v| v == &target)))
+                }
+                _ => unreachable!(),
+            }
+        }
+        "file_append" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(path)), Some(Value::Text(content))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(|e| {
+                    DogDiagnostic::new(
+                        "E040",
+                        format!("Failed to append to file '{path}'."),
+                        span.clone(),
+                        format!("Filesystem error: {e}"),
+                        "Ensure parent directory exists and file is writable.",
+                        "Use `mkdir()` first if needed.",
+                        "Couldn't append to that file.",
+                    )
+                })?;
+            file.write_all(content.as_bytes()).map_err(|e| {
+                DogDiagnostic::new(
+                    "E040",
+                    format!("Failed to write appended bytes to '{path}'."),
+                    span.clone(),
+                    format!("Filesystem error: {e}"),
+                    "Check disk space and permissions.",
+                    "Verify path.",
+                    "Disk write stalled.",
+                )
+            })?;
+            Ok(Value::Void)
+        }
+        "mkdir" => {
+            let Some(Value::Text(path)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            fs::create_dir_all(&path).map_err(|e| {
+                DogDiagnostic::new(
+                    "E040",
+                    format!("Failed to create directory '{path}'."),
+                    span.clone(),
+                    format!("Filesystem error: {e}"),
+                    "Check parent path and permissions.",
+                    "mkdir() creates nested directories automatically.",
+                    "Could not dig that folder.",
+                )
+            })?;
+            Ok(Value::Void)
+        }
+        "cwd" => {
+            let dir = std::env::current_dir()
+                .map(|p| p.display().to_string())
+                .map_err(|e| {
+                    DogDiagnostic::new(
+                        "E040",
+                        "Failed to read current working directory.",
+                        span.clone(),
+                        format!("OS error: {e}"),
+                        "Check current directory permissions.",
+                        "Ensure current directory has not been deleted.",
+                        "Lost track of where we're standing.",
+                    )
+                })?;
+            Ok(Value::Text(dir))
+        }
+        "args" => {
+            let items = io_host
+                .script_args()
+                .into_iter()
+                .map(Value::Text)
+                .collect();
+            Ok(Value::List(items))
+        }
+        "hmac_sha256" => {
+            let mut it = args.into_iter();
+            match (it.next(), it.next()) {
+                (Some(Value::Text(key)), Some(Value::Text(msg))) => {
+                    Ok(Value::Text(hmac_sha256_hex(key.as_bytes(), msg.as_bytes())))
+                }
+                _ => unreachable!(),
+            }
         }
         _ => unreachable!("Type checker validates built-in function names"),
     }

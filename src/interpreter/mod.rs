@@ -526,6 +526,41 @@ impl<'a> Interpreter<'a> {
                     entries.retain(|(ek, _)| ek != &k);
                     return Ok(Value::Bool(entries.len() < before));
                 }
+                if callee == "sort" {
+                    let Expr::Identifier { name, .. } = &args[0] else {
+                        unreachable!();
+                    };
+                    let list_val = self
+                        .env
+                        .get_mut_var(name)
+                        .map_err(|_| immutable_err(name, span))?;
+                    let Value::List(items) = list_val else {
+                        unreachable!();
+                    };
+                    items.sort_by(|a, b| match (a, b) {
+                        (Value::Number(x), Value::Number(y)) => x.cmp(y),
+                        (Value::Decimal(x), Value::Decimal(y)) => {
+                            x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
+                        }
+                        (Value::Text(x), Value::Text(y)) => x.cmp(y),
+                        _ => a.to_string().cmp(&b.to_string()),
+                    });
+                    return Ok(Value::Void);
+                }
+                if callee == "reverse" {
+                    let Expr::Identifier { name, .. } = &args[0] else {
+                        unreachable!();
+                    };
+                    let list_val = self
+                        .env
+                        .get_mut_var(name)
+                        .map_err(|_| immutable_err(name, span))?;
+                    let Value::List(items) = list_val else {
+                        unreachable!();
+                    };
+                    items.reverse();
+                    return Ok(Value::Void);
+                }
 
                 let mut evaluated = Vec::with_capacity(args.len());
                 for arg in args {

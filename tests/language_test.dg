@@ -67,3 +67,28 @@ catch err
     caught = contains(err, "expected boom")
 end
 assert(caught, "try/catch catches fail()")
+
+assert(replace("hello dog", "dog", "world") == "hello world", "replace() substitutes text")
+assert(starts_with("dog-lang", "dog"), "starts_with() checks prefix")
+assert(ends_with("main.dg", ".dg"), "ends_with() checks suffix")
+assert(slice("abcdef", 1, 4) == "bcd", "slice() extracts UTF-8 substring")
+
+assert(round(3.6) == 4, "round() rounds to nearest integer")
+assert(floor(3.9) == 3, "floor() rounds down")
+assert(ceil(3.1) == 4, "ceil() rounds up")
+assert(sqrt(9.0) == 3.0, "sqrt() computes square root")
+assert(pow(2.0, 3.0) == 8.0, "pow() computes exponent")
+let r = rand_int(1, 5)
+assert(r >= 1 and r <= 5, "rand_int() stays within inclusive bounds")
+
+let seq = range(1, 4)
+assert(len(seq) == 3 and seq[0] == 1 and seq[2] == 3, "range() builds numeric list")
+var nums = [30, 10, 20]
+sort(nums)
+assert(nums[0] == 10 and nums[2] == 30, "sort() sorts list in place")
+reverse(nums)
+assert(nums[0] == 30 and nums[2] == 10, "reverse() reverses list in place")
+assert(list_contains(nums, 20), "list_contains() finds matching element")
+assert(hmac_sha256("key", "The quick brown fox jumps over the lazy dog") == "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8", "hmac_sha256 matches RFC vector")
+assert(len(cwd()) > 0, "cwd() returns non-empty path")
+

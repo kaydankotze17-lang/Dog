@@ -12,25 +12,27 @@ DOG is a strictly typed, readable, general-purpose programming language implemen
 - **Operators**: `==`, `!=`, `>`, `<`, `>=`, `<=`, `and`, `or`, `not`, `+`, `-`, `*`, `/`, `%`, `.` field/enum access, `[]` indexing.
 - **Standard Library Built-ins**:
   - I/O & Logging: `say()`, `answer()`, `log_info()`, `log_warn()`, `log_error()`
-  - Text & Casts: `lower()`, `upper()`, `trim()`, `contains()`, `split()`, `join()`, `len()`, `text()`, `number()`, `decimal()`
-  - Math: `abs()`, `min()`, `max()`
-  - Collections: `push()`, `pop()`, `map_get()`, `map_set()`, `map_has()`, `map_keys()`, `map_remove()`
-  - Files & System: `file_read()`, `file_write()`, `file_exists()`, `file_delete()`, `dir_list()`, `env_get()`, `env_set()`, `time_now_ms()`, `sleep_ms()`
-  - JSON, Crypto & HTTP: `json_parse()`, `json_stringify()`, `hex_encode()`, `hex_decode()`, `base64_encode()`, `base64_decode()`, `sha256()`, `http_get()` (plain `http://`)
+  - Text & Casts: `lower()`, `upper()`, `trim()`, `contains()`, `starts_with()`, `ends_with()`, `replace()`, `slice()`, `split()`, `join()`, `len()`, `text()`, `number()`, `decimal()`
+  - Math & RNG: `abs()`, `min()`, `max()`, `round()`, `floor()`, `ceil()`, `sqrt()`, `pow()`, `rand_int()`
+  - Collections: `push()`, `pop()`, `sort()`, `reverse()`, `list_contains()`, `range()`, `map_get()`, `map_set()`, `map_has()`, `map_keys()`, `map_remove()`
+  - Files, CLI & System: `file_read()`, `file_write()`, `file_append()`, `file_exists()`, `file_delete()`, `dir_list()`, `mkdir()`, `cwd()`, `args()`, `env_get()`, `env_set()`, `time_now_ms()`, `sleep_ms()`
+  - JSON, Crypto & HTTP: `json_parse()`, `json_stringify()`, `hex_encode()`, `hex_decode()`, `base64_encode()`, `base64_decode()`, `sha256()`, `hmac_sha256()`, `http_get()` (plain `http://`)
   - Errors: `assert()`, `fail()`
 - **Diagnostics**: Structured 4-part error messages (`What / WHY / FIX / TIP + DOG`) with configurable personality (`normal`, `sarcastic`, `chaotic`, `professional`, `silent`).
 
 ### CLI, Compiler, IDEs & Tooling
-- `dog run <file.dg | file.dgb>` — Execute `.dg` scripts or `.dgb` bytecode bundles
+- `dog run <file.dg | file.dgb> [-- args...]` — Execute `.dg` scripts or `.dgb` bytecode bundles
 - `dog build <file.dg> [--out <path>] [--native]` — Compile SHA-256 verified `.dgb` bundle (or native binary when `rustc` is on `PATH`)
-- `dog check <file.dg>` / `dog format [--check] <file.dg>` / `dog test [path]`
-- `dog inspect <file.dg>` / `dog profile <file.dg>` / `dog docs [topic]` / `dog forge new <name>`
-- `dog edit [file.dg]` / `dog studio [dir]` — Nano-inspired terminal editor and split-pane DOG Studio IDE
-- `dog repl` — Stateful multi-line terminal with Kali-inspired `┌──(user⩫dog)-[path]` prompt
+- `dog check <file.dg>` / `dog format [--check] <file.dg>` (alias: `fmt`) / `dog test [path]`
+- `dog inspect <file.dg>` / `dog profile <file.dg>` / `dog docs [topic]` / `dog forge new <name>` (alias: `new`)
+- `dog edit [file.dg]` / `dog studio [dir]` — Polished 256-color dark-slate editor and split-pane IDE with auto-pairing, `Tab` autocomplete, live signature tooltips, and command palette
+- `dog prompt <preview|install|uninstall|status|init>` — Add the git-aware Kali-style `┌──(user⩫dog)-[path]` prompt and tab completions directly to your Termux/Linux shell
+- `dog completions [bash|zsh|fish]` — Print shell completion script
+- `dog repl` — Stateful multi-line terminal with git-aware Kali-inspired `┌──(user⩫dog)-[path]` prompt
 - `dog add` / `dog remove` / `dog search` / `dog list` / `dog info` — Offline DOG Hub (`dog.pack`, `dog.lock`, `~/.dog/cache`)
 - `dog server [dir] [port]` — Local static HTTP file server
 - `dog sdu <status|auth|permissions|revoke|logs|doctor>` — Super Dog User scoped privilege & audit subsystem
-- `dog doctor` / `dog system` / `dog status` / `dog env` / `dog process` / `dog permissions` / `dog logs` / `dog clean` / `dog update`
+- `dog doctor` / `dog system` / `dog status` / `dog env` / `dog process` / `dog permissions` / `dog logs` / `dog clean` / `dog update` (`upgrade`)
 - `dog config personality <mode>`
 
 ## Building & Running (Requires Rust >= 1.70)

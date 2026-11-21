@@ -13,6 +13,7 @@ pub mod interpreter;
 pub mod json;
 pub mod lexer;
 pub mod parser;
+pub mod prompt;
 pub mod runtime;
 pub mod sdu;
 pub mod stdlib;

@@ -88,6 +88,33 @@ pub fn sha256_hex(data: &[u8]) -> String {
     hex_encode(&sha256_bytes(data))
 }
 
+pub fn hmac_sha256_hex(key: &[u8], msg: &[u8]) -> String {
+    let mut block_key = [0u8; 64];
+    if key.len() > 64 {
+        let hashed = sha256_bytes(key);
+        block_key[..32].copy_from_slice(&hashed);
+    } else {
+        block_key[..key.len()].copy_from_slice(key);
+    }
+
+    let mut o_pad = [0x5cu8; 64];
+    let mut i_pad = [0x36u8; 64];
+    for i in 0..64 {
+        o_pad[i] ^= block_key[i];
+        i_pad[i] ^= block_key[i];
+    }
+
+    let mut inner = Vec::with_capacity(64 + msg.len());
+    inner.extend_from_slice(&i_pad);
+    inner.extend_from_slice(msg);
+    let inner_hash = sha256_bytes(&inner);
+
+    let mut outer = Vec::with_capacity(64 + 32);
+    outer.extend_from_slice(&o_pad);
+    outer.extend_from_slice(&inner_hash);
+    hex_encode(&sha256_bytes(&outer))
+}
+
 pub fn hex_encode(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {

@@ -6,11 +6,12 @@ use crate::doctor::run_doctor;
 use crate::editor::launch_editor;
 use crate::formatter::format_source;
 use crate::hub::{handle_add, handle_info, handle_list, handle_remove, handle_search};
-use crate::interpreter::{check_source, run_source, Interpreter};
+use crate::interpreter::{check_source, run_source_with_io, Interpreter};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
-use crate::sdu::{detect_actual_root, handle_sdu};
-use crate::stdlib::StdIo;
+use crate::prompt::{handle_completions, handle_prompt, render_live_prompt};
+use crate::sdu::handle_sdu;
+use crate::stdlib::{StdIo, StdIoWithArgs};
 use crate::studio::launch_studio;
 use crate::sys::{
     handle_clean, handle_docs, handle_env, handle_forge, handle_inspect, handle_logs,
@@ -44,19 +45,27 @@ pub fn run() {
         }
         "run" => {
             let Some(path) = args.get(1) else {
-                eprintln!("Usage: dog run <file.dg | file.dgb>");
+                eprintln!("Usage: dog run <file.dg | file.dgb> [-- <script-args...>]");
                 process::exit(2);
+            };
+            let script_args: Vec<String> = if let Some(pos) = args.iter().position(|a| a == "--") {
+                args[pos + 1..].to_vec()
+            } else if args.len() > 2 {
+                args[2..].to_vec()
+            } else {
+                Vec::new()
             };
             config.record_run();
             if is_dgb_path(path) {
-                let mut stdio = StdIo;
+                let mut stdio = StdIoWithArgs { args: script_args };
                 if let Err(err) = run_bundle_with_io(path, &mut stdio) {
                     eprintln!("{err}");
                     process::exit(1);
                 }
             } else {
                 let source = read_file_or_exit(path);
-                if let Err(diag) = run_source(path, &source) {
+                let mut stdio = StdIoWithArgs { args: script_args };
+                if let Err(diag) = run_source_with_io(path, &source, &mut stdio) {
                     eprintln!("{}", diag.format_with(config.personality, Some(&source)));
                     process::exit(1);
                 }
@@ -129,7 +138,7 @@ pub fn run() {
                 }
             }
         }
-        "format" => {
+        "format" | "fmt" => {
             let check_only = args.iter().any(|a| a == "--check");
             let path = args
                 .iter()
@@ -251,6 +260,31 @@ pub fn run() {
                 process::exit(1);
             }
         },
+        "new" => {
+            let mut forge_args = vec!["new".to_string()];
+            forge_args.extend(args[1..].iter().cloned());
+            match handle_forge(&forge_args) {
+                Ok(out) => println!("{out}"),
+                Err(e) => {
+                    eprintln!("{e}");
+                    process::exit(1);
+                }
+            }
+        }
+        "prompt" => match handle_prompt(&args[1..]) {
+            Ok(out) => println!("{out}"),
+            Err(e) => {
+                eprintln!("{e}");
+                process::exit(1);
+            }
+        },
+        "completions" => match handle_completions(args.get(1).map(String::as_str)) {
+            Ok(out) => print!("{out}"),
+            Err(e) => {
+                eprintln!("{e}");
+                process::exit(1);
+            }
+        },
         "server" => {
             if let Err(e) = handle_server(&args[1..]) {
                 eprintln!("{e}");
@@ -262,7 +296,7 @@ pub fn run() {
         "env" => print!("{}", handle_env()),
         "process" => println!("{}", handle_process()),
         "permissions" => println!("{}", handle_permissions()),
-        "update" => println!("{}", handle_update()),
+        "update" | "upgrade" => println!("{}", handle_update()),
         "clean" => println!("{}", handle_clean()),
         "logs" => match handle_logs(&args[1..]) {
             Ok(out) => print!("{out}"),
@@ -338,53 +372,6 @@ fn read_file_or_exit(path: &str) -> String {
     }
 }
 
-fn detect_prompt_identity() -> (String, char) {
-    let user = env::var("USER")
-        .or_else(|_| env::var("LOGNAME"))
-        .unwrap_or_else(|_| {
-            if env::var("PREFIX").is_ok_and(|p| p.contains("com.termux")) {
-                "shell".to_string()
-            } else {
-                "nonroot".to_string()
-            }
-        });
-
-    if detect_actual_root() {
-        ("root".to_string(), '#')
-    } else {
-        (user, '$')
-    }
-}
-
-fn format_kali_prompt() -> String {
-    let (user, sigil) = detect_prompt_identity();
-    let cwd = env::current_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "~".to_string());
-    let display_dir = if let Ok(home) = env::var("HOME") {
-        if let Some(stripped) = cwd.strip_prefix(&home) {
-            if stripped.is_empty() {
-                "~".to_string()
-            } else {
-                format!("~{stripped}")
-            }
-        } else {
-            cwd
-        }
-    } else {
-        cwd
-    };
-
-    let blue = "\x1b[1;34m";
-    let red = "\x1b[1;31m";
-    let green = "\x1b[1;32m";
-    let reset = "\x1b[0m";
-
-    format!(
-        "{blue}┌──({red}{user}⩫dog{blue})-[{green}{display_dir}{blue}]\n└─{red}{sigil}{reset} "
-    )
-}
-
 fn run_repl(config: &DogConfig) {
     println!("DOG {VERSION} interactive REPL (type 'exit' to quit)");
     if let Some(banner) = welcome_banner(config.personality, config.runs_completed) {
@@ -403,7 +390,7 @@ fn run_repl(config: &DogConfig) {
 
     loop {
         if block_depth == 0 {
-            print!("{}", format_kali_prompt());
+            print!("{}", render_live_prompt());
         } else {
             print!("\x1b[1;34m... \x1b[0m");
         }
@@ -468,16 +455,18 @@ Core Language & Tooling:
   dog run <file.dg | file.dgb>      Execute a .dg program or compiled .dgb bundle
   dog build <file.dg> [--native]    Compile to .dgb bundle (or native binary via rustc)
   dog check <file.dg>               Type-check a .dg program without running it
-  dog format [--check] <file.dg>    Format a .dg file with 4-space indentation
+  dog format [--check] <file.dg>    Format a .dg file with 4-space indentation (alias: fmt)
   dog test [path]                   Run *_test.dg test files
   dog inspect <file.dg>             Print tokens, AST outline, and checked symbols
   dog profile <file.dg>             Measure lex, parse, check, and runtime timings
 
-Interactive & Workspace IDEs:
+Interactive, Prompt & Workspace IDEs:
   dog repl                          Stateful interactive DOG terminal
-  dog edit [file.dg]                Nano-inspired terminal DOG EDITOR
+  dog edit [file.dg]                Polished 256-color DOG code editor
   dog studio [dir]                  Split-pane DOG Studio terminal IDE
-  dog forge new <name>              Scaffold a new DOG project with dog.pack
+  dog prompt <install|status|...>   Add/remove Kali-style DOG shell prompt & completions
+  dog completions [bash|zsh|fish]   Generate shell tab-completion script
+  dog forge new <name>              Scaffold a new DOG project (alias: dog new <name>)
 
 Packages (DOG Hub & dog.pack):
   dog add <path | pkg>              Add local package or cached dependency
