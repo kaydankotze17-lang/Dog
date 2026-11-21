@@ -1,0 +1,18 @@
+Package: dog
+Version: 0.1.0
+Architecture: x86_64
+Maintainer: kaydankotze17-lang <https://github.com/kaydankotze17-lang/Dog>
+Installed-Size: 1400
+Filename: pool/main/d/dog/dog_0.1.0_x86_64.deb
+Size: 539904
+MD5sum: 246a2b442cf8195cdf3d27daddf251a4
+SHA1: fd7c8e5ed0477a6ba31518645095d5a93f0efabf
+SHA256: 3084efdf31413b9ccdba2b93a0621686fb80ce4ab7bb2a8808c90cbe3386775b
+Section: devel
+Priority: optional
+Homepage: https://github.com/kaydankotze17-lang/Dog
+Description: Strictly typed general-purpose programming language, Studio IDE, and CLI
+ DOG is a zero-dependency Rust programming language featuring strict static typing,
+ 4-part structured diagnostics, a terminal Studio IDE, .dgb bytecode bundling,
+ and Termux-native tooling.
+
