@@ -36,16 +36,34 @@
 - `sqrt(x: decimal) -> decimal`, `pow(base: decimal, exp: decimal) -> decimal`
 - `rand_int(min: number, max: number) -> number`
 
-## Filesystem, Environment, CLI & Time
+## Filesystem, Embedded KV Database, Environment, CLI & System
 - `file_read(path: text) -> text`, `file_write(path: text, content: text) -> void`, `file_append(path: text, content: text) -> void`
 - `file_exists(path: text) -> bool`, `file_delete(path: text) -> bool`
 - `dir_list(path: text) -> list<text>`, `mkdir(path: text) -> void`, `cwd() -> text`
+- `kv_set(db: text, key: text, val: text) -> void`, `kv_get(db: text, key: text) -> text`
+- `kv_has(db: text, key: text) -> bool`, `kv_delete(db: text, key: text) -> bool`, `kv_keys(db: text) -> list<text>`
 - `args() -> list<text>`, `env_get(key: text) -> text`, `env_set(key: text, value: text) -> void`
+- `exec_cmd(cmd: text) -> map<text, text>` (`code`, `stdout`, `stderr`)
+- `os_name() -> text`, `os_arch() -> text`, `uuid_v4() -> text`
 - `time_now_ms() -> number`, `sleep_ms(ms: number) -> void`
 
-## JSON, Cryptography & HTTP
+## JSON, CSV, URL, Cryptography & Networking
 - `json_parse(raw: text) -> map<text, text>`, `json_stringify(val) -> text`
+- `csv_parse(raw: text) -> list<list<text>>`
+- `url_encode(s: text) -> text`, `url_decode(s: text) -> text`
 - `hex_encode(s: text) -> text`, `hex_decode(hex: text) -> text`
 - `base64_encode(s: text) -> text`, `base64_decode(b64: text) -> text`
 - `sha256(s: text) -> text`, `hmac_sha256(key: text, msg: text) -> text`
-- `http_get(url: text) -> text` (plain `http://` over `std::net::TcpStream`; `https://` explicitly explains TLS requirement)
+- **HTTP Client** (`http://` natively, `https://` via system `curl` for Discord/REST APIs):
+  - `http_get(url: text) -> text`
+  - `http_post(url: text, body: text, content_type: text) -> text`
+  - `http_request(method: text, url: text, headers: map<text, text>, body: text) -> map<text, text>` (`status`, `body`)
+- **Local HTTP / Website Server**:
+  - `http_listen(addr: text) -> number`, `http_port(server_id: number) -> number`, `http_close(server_id: number) -> void`
+  - `http_accept(server_id: number) -> map<text, text>` (`id`, `method`, `path`, `query`, `body`, `remote`, `content_type`, `authorization`, `headers`)
+  - `http_reply(req: map<text, text>, status: number, content_type: text, body: text) -> void`
+  - `http_serve_file(req: map<text, text>, path: text) -> void`
+- **Raw TCP Sockets**:
+  - `tcp_listen(addr: text) -> number`, `tcp_port(id: number) -> number`, `tcp_accept(id: number) -> number`
+  - `tcp_connect(addr: text) -> number`, `tcp_send(id: number, data: text) -> void`, `tcp_recv(id: number, max_bytes: number) -> text`, `tcp_close(id: number) -> void`
+

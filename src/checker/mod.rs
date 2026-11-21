@@ -21,7 +21,11 @@ const BUILTIN_NAMES: &[&str] = &[
     "map_set", "map_has", "map_keys", "map_remove", "file_read", "file_write", "file_append",
     "file_exists", "file_delete", "dir_list", "mkdir", "cwd", "args", "env_get", "env_set",
     "time_now_ms", "sleep_ms", "json_parse", "json_stringify", "hex_encode", "hex_decode",
-    "base64_encode", "base64_decode", "sha256", "hmac_sha256", "http_get", "log_info",
+    "base64_encode", "base64_decode", "sha256", "hmac_sha256", "http_get", "http_post",
+    "http_request", "http_listen", "http_port", "http_accept", "http_reply", "http_serve_file",
+    "http_close", "tcp_listen", "tcp_port", "tcp_accept", "tcp_connect", "tcp_send", "tcp_recv",
+    "tcp_close", "url_encode", "url_decode", "csv_parse", "kv_set", "kv_get", "kv_has",
+    "kv_delete", "kv_keys", "exec_cmd", "os_name", "os_arch", "uuid_v4", "log_info",
     "log_warn", "log_error", "replace", "starts_with", "ends_with", "slice", "round", "floor",
     "ceil", "sqrt", "pow", "rand_int", "range", "sort", "reverse", "list_contains",
 ];
@@ -1369,7 +1373,8 @@ impl TypeChecker {
                 Ok(DogType::Text)
             }
             "lower" | "upper" | "trim" | "hex_encode" | "hex_decode" | "base64_encode"
-            | "base64_decode" | "sha256" | "file_read" | "http_get" => {
+            | "base64_decode" | "sha256" | "file_read" | "http_get" | "url_encode"
+            | "url_decode" => {
                 if arg_types.len() != 1 {
                     return Err(arity_error(callee, 1, arg_types.len(), span));
                 }
@@ -1741,7 +1746,7 @@ impl TypeChecker {
                 }
                 Ok(DogType::Void)
             }
-            "cwd" => {
+            "cwd" | "os_name" | "os_arch" | "uuid_v4" => {
                 if !arg_types.is_empty() {
                     return Err(arity_error(callee, 0, arg_types.len(), span));
                 }
@@ -1752,6 +1757,212 @@ impl TypeChecker {
                     return Err(arity_error(callee, 0, arg_types.len(), span));
                 }
                 Ok(DogType::List(Box::new(DogType::Text)))
+            }
+            "http_listen" | "tcp_listen" | "tcp_connect" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err("text", &arg_types[0].label(), span, &format!("{callee}() expects address 'text' (e.g. \"127.0.0.1:8080\").")));
+                }
+                Ok(DogType::Number)
+            }
+            "http_port" | "tcp_port" | "tcp_accept" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number {
+                    return Err(type_err("number", &arg_types[0].label(), span, &format!("{callee}() expects handle 'number'.")));
+                }
+                Ok(DogType::Number)
+            }
+            "http_close" | "tcp_close" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number {
+                    return Err(type_err("number", &arg_types[0].label(), span, &format!("{callee}() expects handle 'number'.")));
+                }
+                Ok(DogType::Void)
+            }
+            "http_accept" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number {
+                    return Err(type_err("number", &arg_types[0].label(), span, "http_accept() expects server handle 'number'."));
+                }
+                Ok(DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text)))
+            }
+            "http_reply" => {
+                if arg_types.len() != 4 {
+                    return Err(arity_error(callee, 4, arg_types.len(), span));
+                }
+                let req_map = DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text));
+                if arg_types[0] != req_map
+                    || arg_types[1] != DogType::Number
+                    || arg_types[2] != DogType::Text
+                    || arg_types[3] != DogType::Text
+                {
+                    return Err(type_err(
+                        "map<text, text>, number, text, text",
+                        &format!("{}, {}, {}, {}", arg_types[0], arg_types[1], arg_types[2], arg_types[3]),
+                        span,
+                        "http_reply() expects (req: map<text, text>, status: number, content_type: text, body: text).",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "http_serve_file" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                let req_map = DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text));
+                if arg_types[0] != req_map || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "map<text, text>, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "http_serve_file() expects (req: map<text, text>, path: text).",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "http_post" => {
+                if arg_types.len() != 3 {
+                    return Err(arity_error(callee, 3, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text
+                    || arg_types[1] != DogType::Text
+                    || arg_types[2] != DogType::Text
+                {
+                    return Err(type_err(
+                        "text, text, text",
+                        &format!("{}, {}, {}", arg_types[0], arg_types[1], arg_types[2]),
+                        span,
+                        "http_post() expects (url: text, body: text, content_type: text).",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "http_request" => {
+                if arg_types.len() != 4 {
+                    return Err(arity_error(callee, 4, arg_types.len(), span));
+                }
+                let hdr_map = DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text));
+                if arg_types[0] != DogType::Text
+                    || arg_types[1] != DogType::Text
+                    || arg_types[2] != hdr_map
+                    || arg_types[3] != DogType::Text
+                {
+                    return Err(type_err(
+                        "text, text, map<text, text>, text",
+                        &format!("{}, {}, {}, {}", arg_types[0], arg_types[1], arg_types[2], arg_types[3]),
+                        span,
+                        "http_request() expects (method: text, url: text, headers: map<text, text>, body: text).",
+                    ));
+                }
+                Ok(DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text)))
+            }
+            "tcp_send" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "number, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "tcp_send() expects (conn_id: number, data: text).",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "tcp_recv" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number || arg_types[1] != DogType::Number {
+                    return Err(type_err(
+                        "number, number",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "tcp_recv() expects (conn_id: number, max_bytes: number).",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "csv_parse" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err("text", &arg_types[0].label(), span, "csv_parse() expects CSV 'text'."));
+                }
+                Ok(DogType::List(Box::new(DogType::List(Box::new(DogType::Text)))))
+            }
+            "kv_set" => {
+                if arg_types.len() != 3 {
+                    return Err(arity_error(callee, 3, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text
+                    || arg_types[1] != DogType::Text
+                    || arg_types[2] != DogType::Text
+                {
+                    return Err(type_err(
+                        "text, text, text",
+                        &format!("{}, {}, {}", arg_types[0], arg_types[1], arg_types[2]),
+                        span,
+                        "kv_set() expects (db_path: text, key: text, val: text).",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "kv_get" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "kv_get() expects (db_path: text, key: text).",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "kv_has" | "kv_delete" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        &format!("{callee}() expects (db_path: text, key: text)."),
+                    ));
+                }
+                Ok(DogType::Bool)
+            }
+            "kv_keys" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err("text", &arg_types[0].label(), span, "kv_keys() expects db_path 'text'."));
+                }
+                Ok(DogType::List(Box::new(DogType::Text)))
+            }
+            "exec_cmd" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err("text", &arg_types[0].label(), span, "exec_cmd() expects command 'text'."));
+                }
+                Ok(DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text)))
             }
             other => {
                 let Some(sig) = self.functions.get(other) else {

@@ -476,8 +476,8 @@ Packages (DOG Hub & dog.pack):
   dog info [pkg]                    Inspect project or cached package metadata
 
 System, Server, Docs & SDU:
-  dog docs [topic]                  Offline language/stdlib/CLI documentation
-  dog server [dir] [port]           Serve static files over local HTTP
+  dog docs [topic]                  Offline language/stdlib/network/CLI docs
+  dog server [dir] [port] [--host]  Multi-threaded static HTTP file server
   dog doctor                        Inspect environment, Termux, rustc, and config
   dog system | status | env         Inspect host, project state, and masked env
   dog process | permissions         Inspect PID/memory and filesystem privileges

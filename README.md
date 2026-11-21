@@ -15,13 +15,14 @@ DOG is a strictly typed, readable, general-purpose programming language implemen
   - Text & Casts: `lower()`, `upper()`, `trim()`, `contains()`, `starts_with()`, `ends_with()`, `replace()`, `slice()`, `split()`, `join()`, `len()`, `text()`, `number()`, `decimal()`
   - Math & RNG: `abs()`, `min()`, `max()`, `round()`, `floor()`, `ceil()`, `sqrt()`, `pow()`, `rand_int()`
   - Collections: `push()`, `pop()`, `sort()`, `reverse()`, `list_contains()`, `range()`, `map_get()`, `map_set()`, `map_has()`, `map_keys()`, `map_remove()`
-  - Files, CLI & System: `file_read()`, `file_write()`, `file_append()`, `file_exists()`, `file_delete()`, `dir_list()`, `mkdir()`, `cwd()`, `args()`, `env_get()`, `env_set()`, `time_now_ms()`, `sleep_ms()`
-  - JSON, Crypto & HTTP: `json_parse()`, `json_stringify()`, `hex_encode()`, `hex_decode()`, `base64_encode()`, `base64_decode()`, `sha256()`, `hmac_sha256()`, `http_get()` (plain `http://`)
+  - Files, KV DB & System: `file_read()`, `file_write()`, `file_append()`, `file_exists()`, `file_delete()`, `dir_list()`, `mkdir()`, `cwd()`, `kv_set()`, `kv_get()`, `kv_has()`, `kv_delete()`, `kv_keys()`, `args()`, `env_get()`, `env_set()`, `exec_cmd()`, `os_name()`, `os_arch()`, `uuid_v4()`, `time_now_ms()`, `sleep_ms()`
+  - JSON, CSV, URL & Crypto: `json_parse()`, `json_stringify()`, `csv_parse()`, `url_encode()`, `url_decode()`, `hex_encode()`, `hex_decode()`, `base64_encode()`, `base64_decode()`, `sha256()`, `hmac_sha256()`
+  - Networking (Local Websites, Bots & Raw TCP): `http_listen()`, `http_port()`, `http_accept()`, `http_reply()`, `http_serve_file()`, `http_close()`, `http_get()`, `http_post()`, `http_request()` (supports `http://` & `https://`), `tcp_listen()`, `tcp_port()`, `tcp_accept()`, `tcp_connect()`, `tcp_send()`, `tcp_recv()`, `tcp_close()`
   - Errors: `assert()`, `fail()`
 - **Diagnostics**: Structured 4-part error messages (`What / WHY / FIX / TIP + DOG`) with configurable personality (`normal`, `sarcastic`, `chaotic`, `professional`, `silent`).
 
 ### CLI, Compiler, IDEs & Tooling
-- `dog run <file.dg | file.dgb> [-- args...]` — Execute `.dg` scripts or `.dgb` bytecode bundles
+- `dog run <file.dg | file.dgb> [-- args...]` — Execute `.dg` scripts or `.dgb` bytecode bundles (see `examples/web_server.dg` and `examples/discord_bot.dg`)
 - `dog build <file.dg> [--out <path>] [--native]` — Compile SHA-256 verified `.dgb` bundle (or native binary when `rustc` is on `PATH`)
 - `dog check <file.dg>` / `dog format [--check] <file.dg>` (alias: `fmt`) / `dog test [path]`
 - `dog inspect <file.dg>` / `dog profile <file.dg>` / `dog docs [topic]` / `dog forge new <name>` (alias: `new`)
@@ -30,7 +31,7 @@ DOG is a strictly typed, readable, general-purpose programming language implemen
 - `dog completions [bash|zsh|fish]` — Print shell completion script
 - `dog repl` — Stateful multi-line terminal with git-aware Kali-inspired `┌──(user⩫dog)-[path]` prompt
 - `dog add` / `dog remove` / `dog search` / `dog list` / `dog info` — Offline DOG Hub (`dog.pack`, `dog.lock`, `~/.dog/cache`)
-- `dog server [dir] [port]` — Local static HTTP file server
+- `dog server [dir] [port] [--host 0.0.0.0]` — Multi-threaded local/LAN static HTTP file server
 - `dog sdu <status|auth|permissions|revoke|logs|doctor>` — Super Dog User scoped privilege & audit subsystem
 - `dog doctor` / `dog system` / `dog status` / `dog env` / `dog process` / `dog permissions` / `dog logs` / `dog clean` / `dog update` (`upgrade`)
 - `dog config personality <mode>`

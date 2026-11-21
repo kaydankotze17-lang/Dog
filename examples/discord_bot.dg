@@ -1,0 +1,99 @@
+# Local Discord Bot Webhook / REST Command Server in DOG
+# Supports Discord Webhooks (DISCORD_WEBHOOK_URL) & Discord REST API v10 (DISCORD_BOT_TOKEN + DISCORD_CHANNEL_ID)
+# Run with:
+#   export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
+#   dog run examples/discord_bot.dg
+# Trigger commands locally via curl:
+#   curl "http://127.0.0.1:8090/cmd?text=!ping"
+#   curl -X POST http://127.0.0.1:8090/say -d "Hello from DOG on Termux!"
+
+let bot_addr = "127.0.0.1:8090"
+let state_db = ".dog_bot_state.json"
+
+fn send_discord_message(content: text) -> text
+    let webhook = env_get("DISCORD_WEBHOOK_URL")
+    var payload: map<text, text> = {}
+    map_set(payload, "content", content)
+    let json_body = json_stringify(payload)
+
+    if len(webhook) > 0
+        return http_post(webhook, json_body, "application/json")
+    end
+
+    let token = env_get("DISCORD_BOT_TOKEN")
+    let channel_id = env_get("DISCORD_CHANNEL_ID")
+    if len(token) > 0 and len(channel_id) > 0
+        let url = "https://discord.com/api/v10/channels/" + channel_id + "/messages"
+        var headers: map<text, text> = {}
+        map_set(headers, "Authorization", "Bot " + token)
+        map_set(headers, "Content-Type", "application/json")
+        let res = http_request("POST", url, headers, json_body)
+        return "status=" + map_get(res, "status") + " body=" + map_get(res, "body")
+    end
+
+    return "dry-run (set DISCORD_WEBHOOK_URL or DISCORD_BOT_TOKEN + DISCORD_CHANNEL_ID): " + content
+end
+
+fn handle_bot_command(cmd_raw: text) -> text
+    let cmd = lower(trim(cmd_raw))
+    if cmd == "!ping"
+        return "Pong! DOG bot alive on " + os_name() + "/" + os_arch()
+    end
+    if cmd == "!roll"
+        return "Rolled a " + text(rand_int(1, 20)) + " (d20)"
+    end
+    if cmd == "!stats"
+        var hits = 0
+        if kv_has(state_db, "commands_run")
+            hits = number(kv_get(state_db, "commands_run"))
+        end
+        return "Commands served: " + text(hits) + " | Session ID: " + uuid_v4()
+    end
+    return "Unknown command '" + cmd_raw + "'. Try !ping, !roll, or !stats."
+end
+
+let srv = http_listen(bot_addr)
+log_info("DOG Discord bot local bridge listening on http://" + bot_addr)
+log_info("Try: curl -X POST http://" + bot_addr + "/cmd -d '!ping'")
+
+while true
+    try
+        let req = http_accept(srv)
+        let path = map_get(req, "path")
+        let body = map_get(req, "body")
+
+        if path == "/interactions"
+            # Discord Interactions endpoint type 1 PING ack
+            http_reply(req, 200, "application/json", "{\"type\":1}")
+        otherwise
+            if path == "/cmd"
+                var hits = 0
+                if kv_has(state_db, "commands_run")
+                    hits = number(kv_get(state_db, "commands_run"))
+                end
+                kv_set(state_db, "commands_run", text(hits + 1))
+
+                var cmd_input = trim(body)
+                if len(cmd_input) == 0
+                    cmd_input = "!ping"
+                end
+                let reply = handle_bot_command(cmd_input)
+                let discord_res = send_discord_message(reply)
+
+                var out: map<text, text> = {}
+                map_set(out, "reply", reply)
+                map_set(out, "discord", discord_res)
+                http_reply(req, 200, "application/json", json_stringify(out))
+            otherwise
+                if path == "/say"
+                    let discord_res = send_discord_message(body)
+                    http_reply(req, 200, "text/plain; charset=utf-8", discord_res + "\n")
+                otherwise
+                    http_reply(req, 200, "text/plain; charset=utf-8", "DOG Discord Bot OK\n")
+                end
+            end
+        end
+    catch err
+        log_warn("Bot loop recovered from error: " + err)
+    end
+end

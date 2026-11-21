@@ -3,6 +3,7 @@ use crate::config::DogConfig;
 use crate::hub::DogPack;
 use crate::interpreter::{resolve_program, run_source_with_io};
 use crate::lexer::Lexer;
+use crate::net::guess_mime_type;
 use crate::parser::Parser;
 use crate::sdu::{audit_log_path, detect_actual_root, session_path};
 use crate::stdlib::StdIo;
@@ -12,7 +13,9 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
-use std::time::Instant;
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 pub fn handle_inspect(path: &str) -> Result<String, String> {
     let source = fs::read_to_string(path).map_err(|e| format!("Failed to read '{path}': {e}"))?;
@@ -145,12 +148,34 @@ pub fn handle_docs(topic: Option<&str>) -> String {
              Map     : map_get(), map_set(), map_has(), map_keys(), map_remove()\n\
              Files   : file_read(), file_write(), file_append(), file_exists(), file_delete(),\n\
                        dir_list(), mkdir(), cwd()\n\
-             System  : args(), env_get(), env_set(), time_now_ms(), sleep_ms()\n\
-             JSON    : json_parse(), json_stringify()\n\
+             KV DB   : kv_set(), kv_get(), kv_has(), kv_delete(), kv_keys()\n\
+             System  : args(), env_get(), env_set(), exec_cmd(), os_name(), os_arch(),\n\
+                       time_now_ms(), sleep_ms(), uuid_v4()\n\
+             Interop : json_parse(), json_stringify(), csv_parse(), url_encode(), url_decode()\n\
              Crypto  : hex_encode(), hex_decode(), base64_encode(), base64_decode(),\n\
                        sha256(), hmac_sha256()\n\
-             Network : http_get() (plain http://)\n\
+             Network : http_listen(), http_port(), http_accept(), http_reply(), http_serve_file(),\n\
+                       http_close(), http_get(), http_post(), http_request(),\n\
+                       tcp_listen(), tcp_port(), tcp_accept(), tcp_connect(), tcp_send(),\n\
+                       tcp_recv(), tcp_close()\n\
              Errors  : assert(), fail()"
+                .to_string()
+        }
+        "network" | "net" | "web" | "bot" => {
+            "DOG Networking, Local Websites & Discord Bots\n\
+             -------------------------------------------\n\
+             HTTP Server : let srv = http_listen(\"127.0.0.1:8080\")  (\"0.0.0.0:8080\" for LAN)\n\
+                           let req = http_accept(srv)   -> map {id, method, path, query, body, remote, ...}\n\
+                           http_reply(req, 200, \"text/html\", html)\n\
+                           http_serve_file(req, \"public/index.html\")\n\
+                           http_close(srv)\n\
+             HTTP Client : http_get(url), http_post(url, body, \"application/json\"),\n\
+                           http_request(\"POST\", url, headers_map, json_body) -> {status, body}\n\
+                           Supports http:// natively and https:// (Discord API/webhooks) via curl\n\
+             Raw TCP     : tcp_listen(addr), tcp_accept(id), tcp_connect(addr),\n\
+                           tcp_send(id, data), tcp_recv(id, max_bytes), tcp_close(id)\n\
+             Persistence : kv_set(db, k, v), kv_get(db, k), kv_has(db, k), kv_delete(db, k), kv_keys(db)\n\
+             Static Host : dog server [dir] [port] [--host 0.0.0.0]"
                 .to_string()
         }
         "errors" => {
@@ -208,7 +233,7 @@ pub fn handle_docs(topic: Option<&str>) -> String {
             "DOG Documentation Topics\n\
              ------------------------\n\
              Run `dog docs <topic>` with one of:\n\
-               syntax, types, stdlib, errors, editor, prompt, hub, sdu"
+               syntax, types, stdlib, network, errors, editor, prompt, hub, sdu"
                 .to_string()
         }
     }
@@ -270,82 +295,169 @@ pub fn handle_forge(args: &[String]) -> Result<String, String> {
 }
 
 pub fn handle_server(args: &[String]) -> Result<(), String> {
-    let dir = args.first().map(String::as_str).unwrap_or(".");
-    let port: u16 = args
-        .get(1)
-        .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(8080);
+    let mut dir: Option<String> = None;
+    let mut port: u16 = 8080;
+    let mut host = String::from("127.0.0.1");
+    let mut port_set = false;
 
-    let root = fs::canonicalize(dir)
-        .map_err(|e| format!("Failed to resolve directory '{dir}': {e}"))?;
-    let addr = format!("127.0.0.1:{port}");
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--host" | "--bind" | "-H" => {
+                if let Some(h) = args.get(i + 1) {
+                    host = h.clone();
+                    i += 2;
+                    continue;
+                }
+                return Err("Missing IP/hostname after --host".to_string());
+            }
+            "--port" | "-p" => {
+                if let Some(p) = args.get(i + 1).and_then(|s| s.parse::<u16>().ok()) {
+                    port = p;
+                    port_set = true;
+                    i += 2;
+                    continue;
+                }
+                return Err("Invalid port number after --port".to_string());
+            }
+            val if !val.starts_with('-') => {
+                if dir.is_none() {
+                    if let Ok(p) = val.parse::<u16>() {
+                        if !port_set && !Path::new(val).exists() {
+                            port = p;
+                            port_set = true;
+                            i += 1;
+                            continue;
+                        }
+                    }
+                    dir = Some(val.to_string());
+                } else if !port_set {
+                    if let Ok(p) = val.parse::<u16>() {
+                        port = p;
+                        port_set = true;
+                    }
+                }
+            }
+            unknown => {
+                return Err(format!(
+                    "Unknown option '{unknown}'. Usage: dog server [dir] [port] [--host 0.0.0.0]"
+                ));
+            }
+        }
+        i += 1;
+    }
+
+    let dir_str = dir.unwrap_or_else(|| ".".to_string());
+    let root = Arc::new(
+        fs::canonicalize(&dir_str)
+            .map_err(|e| format!("Failed to resolve directory '{dir_str}': {e}"))?,
+    );
+    let addr = format!("{host}:{port}");
     let listener =
         TcpListener::bind(&addr).map_err(|e| format!("Failed to bind {addr}: {e}"))?;
 
-    println!("DOG static server listening on http://{addr} (root: {})", root.display());
+    println!(
+        "DOG multi-threaded HTTP server listening on http://{addr} (root: {})",
+        root.display()
+    );
+    if host == "0.0.0.0" {
+        println!("LAN access enabled: reachable from devices on your local network.");
+    }
     println!("Press Ctrl+C to stop.");
 
     for stream_res in listener.incoming() {
         let Ok(mut stream) = stream_res else {
             continue;
         };
-        let mut buf = [0u8; 4096];
-        let Ok(n) = stream.read(&mut buf) else {
-            continue;
-        };
-        if n == 0 {
-            continue;
-        }
-        let req = String::from_utf8_lossy(&buf[..n]);
-        let req_line = req.lines().next().unwrap_or("");
-        let mut parts = req_line.split_whitespace();
-        let method = parts.next().unwrap_or("");
-        let raw_target = parts.next().unwrap_or("/");
+        let root_ref = Arc::clone(&root);
+        thread::spawn(move || {
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(15)));
+            let _ = stream.set_write_timeout(Some(Duration::from_secs(15)));
+            let mut buf = [0u8; 4096];
+            let Ok(n) = stream.read(&mut buf) else {
+                return;
+            };
+            if n == 0 {
+                return;
+            }
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let req_line = req.lines().next().unwrap_or("");
+            let mut parts = req_line.split_whitespace();
+            let method = parts.next().unwrap_or("");
+            let raw_target = parts.next().unwrap_or("/");
+            let is_head = method == "HEAD";
 
-        if method != "GET" && method != "HEAD" {
-            let body = b"405 Method Not Allowed\n";
-            let _ = write_http_response(&mut stream, "405 Method Not Allowed", "text/plain", body);
-            continue;
-        }
-
-        let clean_path = raw_target.split('?').next().unwrap_or("/");
-        if let Some(target_file) = resolve_safe_path(&root, clean_path) {
-            if target_file.is_dir() {
-                let index = target_file.join("index.html");
-                if index.is_file() {
-                    if let Ok(data) = fs::read(&index) {
-                        let _ = write_http_response(&mut stream, "200 OK", "text/html; charset=utf-8", &data);
-                        continue;
-                    }
-                }
-                let listing = build_dir_listing(&target_file, clean_path);
+            if method != "GET" && !is_head {
+                let body = b"405 Method Not Allowed\n";
                 let _ = write_http_response(
                     &mut stream,
-                    "200 OK",
-                    "text/html; charset=utf-8",
-                    listing.as_bytes(),
+                    "405 Method Not Allowed",
+                    "text/plain",
+                    body,
+                    false,
                 );
-            } else if target_file.is_file() {
-                match fs::read(&target_file) {
-                    Ok(data) => {
-                        let ctype = guess_content_type(&target_file);
-                        let _ = write_http_response(&mut stream, "200 OK", ctype, &data);
+                return;
+            }
+
+            let clean_path = raw_target.split('?').next().unwrap_or("/");
+            if let Some(target_file) = resolve_safe_path(&root_ref, clean_path) {
+                if target_file.is_dir() {
+                    let index = target_file.join("index.html");
+                    if index.is_file() {
+                        if let Ok(data) = fs::read(&index) {
+                            let _ = write_http_response(
+                                &mut stream,
+                                "200 OK",
+                                "text/html; charset=utf-8",
+                                &data,
+                                is_head,
+                            );
+                            return;
+                        }
                     }
-                    Err(_) => {
-                        let _ = write_http_response(
-                            &mut stream,
-                            "500 Internal Server Error",
-                            "text/plain",
-                            b"Read Error\n",
-                        );
+                    let listing = build_dir_listing(&target_file, clean_path);
+                    let _ = write_http_response(
+                        &mut stream,
+                        "200 OK",
+                        "text/html; charset=utf-8",
+                        listing.as_bytes(),
+                        is_head,
+                    );
+                } else if target_file.is_file() {
+                    match fs::read(&target_file) {
+                        Ok(data) => {
+                            let ctype = guess_mime_type(&target_file);
+                            let _ = write_http_response(&mut stream, "200 OK", ctype, &data, is_head);
+                        }
+                        Err(_) => {
+                            let _ = write_http_response(
+                                &mut stream,
+                                "500 Internal Server Error",
+                                "text/plain",
+                                b"Read Error\n",
+                                is_head,
+                            );
+                        }
                     }
+                } else {
+                    let _ = write_http_response(
+                        &mut stream,
+                        "404 Not Found",
+                        "text/plain",
+                        b"404 Not Found\n",
+                        is_head,
+                    );
                 }
             } else {
-                let _ = write_http_response(&mut stream, "404 Not Found", "text/plain", b"404 Not Found\n");
+                let _ = write_http_response(
+                    &mut stream,
+                    "403 Forbidden",
+                    "text/plain",
+                    b"403 Forbidden\n",
+                    is_head,
+                );
             }
-        } else {
-            let _ = write_http_response(&mut stream, "403 Forbidden", "text/plain", b"403 Forbidden\n");
-        }
+        });
     }
     Ok(())
 }
@@ -396,32 +508,22 @@ fn build_dir_listing(dir: &Path, url_path: &str) -> String {
     )
 }
 
-fn guess_content_type(path: &Path) -> &'static str {
-    match path.extension().and_then(|s| s.to_str()).unwrap_or("") {
-        "html" | "htm" => "text/html; charset=utf-8",
-        "css" => "text/css; charset=utf-8",
-        "js" | "mjs" => "application/javascript; charset=utf-8",
-        "json" => "application/json; charset=utf-8",
-        "dg" | "md" | "txt" | "rs" | "toml" => "text/plain; charset=utf-8",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "svg" => "image/svg+xml",
-        _ => "application/octet-stream",
-    }
-}
-
 fn write_http_response(
     stream: &mut std::net::TcpStream,
     status: &str,
     content_type: &str,
     body: &[u8],
+    head_only: bool,
 ) -> std::io::Result<()> {
     let header = format!(
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(header.as_bytes())?;
-    stream.write_all(body)
+    if !head_only {
+        stream.write_all(body)?;
+    }
+    Ok(())
 }
 
 pub fn handle_system() -> String {

@@ -7,8 +7,7 @@ use crate::json::{parse_json, JsonValue};
 use crate::runtime::Value;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
-use std::io::{self, BufRead, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -510,17 +509,166 @@ pub fn call_builtin(
             let Some(Value::Text(url)) = args.into_iter().next() else {
                 unreachable!();
             };
-            http_get_plain(&url).map(Value::Text).map_err(|msg| {
-                DogDiagnostic::new(
-                    "E040",
-                    format!("HTTP request failed for '{url}'."),
-                    span.clone(),
-                    msg,
-                    "Ensure host is reachable over `http://` (TLS/HTTPS requires an external TLS crate).",
-                    "Use `try ... catch err` around network calls.",
-                    "Network barked back with an error.",
-                )
-            })
+            crate::net::http_client_request("GET", &url, &[], "")
+                .map(|r| Value::Text(r.body))
+                .map_err(|msg| net_err(format!("HTTP GET failed for '{url}'."), msg, span))
+        }
+        "http_post" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(url)), Some(Value::Text(body)), Some(Value::Text(ctype))) =
+                (it.next(), it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            let hdrs = vec![("Content-Type".to_string(), ctype)];
+            crate::net::http_client_request("POST", &url, &hdrs, &body)
+                .map(|r| Value::Text(r.body))
+                .map_err(|msg| net_err(format!("HTTP POST failed for '{url}'."), msg, span))
+        }
+        "http_request" => {
+            let mut it = args.into_iter();
+            let (
+                Some(Value::Text(method)),
+                Some(Value::Text(url)),
+                Some(Value::Map(hdr_entries)),
+                Some(Value::Text(body)),
+            ) = (it.next(), it.next(), it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            let hdrs: Vec<(String, String)> = hdr_entries
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            let resp = crate::net::http_client_request(&method, &url, &hdrs, &body)
+                .map_err(|msg| net_err(format!("HTTP {method} failed for '{url}'."), msg, span))?;
+            Ok(Value::Map(vec![
+                (Value::Text("status".to_string()), Value::Text(resp.status.to_string())),
+                (Value::Text("body".to_string()), Value::Text(resp.body)),
+            ]))
+        }
+        "http_listen" => {
+            let Some(Value::Text(addr)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let id = crate::net::http_listen(&addr)
+                .map_err(|msg| net_err(format!("Failed to bind HTTP server on '{addr}'."), msg, span))?;
+            Ok(Value::Number(id))
+        }
+        "http_port" => {
+            let Some(Value::Number(id)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let port = crate::net::http_port(id)
+                .map_err(|msg| net_err("Failed to query HTTP port.".to_string(), msg, span))?;
+            Ok(Value::Number(port))
+        }
+        "http_accept" => {
+            let Some(Value::Number(id)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let pairs = crate::net::http_accept(id)
+                .map_err(|msg| net_err("Failed accepting HTTP request.".to_string(), msg, span))?;
+            Ok(Value::Map(
+                pairs
+                    .into_iter()
+                    .map(|(k, v)| (Value::Text(k), Value::Text(v)))
+                    .collect(),
+            ))
+        }
+        "http_reply" => {
+            let mut it = args.into_iter();
+            let (
+                Some(Value::Map(req_entries)),
+                Some(Value::Number(status)),
+                Some(Value::Text(ctype)),
+                Some(Value::Text(body)),
+            ) = (it.next(), it.next(), it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            let req_id = extract_req_id(&req_entries, span)?;
+            crate::net::http_reply(&req_id, status, &ctype, &body)
+                .map_err(|msg| net_err("Failed sending HTTP reply.".to_string(), msg, span))?;
+            Ok(Value::Void)
+        }
+        "http_serve_file" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Map(req_entries)), Some(Value::Text(path))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            let req_id = extract_req_id(&req_entries, span)?;
+            crate::net::http_serve_file(&req_id, &path)
+                .map_err(|msg| net_err(format!("Failed serving file '{path}'."), msg, span))?;
+            Ok(Value::Void)
+        }
+        "http_close" => {
+            let Some(Value::Number(id)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            crate::net::http_close(id)
+                .map_err(|msg| net_err("Failed closing HTTP server.".to_string(), msg, span))?;
+            Ok(Value::Void)
+        }
+        "tcp_listen" => {
+            let Some(Value::Text(addr)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let id = crate::net::tcp_listen(&addr)
+                .map_err(|msg| net_err(format!("Failed to bind TCP listener on '{addr}'."), msg, span))?;
+            Ok(Value::Number(id))
+        }
+        "tcp_port" => {
+            let Some(Value::Number(id)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let port = crate::net::tcp_port(id)
+                .map_err(|msg| net_err("Failed querying TCP port.".to_string(), msg, span))?;
+            Ok(Value::Number(port))
+        }
+        "tcp_accept" => {
+            let Some(Value::Number(id)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let conn = crate::net::tcp_accept(id)
+                .map_err(|msg| net_err("Failed accepting TCP connection.".to_string(), msg, span))?;
+            Ok(Value::Number(conn))
+        }
+        "tcp_connect" => {
+            let Some(Value::Text(addr)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let conn = crate::net::tcp_connect(&addr)
+                .map_err(|msg| net_err(format!("TCP connect failed for '{addr}'."), msg, span))?;
+            Ok(Value::Number(conn))
+        }
+        "tcp_send" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Number(id)), Some(Value::Text(data))) = (it.next(), it.next()) else {
+                unreachable!();
+            };
+            crate::net::tcp_send(id, &data)
+                .map_err(|msg| net_err("TCP send failed.".to_string(), msg, span))?;
+            Ok(Value::Void)
+        }
+        "tcp_recv" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Number(id)), Some(Value::Number(max_bytes))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            let data = crate::net::tcp_recv(id, max_bytes)
+                .map_err(|msg| net_err("TCP recv failed.".to_string(), msg, span))?;
+            Ok(Value::Text(data))
+        }
+        "tcp_close" => {
+            let Some(Value::Number(id)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            crate::net::tcp_close(id)
+                .map_err(|msg| net_err("Failed closing TCP handle.".to_string(), msg, span))?;
+            Ok(Value::Void)
         }
         "log_info" => {
             let Some(Value::Text(msg)) = args.into_iter().next() else {
@@ -785,8 +933,154 @@ pub fn call_builtin(
                 _ => unreachable!(),
             }
         }
+        "url_encode" => {
+            let Some(Value::Text(s)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            Ok(Value::Text(crate::net::url_encode(&s)))
+        }
+        "url_decode" => {
+            let Some(Value::Text(s)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let decoded = crate::net::url_decode(&s).map_err(|e| {
+                DogDiagnostic::new(
+                    "E030",
+                    "Invalid URL-encoded input in url_decode().",
+                    span.clone(),
+                    e,
+                    "Pass valid percent-encoded text like \"hello%20dog\".",
+                    "Use url_encode() to escape query parameters.",
+                    "Those percent escapes look mangled.",
+                )
+            })?;
+            Ok(Value::Text(decoded))
+        }
+        "csv_parse" => {
+            let Some(Value::Text(raw)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let rows = crate::net::csv_parse(&raw)
+                .into_iter()
+                .map(|r| Value::List(r.into_iter().map(Value::Text).collect()))
+                .collect();
+            Ok(Value::List(rows))
+        }
+        "kv_set" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(db)), Some(Value::Text(key)), Some(Value::Text(val))) =
+                (it.next(), it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            crate::net::kv_set(&db, &key, &val)
+                .map_err(|msg| net_err(format!("KV write failed for '{db}'."), msg, span))?;
+            Ok(Value::Void)
+        }
+        "kv_get" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(db)), Some(Value::Text(key))) = (it.next(), it.next()) else {
+                unreachable!();
+            };
+            let found = crate::net::kv_get(&db, &key)
+                .map_err(|msg| net_err(format!("KV read failed for '{db}'."), msg, span))?;
+            match found {
+                Some(v) => Ok(Value::Text(v)),
+                None => Err(DogDiagnostic::new(
+                    "E034",
+                    format!("Key '{key}' not found in KV store '{db}'."),
+                    span.clone(),
+                    "Attempted to read a missing key with `kv_get()`.",
+                    "Check `if kv_has(db, key)` first or wrap in `try ... catch`.",
+                    "KV stores never return silent nulls.",
+                    "Nothing buried under that key.",
+                )),
+            }
+        }
+        "kv_has" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(db)), Some(Value::Text(key))) = (it.next(), it.next()) else {
+                unreachable!();
+            };
+            let has = crate::net::kv_has(&db, &key)
+                .map_err(|msg| net_err(format!("KV lookup failed for '{db}'."), msg, span))?;
+            Ok(Value::Bool(has))
+        }
+        "kv_delete" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(db)), Some(Value::Text(key))) = (it.next(), it.next()) else {
+                unreachable!();
+            };
+            let removed = crate::net::kv_delete(&db, &key)
+                .map_err(|msg| net_err(format!("KV delete failed for '{db}'."), msg, span))?;
+            Ok(Value::Bool(removed))
+        }
+        "kv_keys" => {
+            let Some(Value::Text(db)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let keys = crate::net::kv_keys(&db)
+                .map_err(|msg| net_err(format!("KV key listing failed for '{db}'."), msg, span))?;
+            Ok(Value::List(keys.into_iter().map(Value::Text).collect()))
+        }
+        "exec_cmd" => {
+            let Some(Value::Text(cmd)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let (code, stdout, stderr) = crate::net::exec_shell_cmd(&cmd)
+                .map_err(|msg| net_err(format!("Failed running shell command '{cmd}'."), msg, span))?;
+            Ok(Value::Map(vec![
+                (Value::Text("code".to_string()), Value::Text(code.to_string())),
+                (Value::Text("stdout".to_string()), Value::Text(stdout)),
+                (Value::Text("stderr".to_string()), Value::Text(stderr)),
+            ]))
+        }
+        "os_name" => Ok(Value::Text(std::env::consts::OS.to_string())),
+        "os_arch" => Ok(Value::Text(std::env::consts::ARCH.to_string())),
+        "uuid_v4" => {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(1);
+            let ctr = RNG_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let pid = std::process::id() as u64;
+            let seed_a = nanos ^ (pid << 32) ^ ctr.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            let seed_b = ctr.wrapping_add(nanos.rotate_left(17));
+            Ok(Value::Text(crate::net::format_uuid_v4(seed_a, seed_b)))
+        }
         _ => unreachable!("Type checker validates built-in function names"),
     }
+}
+
+fn net_err(title: String, msg: String, span: &Span) -> DogDiagnostic {
+    DogDiagnostic::new(
+        "E040",
+        title,
+        span.clone(),
+        msg,
+        "Check target address/port, permissions, or network connectivity.",
+        "Wrap network or external command calls in `try ... catch err ... end`.",
+        "Network barked back with an error.",
+    )
+}
+
+fn extract_req_id(entries: &[(Value, Value)], span: &Span) -> Result<String, DogDiagnostic> {
+    for (k, v) in entries {
+        if matches!(k, Value::Text(s) if s == "id") {
+            if let Value::Text(id) = v {
+                return Ok(id.clone());
+            }
+        }
+    }
+    Err(DogDiagnostic::new(
+        "E040",
+        "Missing HTTP request 'id' in request map.",
+        span.clone(),
+        "Expected the map<text, text> returned by `http_accept(server)`.",
+        "Pass the exact request map returned by `http_accept()`.",
+        "Each accepted HTTP request carries a unique internal 'id'.",
+        "Which connection am I replying to?",
+    ))
 }
 
 fn value_to_json(val: &Value) -> JsonValue {
@@ -812,53 +1106,5 @@ fn value_to_json(val: &Value) -> JsonValue {
         }
         Value::Enum { type_name, variant } => JsonValue::Str(format!("{type_name}.{variant}")),
         Value::Void => JsonValue::Null,
-    }
-}
-
-fn http_get_plain(url: &str) -> Result<String, String> {
-    if url.starts_with("https://") {
-        return Err("https:// requires TLS; v0.1 std-only build supports plain http:// directly.".to_string());
-    }
-    let rest = url
-        .strip_prefix("http://")
-        .ok_or_else(|| "URL must start with 'http://'".to_string())?;
-    let (host_port, path) = match rest.split_once('/') {
-        Some((hp, p)) => (hp, format!("/{p}")),
-        None => (rest, "/".to_string()),
-    };
-    let (host, addr_str) = if host_port.contains(':') {
-        (host_port.split(':').next().unwrap_or(host_port), host_port.to_string())
-    } else {
-        (host_port, format!("{host_port}:80"))
-    };
-
-    let mut addrs = addr_str
-        .to_socket_addrs()
-        .map_err(|e| format!("DNS resolution failed: {e}"))?;
-    let addr = addrs
-        .next()
-        .ok_or_else(|| "No resolved socket address".to_string())?;
-
-    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))
-        .map_err(|e| format!("Connection failed: {e}"))?;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
-
-    let req = format!(
-        "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: dog-lang/0.1\r\n\r\n"
-    );
-    stream
-        .write_all(req.as_bytes())
-        .map_err(|e| format!("Write failed: {e}"))?;
-
-    let mut raw = Vec::new();
-    stream
-        .read_to_end(&mut raw)
-        .map_err(|e| format!("Read failed: {e}"))?;
-    let text = String::from_utf8_lossy(&raw);
-    if let Some((_, body)) = text.split_once("\r\n\r\n") {
-        Ok(body.to_string())
-    } else {
-        Ok(text.to_string())
     }
 }

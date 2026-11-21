@@ -388,3 +388,169 @@ fn passes_script_args_to_args_builtin() {
     assert_eq!(io.output, "alpha:beta\n");
 }
 
+#[test]
+fn checks_web_server_and_discord_bot_examples() {
+    let web_src = include_str!("../examples/web_server.dg");
+    check_source("examples/web_server.dg", web_src).expect("web_server.dg must type-check");
+
+    let bot_src = include_str!("../examples/discord_bot.dg");
+    check_source("examples/discord_bot.dg", bot_src).expect("discord_bot.dg must type-check");
+}
+
+#[test]
+fn kv_store_persists_reads_lists_and_deletes() {
+    let dir = env::temp_dir().join("dog_kv_test");
+    let _ = fs::create_dir_all(&dir);
+    let db_path = dir.join("store.json").display().to_string();
+
+    let src = "\
+let db = args()[0]
+kv_set(db, \"token\", \"abc123\")
+kv_set(db, \"mode\", \"local\")
+assert(kv_has(db, \"token\"), \"kv_has detects key\")
+assert(kv_get(db, \"token\") == \"abc123\", \"kv_get reads value\")
+let keys = kv_keys(db)
+assert(len(keys) == 2 and list_contains(keys, \"mode\"), \"kv_keys lists keys\")
+assert(kv_delete(db, \"token\"), \"kv_delete removes key\")
+assert(not kv_has(db, \"token\"), \"removed key stays gone\")
+";
+    let mut io = ArgsMockIo {
+        args: vec![db_path],
+        output: String::new(),
+    };
+    run_source_with_io("kv_test.dg", src, &mut io).expect("kv_store script should pass");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn http_server_and_client_loopback_round_trip() {
+    let dir = env::temp_dir().join("dog_http_loopback_test");
+    let _ = fs::create_dir_all(&dir);
+    let port_file = dir.join("port.txt");
+    let html_file = dir.join("hello.html");
+    let _ = fs::remove_file(&port_file);
+    fs::write(&html_file, "<h1>Static Asset</h1>").unwrap();
+
+    let srv_src = "\
+let port_path = args()[0]
+let asset_path = args()[1]
+let srv = http_listen(\"127.0.0.1:0\")
+let p = http_port(srv)
+file_write(port_path, text(p))
+
+let r1 = http_accept(srv)
+assert(map_get(r1, \"method\") == \"POST\" and map_get(r1, \"path\") == \"/echo\", \"r1 matches\")
+http_reply(r1, 200, \"text/plain\", \"echo:\" + map_get(r1, \"body\") + \":\" + map_get(r1, \"query\"))
+
+let r2 = http_accept(srv)
+http_serve_file(r2, asset_path)
+
+let r3 = http_accept(srv)
+assert(map_get(r3, \"authorization\") == \"Bot secret\", \"custom header forwarded\")
+http_reply(r3, 201, \"application/json\", \"{\\\"ok\\\":true}\")
+http_close(srv)
+";
+    let p_arg = port_file.display().to_string();
+    let a_arg = html_file.display().to_string();
+    let srv_handle = std::thread::spawn(move || {
+        let mut io = ArgsMockIo {
+            args: vec![p_arg, a_arg],
+            output: String::new(),
+        };
+        run_source_with_io("http_srv.dg", srv_src, &mut io).expect("server script must pass");
+    });
+
+    let mut bound_port = String::new();
+    for _ in 0..80 {
+        if let Ok(s) = fs::read_to_string(&port_file) {
+            let trimmed = s.trim().to_string();
+            if !trimmed.is_empty() {
+                bound_port = trimmed;
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(!bound_port.is_empty(), "server must publish ephemeral port");
+
+    let client_src = "\
+let base = \"http://127.0.0.1:\" + args()[0]
+let post_res = http_post(base + \"/echo?q=7\", \"hello-dog\", \"text/plain\")
+assert(post_res == \"echo:hello-dog:q=7\", \"http_post round-trips\")
+
+let asset = http_get(base + \"/hello.html\")
+assert(asset == \"<h1>Static Asset</h1>\", \"http_serve_file serves file\")
+
+var hdrs: map<text, text> = {}
+map_set(hdrs, \"Authorization\", \"Bot secret\")
+let full = http_request(\"PUT\", base + \"/custom\", hdrs, \"payload\")
+assert(map_get(full, \"status\") == \"201\", \"http_request returns status\")
+assert(map_get(full, \"body\") == \"{\\\"ok\\\":true}\", \"http_request returns body\")
+";
+    let mut client_io = ArgsMockIo {
+        args: vec![bound_port],
+        output: String::new(),
+    };
+    run_source_with_io("http_client.dg", client_src, &mut client_io)
+        .expect("client script must pass");
+    srv_handle.join().expect("server thread must join cleanly");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn raw_tcp_sockets_loopback_round_trip() {
+    let dir = env::temp_dir().join("dog_tcp_loopback_test");
+    let _ = fs::create_dir_all(&dir);
+    let port_file = dir.join("tcp_port.txt");
+    let _ = fs::remove_file(&port_file);
+
+    let srv_src = "\
+let port_path = args()[0]
+let ln = tcp_listen(\"127.0.0.1:0\")
+file_write(port_path, text(tcp_port(ln)))
+let conn = tcp_accept(ln)
+let msg = tcp_recv(conn, 1024)
+tcp_send(conn, \"pong:\" + msg)
+tcp_close(conn)
+tcp_close(ln)
+";
+    let p_arg = port_file.display().to_string();
+    let srv_handle = std::thread::spawn(move || {
+        let mut io = ArgsMockIo {
+            args: vec![p_arg],
+            output: String::new(),
+        };
+        run_source_with_io("tcp_srv.dg", srv_src, &mut io).expect("tcp server script must pass");
+    });
+
+    let mut bound_port = String::new();
+    for _ in 0..80 {
+        if let Ok(s) = fs::read_to_string(&port_file) {
+            let trimmed = s.trim().to_string();
+            if !trimmed.is_empty() {
+                bound_port = trimmed;
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(!bound_port.is_empty(), "tcp listener must publish ephemeral port");
+
+    let client_src = "\
+let conn = tcp_connect(\"127.0.0.1:\" + args()[0])
+tcp_send(conn, \"ping\")
+let reply = tcp_recv(conn, 1024)
+assert(reply == \"pong:ping\", \"TCP round-trip matches\")
+tcp_close(conn)
+";
+    let mut client_io = ArgsMockIo {
+        args: vec![bound_port],
+        output: String::new(),
+    };
+    run_source_with_io("tcp_client.dg", client_src, &mut client_io)
+        .expect("tcp client script must pass");
+    srv_handle.join().expect("tcp server thread must join");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+

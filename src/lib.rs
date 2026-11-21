@@ -12,6 +12,7 @@ pub mod hub;
 pub mod interpreter;
 pub mod json;
 pub mod lexer;
+pub mod net;
 pub mod parser;
 pub mod prompt;
 pub mod runtime;

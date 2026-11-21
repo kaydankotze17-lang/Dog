@@ -92,6 +92,33 @@ const STATIC_CANDIDATES: &[&str] = &[
     "sha256(",
     "hmac_sha256(",
     "http_get(",
+    "http_post(",
+    "http_request(",
+    "http_listen(",
+    "http_port(",
+    "http_accept(",
+    "http_reply(",
+    "http_serve_file(",
+    "http_close(",
+    "tcp_listen(",
+    "tcp_port(",
+    "tcp_accept(",
+    "tcp_connect(",
+    "tcp_send(",
+    "tcp_recv(",
+    "tcp_close(",
+    "url_encode(",
+    "url_decode(",
+    "csv_parse(",
+    "kv_set(",
+    "kv_get(",
+    "kv_has(",
+    "kv_delete(",
+    "kv_keys(",
+    "exec_cmd(",
+    "os_name()",
+    "os_arch()",
+    "uuid_v4()",
     "log_info(",
     "log_warn(",
     "log_error(",
@@ -924,7 +951,34 @@ fn builtin_signature_help(name: &str) -> Option<&'static str> {
         "base64_decode" => Some("base64_decode(b64: text) -> text"),
         "sha256" => Some("sha256(s: text) -> text  | FIPS 180-4 SHA-256 hex digest"),
         "hmac_sha256" => Some("hmac_sha256(key: text, msg: text) -> text  | RFC 2104 HMAC"),
-        "http_get" => Some("http_get(url: text) -> text  | Plain HTTP GET request"),
+        "http_get" => Some("http_get(url: text) -> text  | HTTP/HTTPS GET body"),
+        "http_post" => Some("http_post(url: text, body: text, ctype: text) -> text  | HTTP/HTTPS POST"),
+        "http_request" => Some("http_request(method, url, headers: map<text,text>, body) -> map<text,text>"),
+        "http_listen" => Some("http_listen(addr: text) -> number  | Bind HTTP server e.g. \"127.0.0.1:8080\""),
+        "http_port" => Some("http_port(server_id: number) -> number  | Query bound local port"),
+        "http_accept" => Some("http_accept(server_id: number) -> map<text,text>  | Wait for next HTTP req"),
+        "http_reply" => Some("http_reply(req: map<text,text>, status: number, ctype, body) -> void"),
+        "http_serve_file" => Some("http_serve_file(req: map<text,text>, path: text) -> void  | Serve static asset"),
+        "http_close" => Some("http_close(server_id: number) -> void  | Stop HTTP server"),
+        "tcp_listen" => Some("tcp_listen(addr: text) -> number  | Bind raw TCP listener"),
+        "tcp_port" => Some("tcp_port(listener_id: number) -> number  | Query TCP listener port"),
+        "tcp_accept" => Some("tcp_accept(listener_id: number) -> number  | Accept raw TCP client"),
+        "tcp_connect" => Some("tcp_connect(addr: text) -> number  | Connect to TCP host:port"),
+        "tcp_send" => Some("tcp_send(conn_id: number, data: text) -> void  | Write UTF-8 to TCP socket"),
+        "tcp_recv" => Some("tcp_recv(conn_id: number, max_bytes: number) -> text  | Read from TCP socket"),
+        "tcp_close" => Some("tcp_close(handle_id: number) -> void  | Close TCP socket or listener"),
+        "url_encode" => Some("url_encode(s: text) -> text  | Percent-encode query strings"),
+        "url_decode" => Some("url_decode(s: text) -> text  | Decode percent-encoded text"),
+        "csv_parse" => Some("csv_parse(raw: text) -> list<list<text>>  | Parse CSV table rows"),
+        "kv_set" => Some("kv_set(db_path: text, key: text, val: text) -> void  | Persist key in JSON store"),
+        "kv_get" => Some("kv_get(db_path: text, key: text) -> text  | Read persisted key"),
+        "kv_has" => Some("kv_has(db_path: text, key: text) -> bool  | Check if key exists in store"),
+        "kv_delete" => Some("kv_delete(db_path: text, key: text) -> bool  | Delete key from store"),
+        "kv_keys" => Some("kv_keys(db_path: text) -> list<text>  | List all stored keys"),
+        "exec_cmd" => Some("exec_cmd(cmd: text) -> map<text,text>  | Run shell command (code, stdout, stderr)"),
+        "os_name" => Some("os_name() -> text  | Host OS name (e.g. linux, android, windows)"),
+        "os_arch" => Some("os_arch() -> text  | Host CPU arch (e.g. aarch64, x86_64)"),
+        "uuid_v4" => Some("uuid_v4() -> text  | Generate random RFC 4122 UUID v4"),
         "log_info" => Some("log_info(msg: text) -> void"),
         "log_warn" => Some("log_warn(msg: text) -> void"),
         "log_error" => Some("log_error(msg: text) -> void"),
@@ -1787,6 +1841,33 @@ pub(crate) fn highlight_dog_line(line: &str) -> String {
                     | "sha256"
                     | "hmac_sha256"
                     | "http_get"
+                    | "http_post"
+                    | "http_request"
+                    | "http_listen"
+                    | "http_port"
+                    | "http_accept"
+                    | "http_reply"
+                    | "http_serve_file"
+                    | "http_close"
+                    | "tcp_listen"
+                    | "tcp_port"
+                    | "tcp_accept"
+                    | "tcp_connect"
+                    | "tcp_send"
+                    | "tcp_recv"
+                    | "tcp_close"
+                    | "url_encode"
+                    | "url_decode"
+                    | "csv_parse"
+                    | "kv_set"
+                    | "kv_get"
+                    | "kv_has"
+                    | "kv_delete"
+                    | "kv_keys"
+                    | "exec_cmd"
+                    | "os_name"
+                    | "os_arch"
+                    | "uuid_v4"
                     | "log_info"
                     | "log_warn"
                     | "log_error"

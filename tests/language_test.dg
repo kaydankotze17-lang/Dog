@@ -92,3 +92,19 @@ assert(list_contains(nums, 20), "list_contains() finds matching element")
 assert(hmac_sha256("key", "The quick brown fox jumps over the lazy dog") == "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8", "hmac_sha256 matches RFC vector")
 assert(len(cwd()) > 0, "cwd() returns non-empty path")
 
+assert(url_encode("hello dog & cat!") == "hello%20dog%20%26%20cat%21", "url_encode() escapes reserved chars")
+assert(url_decode("hello%20dog+%26%20cat%21") == "hello dog & cat!", "url_decode() restores encoded text")
+
+let rows = csv_parse("name,role\n\"Ada, Lovelace\",leader\nRex,scout\n")
+assert(len(rows) == 3, "csv_parse() parses all lines")
+assert(rows[1][0] == "Ada, Lovelace" and rows[1][1] == "leader", "csv_parse() handles quoted commas")
+
+assert(len(os_name()) > 0 and len(os_arch()) > 0, "os_name() and os_arch() return platform info")
+let uid = uuid_v4()
+assert(len(uid) == 36 and slice(uid, 14, 15) == "4", "uuid_v4() formats RFC 4122 version 4 UUID")
+
+let cmd_res = exec_cmd("echo dog-exec-ok")
+assert(map_get(cmd_res, "code") == "0", "exec_cmd() captures exit code")
+assert(trim(map_get(cmd_res, "stdout")) == "dog-exec-ok", "exec_cmd() captures stdout")
+
+
