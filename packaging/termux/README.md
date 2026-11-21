@@ -1,20 +1,20 @@
 # Termux Package & `pkg install dog` Guide
 
-This directory contains everything needed to distribute `dog` as a real Termux `.deb` package and APT repository for `https://github.com/kaydankotze17-lang/dog`.
+This directory contains everything needed to distribute `dog` as a real Termux `.deb` package and APT repository for `https://github.com/kaydankotze17-lang/Dog`.
 
 ## 1. Enable `pkg install dog` via GitHub Pages APT Repo
 
-1. Push this repository to `https://github.com/kaydankotze17-lang/dog` (`main` branch).
+1. Push this repository to `https://github.com/kaydankotze17-lang/Dog` (`main` branch).
 2. Wait for the **Build Termux APT Repository & Release** GitHub Action (`.github/workflows/termux-apt.yml`) to finish — it cross-compiles `dog` for `aarch64`, `arm` (ARMv7), and `x86_64`, generates `.deb` archives, and pushes an APT repository to the `gh-pages` branch.
 3. In GitHub repo **Settings → Pages → Source: `Deploy from a branch` → Branch: `gh-pages` (`/root`)**.
 4. In Termux on Android, register your APT repo once and install `dog`:
    ```bash
-   echo "deb [trusted=yes] https://kaydankotze17-lang.github.io/dog termux main" > $PREFIX/etc/apt/sources.list.d/dog.list
+   echo "deb [trusted=yes] https://kaydankotze17-lang.github.io/Dog termux main" > $PREFIX/etc/apt/sources.list.d/dog.list
    pkg update && pkg install -y dog
    ```
    Or run the one-line helper script:
    ```bash
-   curl -sSL https://raw.githubusercontent.com/kaydankotze17-lang/dog/main/packaging/termux/setup-apt.sh | bash
+   curl -sSL https://raw.githubusercontent.com/kaydankotze17-lang/Dog/main/packaging/termux/setup-apt.sh | bash
    ```
    From then on, `pkg upgrade` automatically updates `dog` whenever you push to `main`!
 
@@ -22,7 +22,7 @@ This directory contains everything needed to distribute `dog` as a real Termux `
 
 Push a version tag (`git tag v0.1.0 && git push origin v0.1.0`). GitHub Actions attaches `dog_0.1.0_aarch64.deb`, `dog_0.1.0_arm.deb`, and `dog_0.1.0_x86_64.deb` to the Release:
 ```bash
-curl -LO https://github.com/kaydankotze17-lang/dog/releases/latest/download/dog_0.1.0_aarch64.deb
+curl -LO https://github.com/kaydankotze17-lang/Dog/releases/latest/download/dog_0.1.0_aarch64.deb
 pkg install ./dog_0.1.0_aarch64.deb
 ```
 

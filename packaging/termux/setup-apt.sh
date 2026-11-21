@@ -5,7 +5,7 @@ set -euo pipefail
 # Usage: bash packaging/termux/setup-apt.sh [github-user] [repo-name]
 
 GH_USER="${1:-kaydankotze17-lang}"
-GH_REPO="${2:-dog}"
+GH_REPO="${2:-Dog}"
 PREFIX_DIR="${PREFIX:-/data/data/com.termux/files/usr}"
 LIST_DIR="$PREFIX_DIR/etc/apt/sources.list.d"
 REPO_URL="https://${GH_USER}.github.io/${GH_REPO}"

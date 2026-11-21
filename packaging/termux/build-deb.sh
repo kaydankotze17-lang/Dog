@@ -34,11 +34,11 @@ cat > "$STAGE_DIR/DEBIAN/control" <<EOF
 Package: dog
 Version: ${VERSION}
 Architecture: ${ARCH}
-Maintainer: kaydankotze17-lang <https://github.com/kaydankotze17-lang/dog>
+Maintainer: kaydankotze17-lang <https://github.com/kaydankotze17-lang/Dog>
 Installed-Size: ${INSTALLED_KB}
 Section: devel
 Priority: optional
-Homepage: https://github.com/kaydankotze17-lang/dog
+Homepage: https://github.com/kaydankotze17-lang/Dog
 Description: Strictly typed general-purpose programming language, Studio IDE, and CLI
  DOG is a zero-dependency Rust programming language featuring strict static typing,
  4-part structured diagnostics, a terminal Studio IDE, .dgb bytecode bundling,

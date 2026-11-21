@@ -44,16 +44,16 @@ cargo run -- run examples/hello.dg
 ## Android / Termux (`pkg install dog` & From Source)
 
 ### Instant Package Install (via GitHub Pages APT Repo)
-Once you push this repo to `https://github.com/kaydankotze17-lang/dog` and enable **Settings → Pages → Branch: `gh-pages`**, `.github/workflows/termux-apt.yml` automatically cross-compiles `dog` for `aarch64`, `arm` (ARMv7), and `x86_64` into `.deb` packages:
+Once you push this repo to `https://github.com/kaydankotze17-lang/Dog` and enable **Settings → Pages → Branch: `gh-pages`**, `.github/workflows/termux-apt.yml` automatically cross-compiles `dog` for `aarch64`, `arm` (ARMv7), and `x86_64` into `.deb` packages:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/kaydankotze17-lang/dog/main/packaging/termux/setup-apt.sh | bash
+curl -sSL https://raw.githubusercontent.com/kaydankotze17-lang/Dog/main/packaging/termux/setup-apt.sh | bash
 dog run examples/hello.dg
 ```
 
 Or add the APT line manually:
 ```bash
-echo "deb [trusted=yes] https://kaydankotze17-lang.github.io/dog termux main" > $PREFIX/etc/apt/sources.list.d/dog.list
+echo "deb [trusted=yes] https://kaydankotze17-lang.github.io/Dog termux main" > $PREFIX/etc/apt/sources.list.d/dog.list
 pkg update && pkg install -y dog
 ```
 

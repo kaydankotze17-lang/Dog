@@ -6,7 +6,7 @@ use crate::interpreter::{check_source, resolve_program, Interpreter};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::stdlib::InterpreterIo;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};

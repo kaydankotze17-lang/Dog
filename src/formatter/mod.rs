@@ -36,19 +36,17 @@ pub fn format_source(source: &str) -> String {
         }
 
         let indent = match first_word {
-            "case" => {
-                if let Some(BlockKind::Match { in_arm }) = stack.last_mut() {
+            "case" => match stack.last() {
+                Some(BlockKind::Match { in_arm }) => {
                     let level = stack_indent(&stack);
                     if *in_arm {
-                        // Case sits at match + 1, same as the body level of match before arm body
                         level.saturating_sub(1)
                     } else {
                         level
                     }
-                } else {
-                    stack_indent(&stack)
                 }
-            }
+                _ => stack_indent(&stack),
+            },
             "otherwise" => match stack.last() {
                 Some(BlockKind::If) => stack_indent(&stack).saturating_sub(1),
                 Some(BlockKind::Match { in_arm }) => {
