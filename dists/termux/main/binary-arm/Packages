@@ -2,12 +2,12 @@ Package: dog
 Version: 0.1.0
 Architecture: arm
 Maintainer: kaydankotze17-lang <https://github.com/kaydankotze17-lang/Dog>
-Installed-Size: 844
+Installed-Size: 928
 Filename: pool/main/d/dog/dog_0.1.0_arm.deb
-Size: 481918
-MD5sum: 7b09a63d3eca78bbd0411e274e53b0aa
-SHA1: b7951a027b68be175fc570b23222c5ea6ae87c5a
-SHA256: d3c1c7ea0d55ca14374dac86e4c91f46d5cf259c404ae76b81e8bbe2a8c03593
+Size: 522332
+MD5sum: d3f81efadf9e88efcc8aaf7c62360a1a
+SHA1: 654b8ed382d027244d3e8d1b47608ecc7adbdfb9
+SHA256: 89b13b4a55855bc1eea726e98848b8ec83c4ce823cad65fc7ec90a473f9e5d73
 Section: devel
 Priority: optional
 Homepage: https://github.com/kaydankotze17-lang/Dog
