@@ -1,13 +1,13 @@
 Package: dog
-Version: 0.1.0
+Version: 0.2.0-5
 Architecture: aarch64
 Maintainer: kaydankotze17-lang <https://github.com/kaydankotze17-lang/Dog>
-Installed-Size: 1468
-Filename: pool/main/d/dog/dog_0.1.0_aarch64.deb
-Size: 584724
-MD5sum: de89c6048ab3d07527a1d436985316a1
-SHA1: 583cacb2f223dfb91379b20b5e33dd373910306d
-SHA256: 7402a33826b3ea69822953731349e4737522f4b2028f23041592a290b55e421f
+Installed-Size: 1540
+Filename: pool/main/d/dog/dog_0.2.0-5_aarch64.deb
+Size: 588476
+MD5sum: 9f4c51d77c1faf3b760afc9ddbf9c163
+SHA1: 74fc2b2316d2bd38cd61cd5d0efa1d9aa8d2a62a
+SHA256: 2607fc406e532c0b49e6ec5ab77536e71975f40fb758e369013e1d4fe7bf9260
 Section: devel
 Priority: optional
 Homepage: https://github.com/kaydankotze17-lang/Dog

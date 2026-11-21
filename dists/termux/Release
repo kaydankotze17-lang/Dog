@@ -1,39 +1,39 @@
 Architectures: aarch64 arm x86_64
 Codename: termux
 Components: main
-Date: Sat, 21 Nov 2026 19:17:42 +0000
+Date: Sat, 21 Nov 2026 19:20:18 +0000
 Label: DOG Termux APT
 Origin: DOG Language
 Suite: termux
 MD5Sum:
- 0cc1680ff120a20e5138fbe8d7f0d776              163 Release
- 8bb4857661d0256cacaaf7b714aa4af9              732 main/binary-aarch64/Packages
- 651569d4d9a907c36dee121805b3a25f              494 main/binary-aarch64/Packages.gz
- a1fc067f57b58899c5bba1f66eb91042              724 main/binary-arm/Packages
- 357e758c819d24da7ac019430244b2b6              490 main/binary-arm/Packages.gz
- 9f96a74dc733f99211bab6ac7349747b              730 main/binary-x86_64/Packages
- 899842c8aa8fcc5146f5965cefec882c              494 main/binary-x86_64/Packages.gz
+ ec03e83397d5ca989bb69d8a4c284e77              163 Release
+ 77fa8a022f0f8afb5db24fe5c5162bba              736 main/binary-aarch64/Packages
+ e25f8c9c02cd452387d829089a1a170c              498 main/binary-aarch64/Packages.gz
+ 8e8ad1680065b87e618b8027553a1522              728 main/binary-arm/Packages
+ d949cc06b83de60ae8d42abc05f833d0              496 main/binary-arm/Packages.gz
+ bed0a817df563fc5b3d5d4485dbe0efb              734 main/binary-x86_64/Packages
+ 35f419a3a036a183959e85fc962b8991              498 main/binary-x86_64/Packages.gz
 SHA1:
- 58f6128123eba317e0c3a986046b57653a7329b5              163 Release
- 21f1bb5c33e7cb5abe169f6133a95f38b9c39c85              732 main/binary-aarch64/Packages
- a69340b69a917a9fbf9086ad45fed5d26b10ae81              494 main/binary-aarch64/Packages.gz
- ac9ae5e0f44e098a70f7ffaebd80fdb857b4005f              724 main/binary-arm/Packages
- 5eb8f90a98ac9b8057520ea635503bc16057ccb5              490 main/binary-arm/Packages.gz
- 7db2f989f89c5ae8032095526fa094d6ca1a5c8f              730 main/binary-x86_64/Packages
- a1062b19a9910a630724090bc078ca93ad292478              494 main/binary-x86_64/Packages.gz
+ a7c9f49cb63ad453cbd3e98a0b78364a355ff598              163 Release
+ c42ebff7a1da25470ad34fb925a1e5c7ae0acd1a              736 main/binary-aarch64/Packages
+ bc6977cef87f3029184b84f6755d9b0e9027a160              498 main/binary-aarch64/Packages.gz
+ c6be731be7fe231f8cee2f0e2c5fe4d76b9ebc8b              728 main/binary-arm/Packages
+ ab78798b9371bd413022881c3e29aa9c18e23678              496 main/binary-arm/Packages.gz
+ 7963089badb6191981cf7c82f465ddf45c9f2a63              734 main/binary-x86_64/Packages
+ 8665a307cd68eabf1f80695ec34960cb57acea34              498 main/binary-x86_64/Packages.gz
 SHA256:
- f3c5399d37915d96b169733b7e047a0f3f02d61b04e590b587b27f9f57299942              163 Release
- 33f1dae79173ab17c8d44458d88a5bbefed518a1f7e8e7416e878498896823bc              732 main/binary-aarch64/Packages
- 2c8f40e70471ad623b9285358a20b9e6da2dc654517d08f510b1335e0ae5fc10              494 main/binary-aarch64/Packages.gz
- e64c22d38504895572111541fb32f0f8aecc476253caa8a247c38f5e8b1ccca1              724 main/binary-arm/Packages
- cd9c1a568688c50f120c3b187e25b9f989983d4118f5d836d7d093b27d4bb47f              490 main/binary-arm/Packages.gz
- 4edbcc801905a3417db91bc7f2891b4fb373ba882cb23ada7f62ce65d7d1d81d              730 main/binary-x86_64/Packages
- 91b29ae397b571c680aa8622916b4c86e67fe77427054336050a58f6aa889bf4              494 main/binary-x86_64/Packages.gz
+ 956eb758ff6dbf0d954b3b9114b42ee13cda56c294f468b781e0742b5eadd42c              163 Release
+ 501e02ba71377ebb076c1bbf0c42e76d45514e9f5879ac761a0f2108cb7b6546              736 main/binary-aarch64/Packages
+ b2975800de10fa08b763c58fec2d1665994e5024b7ef78dd5f9368437eae7e8a              498 main/binary-aarch64/Packages.gz
+ 74053205621945e0a29fcdd2e39d09b54ff112a0b458d05840ec921fb0f2e28f              728 main/binary-arm/Packages
+ c94d526fee27ec77dbb81781be0fbd50736b161c2ee602cf6566aece56dd73ff              496 main/binary-arm/Packages.gz
+ e82da0814fd7aefa7739b148fccd17e27f8293b907aba305f752703437a4171d              734 main/binary-x86_64/Packages
+ 0bbb24b36fcc633c9b4079d4ef75ca4a551c037cc4cd1c77aeb29cefe116398e              498 main/binary-x86_64/Packages.gz
 SHA512:
- efdeeb7c89d60764d12607e43b56bc1ab382e5baeb5df5d922b1594a2ae34eca1b619f0cfe6a48c644f977b88e4c042713c8299fedc881aaa4543a1d066461be              163 Release
- 569c89723e4722e8eb63480c20281b675cd57e69bbd94be5840d824dd442143848e1808ed43978a41c252fba7bfbbc7464a57b031b1b0401c164b3517355d253              732 main/binary-aarch64/Packages
- 688200005794ff166b6c5a9b2e5ec7d4e0efdb6fa415f1a0a28d17f7f13613f0b04cca966056fce1187babd831bdadb86eaf99dc9f5b4043ad46f7cf1c7a5d76              494 main/binary-aarch64/Packages.gz
- 8602d30d13e223f9906c1ff29aba450e28011e87d77abb6b985e6a91b6783f58b4910627b60c8b16a1f440fcb3e194f3015031ef7f7524aa3ade99db0542053d              724 main/binary-arm/Packages
- 6e3659e3af781271cad41beabb657c4625800d7cb3b45b509480423414eff5fe11ed81d862aef3a40044d6afb0dcada952c48aca260b65a308f9e1f60fd17965              490 main/binary-arm/Packages.gz
- 8009a6e08d6738b2a08353df21d2a0bcb46788ba8beb701e234af6dc92f9779fc0e2524ab36523afb0959f6a0688d548079b4a43451c6d21b9c0afab7c1ba22e              730 main/binary-x86_64/Packages
- ba85ce2758df46ed67f31a8b89d9bbdda80f49a481300b918069dd8a756a71ea78edd1b06ff36daa6cc4d5a8e20d53f23590efcd1ae5d81d629515c8d151fab5              494 main/binary-x86_64/Packages.gz
+ b8b68e6885de34004af8ed3900836acf44d8ed15646c268010c40ff016be2de75750a496bd93901ffc3aaff037f1f2c289d8b7d1e6131ff5e5f9af0ff690dc66              163 Release
+ fb21425f74e894b199a7ecef66d018cc26fd38442ad1e040a6518897481d26b22dd6265862b445bfbbdf65795bc4a1cdcaf1da6637a23914d58ab61fa7baa588              736 main/binary-aarch64/Packages
+ 3dc739b0512305d7001d17cda7ac9e1d16f123f575a1c73e3754a9687b8d7d25e18f3c2edc28e85216fe768f793fd64d83f21908a459d9f44bc1d71b863601a4              498 main/binary-aarch64/Packages.gz
+ 5a84f3644b07e5b56dfccea557e39c823749cd7c4713e458da1d342e759109cbb8cc06d938d7fc7be3c2b117f7c0a13cc01fff9bf83e32fc666b30886c627e76              728 main/binary-arm/Packages
+ 77601c21c0b0613dca505c4b21ce25a2feb17e08cc65fb4c88a0d379f115c5f9212be7951f08dcdc9843a205b9e91e14bd91e453c3fe45d9eff05f67980b1ec3              496 main/binary-arm/Packages.gz
+ 892a16b2eaf51229880e228d9a9dc51e39cba0e97e8f9be68160eccef2ac7dfb58f29c3e22602906672b027de846fa3f4638e21cce943415dcf12362f9eec0d9              734 main/binary-x86_64/Packages
+ fafc8d0519f9bea81edd79f96f2b1bcaacf42bae2f477a61e405103fbf7ef40672a48e64693f2e1278dc679ec2e34b2eb7541eb1e85ceb409cf4f59a7b6e28e5              498 main/binary-x86_64/Packages.gz
