@@ -1,34 +1,37 @@
 # DOG Programming Language (`dog-lang`)
 
-DOG is a strictly typed, readable, general-purpose programming language implemented in Rust with zero external crate dependencies.
+DOG is a strictly typed, readable, general-purpose programming language implemented in Rust with zero external crate dependencies and zero `unsafe` blocks, built to run natively on Linux, macOS, Windows, and Android Termux (ARMv7 & AArch64).
 
 ## Implemented Features (v0.1.0)
 
-Language engine (`dog-lang/src/`):
-- Lexer & recursive-descent Parser with exact `file:line:col` spans
-- Strict static Type Checker (`text`, `number`, `decimal`, `bool`, `void`, `list<T>`)
-- Bindings: `let` (immutable), `var` (mutable), `const` (constant), optional `: type` annotations
-- Control flow: `if` / `otherwise` / `end`, `while`, `repeat`, `for ... in ...`, `break`, `continue`
-- Functions: `fn name(param: type) -> return_type ... end`, `return`, recursion
-- Operators: `==`, `!=`, `>`, `<`, `>=`, `<=`, `and`, `or`, `not`, `+`, `-`, `*`, `/`, `%`, `[]` indexing
-- Built-ins: `say()`, `answer()`, `lower()`, `upper()`, `trim()`, `contains()`, `split()`, `join()`, `len()`, `text()`, `number()`, `decimal()`, `push()`, `pop()`, `abs()`, `min()`, `max()`, `assert()`
-- Diagnostics: Structured 4-part error messages (`What / WHY / FIX / TIP + DOG`) with configurable personality (`normal`, `sarcastic`, `chaotic`, `professional`, `silent`)
-- Tooling & CLI:
-  - `dog run <file.dg>`
-  - `dog check <file.dg>`
-  - `dog format [--check] <file.dg>`
-  - `dog test [path]`
-  - `dog doctor`
-  - `dog edit [file.dg]` / `dog editor [file.dg]` (Nano-inspired terminal editor)
-  - `dog repl` (stateful multi-line terminal with Kali-inspired `┌──(user⩫dog)-[path]` prompt)
-  - `dog config personality [mode]`
-  - `dog --version`, `dog --help`
+### Language Engine (`src/`)
+- **Lexer & Recursive-Descent Parser**: Exact `file:line:col` spans and `end`-delimited blocks independent of indentation.
+- **Strict Static Type Checker**: Primitives (`text`, `number`, `decimal`, `bool`, `void`), generics (`list<T>`, `map<K, V>`), user-defined `struct` and `enum`, return-path verification (`E026`), mutability enforcement (`E012`), and loop bounds checks (`E025`).
+- **Bindings & Modules**: `let` (immutable), `var` (mutable), `const`, optional `: type` annotations, and `use "path.dg"` local module imports with cycle detection (`E041`).
+- **Control Flow & Error Handling**: `if` / `otherwise` / `end`, `match` / `case` / `otherwise` / `end`, `try` / `catch err` / `end`, `while`, `repeat`, `for ... in ...`, `break`, `continue`, `fn ... -> ... end`, and recursion (depth limit 256).
+- **Operators**: `==`, `!=`, `>`, `<`, `>=`, `<=`, `and`, `or`, `not`, `+`, `-`, `*`, `/`, `%`, `.` field/enum access, `[]` indexing.
+- **Standard Library Built-ins**:
+  - I/O & Logging: `say()`, `answer()`, `log_info()`, `log_warn()`, `log_error()`
+  - Text & Casts: `lower()`, `upper()`, `trim()`, `contains()`, `split()`, `join()`, `len()`, `text()`, `number()`, `decimal()`
+  - Math: `abs()`, `min()`, `max()`
+  - Collections: `push()`, `pop()`, `map_get()`, `map_set()`, `map_has()`, `map_keys()`, `map_remove()`
+  - Files & System: `file_read()`, `file_write()`, `file_exists()`, `file_delete()`, `dir_list()`, `env_get()`, `env_set()`, `time_now_ms()`, `sleep_ms()`
+  - JSON, Crypto & HTTP: `json_parse()`, `json_stringify()`, `hex_encode()`, `hex_decode()`, `base64_encode()`, `base64_decode()`, `sha256()`, `http_get()` (plain `http://`)
+  - Errors: `assert()`, `fail()`
+- **Diagnostics**: Structured 4-part error messages (`What / WHY / FIX / TIP + DOG`) with configurable personality (`normal`, `sarcastic`, `chaotic`, `professional`, `silent`).
 
-Not yet implemented (tracked honestly in `docs/ROADMAP.md`):
-- Native compiler (`dog build`)
-- Package manager (`dog add`, DOG Hub)
-- DOG Studio IDE
-- SDU privilege subsystem (`dog sdu`)
+### CLI, Compiler, IDEs & Tooling
+- `dog run <file.dg | file.dgb>` — Execute `.dg` scripts or `.dgb` bytecode bundles
+- `dog build <file.dg> [--out <path>] [--native]` — Compile SHA-256 verified `.dgb` bundle (or native binary when `rustc` is on `PATH`)
+- `dog check <file.dg>` / `dog format [--check] <file.dg>` / `dog test [path]`
+- `dog inspect <file.dg>` / `dog profile <file.dg>` / `dog docs [topic]` / `dog forge new <name>`
+- `dog edit [file.dg]` / `dog studio [dir]` — Nano-inspired terminal editor and split-pane DOG Studio IDE
+- `dog repl` — Stateful multi-line terminal with Kali-inspired `┌──(user⩫dog)-[path]` prompt
+- `dog add` / `dog remove` / `dog search` / `dog list` / `dog info` — Offline DOG Hub (`dog.pack`, `dog.lock`, `~/.dog/cache`)
+- `dog server [dir] [port]` — Local static HTTP file server
+- `dog sdu <status|auth|permissions|revoke|logs|doctor>` — Super Dog User scoped privilege & audit subsystem
+- `dog doctor` / `dog system` / `dog status` / `dog env` / `dog process` / `dog permissions` / `dog logs` / `dog clean` / `dog update`
+- `dog config personality <mode>`
 
 ## Building & Running (Requires Rust >= 1.70)
 
@@ -38,12 +41,29 @@ cargo build --release
 cargo run -- run examples/hello.dg
 ```
 
-## Android / Termux (ARMv7 32-bit & AArch64)
+## Android / Termux (`pkg install dog` & From Source)
 
+### Instant Package Install (via GitHub Pages APT Repo)
+Once you push this repo to `https://github.com/kaydankotze17-lang/dog` and enable **Settings → Pages → Branch: `gh-pages`**, `.github/workflows/termux-apt.yml` automatically cross-compiles `dog` for `aarch64`, `arm` (ARMv7), and `x86_64` into `.deb` packages:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/kaydankotze17-lang/dog/main/packaging/termux/setup-apt.sh | bash
+dog run examples/hello.dg
+```
+
+Or add the APT line manually:
+```bash
+echo "deb [trusted=yes] https://kaydankotze17-lang.github.io/dog termux main" > $PREFIX/etc/apt/sources.list.d/dog.list
+pkg update && pkg install -y dog
+```
+
+See [`packaging/termux/README.md`](packaging/termux/README.md) for direct `.deb` releases and upstream `termux-packages` submission (`packaging/termux/build.sh`).
+
+### Build From Source on Termux
 ```bash
 pkg update && pkg install rust git
 cargo test
 cargo install --path .
 dog run examples/hello.dg
-dog edit examples/hello.dg
+dog studio .
 ```

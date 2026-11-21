@@ -1,0 +1,24 @@
+enum Role
+    Admin
+    Member
+    Guest
+end
+
+struct User
+    name: text
+    age: number
+    role: Role
+end
+
+var user = User { name: "Ada", age: 29, role: Role.Admin }
+user.age = 30
+say("User: " + user.name + " (" + text(user.age) + ")")
+
+match user.role
+    case Role.Admin
+        say("Access: full pack leader")
+    case Role.Member
+        say("Access: standard member")
+    otherwise
+        say("Access: read-only guest")
+end

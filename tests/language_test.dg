@@ -15,3 +15,55 @@ assert(len(tags) == 2, "push() must append items")
 assert(join(tags, ",") == "rust,termux", "join() must join text lists")
 assert(pop(tags) == "termux", "pop() must return last element")
 assert(len(tags) == 1, "pop() must remove last element")
+
+enum Status
+    Active
+    Paused
+end
+
+struct Task
+    title: text
+    priority: number
+    status: Status
+end
+
+var t = Task { title: "Ship DOG", priority: 1, status: Status.Active }
+t.priority = 2
+assert(t.priority == 2, "struct field mutation works")
+
+var matched = ""
+match t.status
+    case Status.Active
+        matched = "active"
+    otherwise
+        matched = "other"
+end
+assert(matched == "active", "match/case works for enums")
+
+var scores: map<text, number> = {}
+map_set(scores, "ada", 100)
+assert(map_has(scores, "ada"), "map_has detects inserted key")
+assert(map_get(scores, "ada") == 100, "map_get returns value")
+assert(map_remove(scores, "ada"), "map_remove deletes key")
+assert(len(scores) == 0, "map length updates after remove")
+
+let h = hex_encode("dog")
+assert(h == "646f67", "hex_encode matches ASCII bytes")
+assert(hex_decode(h) == "dog", "hex_decode round-trips")
+
+let b64 = base64_encode("hello")
+assert(b64 == "aGVsbG8=", "base64_encode matches RFC 4648")
+assert(base64_decode(b64) == "hello", "base64_decode round-trips")
+
+assert(sha256("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "SHA-256 matches NIST vector")
+
+let parsed_json = json_parse("{\"tool\": \"dog\"}")
+assert(map_get(parsed_json, "tool") == "dog", "json_parse reads keys")
+
+var caught = false
+try
+    fail("expected boom")
+catch err
+    caught = contains(err, "expected boom")
+end
+assert(caught, "try/catch catches fail()")

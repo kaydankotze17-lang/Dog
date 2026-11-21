@@ -1,5 +1,5 @@
 use crate::ast::BindingKind;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -9,6 +9,15 @@ pub enum Value {
     Decimal(f64),
     Bool(bool),
     List(Vec<Value>),
+    Map(Vec<(Value, Value)>),
+    Struct {
+        type_name: String,
+        fields: BTreeMap<String, Value>,
+    },
+    Enum {
+        type_name: String,
+        variant: String,
+    },
     Void,
 }
 
@@ -32,6 +41,35 @@ impl fmt::Display for Value {
                 }
                 f.write_str("]")
             }
+            Value::Map(entries) => {
+                f.write_str("{")?;
+                for (idx, (k, v)) in entries.iter().enumerate() {
+                    if idx > 0 {
+                        f.write_str(", ")?;
+                    }
+                    match k {
+                        Value::Text(s) => write!(f, "\"{s}\"")?,
+                        other => write!(f, "{other}")?,
+                    }
+                    f.write_str(": ")?;
+                    match v {
+                        Value::Text(s) => write!(f, "\"{s}\"")?,
+                        other => write!(f, "{other}")?,
+                    }
+                }
+                f.write_str("}")
+            }
+            Value::Struct { type_name, fields } => {
+                write!(f, "{type_name} {{ ")?;
+                for (idx, (k, v)) in fields.iter().enumerate() {
+                    if idx > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{k}: {v}")?;
+                }
+                f.write_str(" }")
+            }
+            Value::Enum { type_name, variant } => write!(f, "{type_name}.{variant}"),
             Value::Void => Ok(()),
         }
     }
@@ -96,5 +134,16 @@ impl Environment {
         let slot_val = self.get_mut_var(name)?;
         *slot_val = value;
         Ok(())
+    }
+
+    pub fn snapshot_top_symbols(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        if let Some(scope) = self.scopes.first() {
+            for (k, slot) in scope {
+                out.push((k.clone(), slot.value.to_string()));
+            }
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
     }
 }

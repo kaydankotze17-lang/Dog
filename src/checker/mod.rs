@@ -1,7 +1,7 @@
 use crate::ast::{BinOp, BindingKind, Expr, Program, Span, Stmt, TypeRef, UnaryOp};
 use crate::diagnostics::DogDiagnostic;
 use crate::types::DogType;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone)]
 struct BindingInfo {
@@ -16,13 +16,19 @@ struct FnSig {
 }
 
 const BUILTIN_NAMES: &[&str] = &[
-    "say", "answer", "lower", "upper", "number", "decimal", "text", "len", "trim", "contains",
-    "split", "join", "abs", "min", "max", "push", "pop", "assert",
+    "say", "answer", "lower", "upper", "trim", "contains", "split", "join", "len", "text",
+    "number", "decimal", "push", "pop", "abs", "min", "max", "assert", "fail", "map_get",
+    "map_set", "map_has", "map_keys", "map_remove", "file_read", "file_write", "file_exists",
+    "file_delete", "dir_list", "env_get", "env_set", "time_now_ms", "sleep_ms", "json_parse",
+    "json_stringify", "hex_encode", "hex_decode", "base64_encode", "base64_decode", "sha256",
+    "http_get", "log_info", "log_warn", "log_error",
 ];
 
 pub struct TypeChecker {
     scopes: Vec<HashMap<String, BindingInfo>>,
     functions: HashMap<String, FnSig>,
+    structs: HashMap<String, BTreeMap<String, DogType>>,
+    enums: HashMap<String, Vec<String>>,
     current_return_type: Option<DogType>,
     loop_depth: usize,
 }
@@ -32,13 +38,104 @@ impl TypeChecker {
         Self {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
+            structs: HashMap::new(),
+            enums: HashMap::new(),
             current_return_type: None,
             loop_depth: 0,
         }
     }
 
+    pub fn list_symbols(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        if let Some(root) = self.scopes.first() {
+            for (k, v) in root {
+                out.push((k.clone(), v.ty.label()));
+            }
+        }
+        for (name, sig) in &self.functions {
+            out.push((format!("fn {name}()"), sig.return_type.label()));
+        }
+        for name in self.structs.keys() {
+            out.push((format!("struct {name}"), name.clone()));
+        }
+        for name in self.enums.keys() {
+            out.push((format!("enum {name}"), name.clone()));
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
     pub fn check(&mut self, program: &Program) -> Result<(), DogDiagnostic> {
-        // Pass 1: register all top-level function signatures so recursion & mutual calls work.
+        // Pass 0: register struct and enum names first so field types & fn signatures can reference them.
+        for stmt in &program.statements {
+            match stmt {
+                Stmt::StructDef { name, span, .. } => {
+                    if self.structs.contains_key(name) || self.enums.contains_key(name) {
+                        return Err(DogDiagnostic::new(
+                            "E011",
+                            format!("Type '{name}' is already defined."),
+                            span.clone(),
+                            format!("A struct or enum named '{name}' already exists."),
+                            "Choose a distinct type name.",
+                            "Type names must be unique.",
+                            "Two blueprints, one name.",
+                        ));
+                    }
+                    self.structs.insert(name.clone(), BTreeMap::new());
+                }
+                Stmt::EnumDef { name, variants, span } => {
+                    if self.structs.contains_key(name) || self.enums.contains_key(name) {
+                        return Err(DogDiagnostic::new(
+                            "E011",
+                            format!("Type '{name}' is already defined."),
+                            span.clone(),
+                            format!("A struct or enum named '{name}' already exists."),
+                            "Choose a distinct type name.",
+                            "Type names must be unique.",
+                            "Duplicate enum name.",
+                        ));
+                    }
+                    self.enums.insert(name.clone(), variants.clone());
+                }
+                _ => {}
+            }
+        }
+
+        // Pass 1a: resolve struct fields
+        for stmt in &program.statements {
+            if let Stmt::StructDef { name, fields, span } = stmt {
+                let mut resolved = BTreeMap::new();
+                for f in fields {
+                    let f_ty = self.resolve_type_ref(&f.ty, &f.span)?;
+                    if resolved.contains_key(&f.name) {
+                        return Err(DogDiagnostic::new(
+                            "E011",
+                            format!("Duplicate field '{}' in struct '{name}'.", f.name),
+                            f.span.clone(),
+                            "Struct field names must be unique.",
+                            "Rename the duplicate field.",
+                            "Check struct definition.",
+                            "Two fields with the same name.",
+                        ));
+                    }
+                    resolved.insert(f.name.clone(), f_ty);
+                }
+                if resolved.is_empty() {
+                    return Err(DogDiagnostic::new(
+                        "E004",
+                        format!("Struct '{name}' must define at least one field."),
+                        span.clone(),
+                        "Empty structs carry no data.",
+                        "Add at least one `field: type` entry.",
+                        "Use an `enum` for dataless variants.",
+                        "An empty doghouse with no floor.",
+                    ));
+                }
+                self.structs.insert(name.clone(), resolved);
+            }
+        }
+
+        // Pass 1b: register all top-level function signatures.
         for stmt in &program.statements {
             if let Stmt::FnDef {
                 name,
@@ -70,11 +167,16 @@ impl TypeChecker {
                         "Two functions walked into a module with the same name.",
                     ));
                 }
+                let mut param_tys = Vec::with_capacity(params.len());
+                for p in params {
+                    param_tys.push(self.resolve_type_ref(&p.ty, &p.span)?);
+                }
+                let ret_ty = self.resolve_type_ref(return_type, span)?;
                 self.functions.insert(
                     name.clone(),
                     FnSig {
-                        params: params.iter().map(|p| DogType::from_ref(&p.ty)).collect(),
-                        return_type: DogType::from_ref(return_type),
+                        params: param_tys,
+                        return_type: ret_ty,
                     },
                 );
             }
@@ -87,8 +189,32 @@ impl TypeChecker {
         Ok(())
     }
 
+    fn resolve_type_ref(&self, tr: &TypeRef, span: &Span) -> Result<DogType, DogDiagnostic> {
+        DogType::from_ref_with(tr, &|name| {
+            if self.structs.contains_key(name) {
+                Some(DogType::Struct(name.to_string()))
+            } else if self.enums.contains_key(name) {
+                Some(DogType::Enum(name.to_string()))
+            } else {
+                None
+            }
+        })
+        .map_err(|msg| {
+            DogDiagnostic::new(
+                "E004",
+                msg,
+                span.clone(),
+                "Referenced type name is not a built-in, struct, or enum.",
+                "Define the struct/enum first or use text, number, decimal, bool, list<T>, map<K, V>.",
+                "Type names are case-sensitive.",
+                "Never heard of that type.",
+            )
+        })
+    }
+
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), DogDiagnostic> {
         match stmt {
+            Stmt::Use { .. } | Stmt::StructDef { .. } | Stmt::EnumDef { .. } => Ok(()),
             Stmt::Binding {
                 kind,
                 name,
@@ -96,7 +222,10 @@ impl TypeChecker {
                 value,
                 span,
             } => {
-                let annotated = type_ann.as_ref().map(DogType::from_ref);
+                let annotated = match type_ann {
+                    Some(tr) => Some(self.resolve_type_ref(tr, span)?),
+                    None => None,
+                };
                 let ty = self.check_expr_with_hint(value, annotated.as_ref())?;
 
                 if ty == DogType::Void {
@@ -105,7 +234,7 @@ impl TypeChecker {
                         "Cannot bind a 'void' expression to a variable.",
                         span.clone(),
                         format!("'{name}' cannot store the result of an action that returns nothing."),
-                        "Assign an expression that produces text, number, decimal, bool, or list<T>.",
+                        "Assign a non-void expression.",
                         "say() prints output and returns void.",
                         "Trying to bottle empty air?",
                     )
@@ -127,6 +256,17 @@ impl TypeChecker {
                     }
                 }
 
+                if self.structs.contains_key(name) || self.enums.contains_key(name) {
+                    return Err(DogDiagnostic::new(
+                        "E011",
+                        format!("Binding name '{name}' conflicts with an existing struct or enum."),
+                        span.clone(),
+                        format!("'{name}' is already declared as a type in this program."),
+                        "Choose a distinct variable name (for example lowercase).",
+                        "Use PascalCase for types and snake_case for variables.",
+                        "Don't name your dog after the doghouse.",
+                    ));
+                }
                 let current_scope = self.scopes.last_mut().expect("root scope exists");
                 if current_scope.contains_key(name) {
                     return Err(DogDiagnostic::new(
@@ -209,7 +349,7 @@ impl TypeChecker {
                         "E012",
                         format!("Cannot mutate immutable binding '{target}'."),
                         span.clone(),
-                        format!("'{target}' was not declared with `var`, so its elements cannot be overwritten."),
+                        format!("'{target}' was not declared with `var`."),
                         format!("Declare `{target}` with `var` to allow indexed mutation."),
                         "Immutability protects list contents too.",
                         "Look, don't touch.",
@@ -224,7 +364,7 @@ impl TypeChecker {
                             span.clone(),
                             format!("Cannot assign by index on type '{other}'."),
                             "Indexed assignment only works on `list<T>` variables.",
-                            "Strings are immutable in DOG.",
+                            "Use `map_set()` for maps.",
                             "Only lists let you swap items in place.",
                         )
                         .with_types("list<T>", other.label()));
@@ -258,6 +398,72 @@ impl TypeChecker {
                 }
                 Ok(())
             }
+            Stmt::FieldAssign {
+                target,
+                field,
+                value,
+                span,
+            } => {
+                let existing = self.lookup(target).cloned().ok_or_else(|| {
+                    DogDiagnostic::new(
+                        "E010",
+                        format!("Undefined variable '{target}'."),
+                        span.clone(),
+                        format!("No struct variable named '{target}' is in scope."),
+                        format!("Declare `var {target} = ...` first."),
+                        "Declare variables before mutating fields.",
+                        "Where is that struct?",
+                    )
+                })?;
+                if existing.kind != BindingKind::Var {
+                    return Err(DogDiagnostic::new(
+                        "E012",
+                        format!("Cannot mutate field on immutable binding '{target}'."),
+                        span.clone(),
+                        format!("'{target}' was declared immutable."),
+                        format!("Declare `{target}` with `var` to mutate fields."),
+                        "Immutability applies deeply to bindings.",
+                        "Read-only collar.",
+                    ));
+                }
+                let DogType::Struct(struct_name) = existing.ty else {
+                    return Err(DogDiagnostic::new(
+                        "E021",
+                        "Field assignment requires a struct.",
+                        span.clone(),
+                        format!("'{target}' is not a struct."),
+                        "Only struct values have assignable fields.",
+                        "Check variable type.",
+                        "That doesn't have fields.",
+                    ));
+                };
+                let fields = self.structs.get(&struct_name).cloned().unwrap_or_default();
+                let Some(field_ty) = fields.get(field) else {
+                    return Err(DogDiagnostic::new(
+                        "E010",
+                        format!("Unknown field '{field}' on struct '{struct_name}'."),
+                        span.clone(),
+                        format!("Struct '{struct_name}' has no field named '{field}'."),
+                        "Check the struct definition spelling.",
+                        "Inspect struct fields carefully.",
+                        "Sniffing for a field that isn't there.",
+                    ));
+                };
+                let val_ty = self.check_expr_with_hint(value, Some(field_ty))?;
+                if val_ty != *field_ty {
+                    return Err(DogDiagnostic::new(
+                        "E021",
+                        "Type mismatch in field assignment.",
+                        span.clone(),
+                        format!("Field '{struct_name}.{field}' expects '{field_ty}', got '{val_ty}'."),
+                        format!("Assign a '{field_ty}' value."),
+                        "Struct fields are strictly typed.",
+                        "Wrong type for that slot.",
+                    )
+                    .with_types(field_ty.label(), val_ty.label()));
+                }
+                Ok(())
+            }
             Stmt::If {
                 condition,
                 then_branch,
@@ -279,18 +485,70 @@ impl TypeChecker {
                 }
 
                 self.scopes.push(HashMap::new());
-                for s in then_branch {
-                    self.check_stmt(s)?;
-                }
+                self.check_block(then_branch)?;
                 self.scopes.pop();
 
                 if let Some(else_stmts) = otherwise_branch {
                     self.scopes.push(HashMap::new());
-                    for s in else_stmts {
-                        self.check_stmt(s)?;
-                    }
+                    self.check_block(else_stmts)?;
                     self.scopes.pop();
                 }
+                Ok(())
+            }
+            Stmt::Match {
+                subject,
+                cases,
+                otherwise_branch,
+                ..
+            } => {
+                let subj_ty = self.check_expr(subject)?;
+                for case in cases {
+                    let pat_ty = self.check_expr(&case.pattern)?;
+                    if pat_ty != subj_ty {
+                        return Err(DogDiagnostic::new(
+                            "E021",
+                            "Case pattern type mismatch in 'match'.",
+                            case.span.clone(),
+                            format!("Match subject has type '{subj_ty}', but case pattern has type '{pat_ty}'."),
+                            format!("Use a '{subj_ty}' pattern in every `case`."),
+                            "All `case` patterns must match the `match` subject type.",
+                            "Comparing apples to dog treats.",
+                        )
+                        .with_types(subj_ty.label(), pat_ty.label()));
+                    }
+                    self.scopes.push(HashMap::new());
+                    self.check_block(&case.body)?;
+                    self.scopes.pop();
+                }
+                if let Some(else_stmts) = otherwise_branch {
+                    self.scopes.push(HashMap::new());
+                    self.check_block(else_stmts)?;
+                    self.scopes.pop();
+                }
+                Ok(())
+            }
+            Stmt::TryCatch {
+                try_body,
+                err_name,
+                catch_body,
+                ..
+            } => {
+                self.scopes.push(HashMap::new());
+                self.check_block(try_body)?;
+                self.scopes.pop();
+
+                self.scopes.push(HashMap::new());
+                if let Some(scope) = self.scopes.last_mut() {
+                    scope.insert(
+                        err_name.clone(),
+                        BindingInfo {
+                            kind: BindingKind::Let,
+                            ty: DogType::Text,
+                        },
+                    );
+                }
+                self.check_block(catch_body)?;
+                self.scopes.pop();
                 Ok(())
             }
             Stmt::While {
@@ -395,10 +653,11 @@ impl TypeChecker {
                         "Keep your functions out in the open.",
                     ));
                 }
-                let ret_ty = DogType::from_ref(return_type);
+                let ret_ty = self.resolve_type_ref(return_type, span)?;
                 self.current_return_type = Some(ret_ty.clone());
                 self.scopes.push(HashMap::new());
                 for param in params {
+                    let p_ty = self.resolve_type_ref(&param.ty, &param.span)?;
                     let scope = self.scopes.last_mut().expect("fn scope");
                     if scope.contains_key(&param.name) {
                         self.scopes.pop();
@@ -417,7 +676,7 @@ impl TypeChecker {
                         param.name.clone(),
                         BindingInfo {
                             kind: BindingKind::Let,
-                            ty: DogType::from_ref(&param.ty),
+                            ty: p_ty,
                         },
                     );
                 }
@@ -587,6 +846,160 @@ impl TypeChecker {
                 }
                 Ok(DogType::List(Box::new(first_ty)))
             }
+            Expr::MapLit { entries, span } => {
+                if entries.is_empty() {
+                    if let Some(DogType::Map(k, v)) = hint {
+                        return Ok(DogType::Map(k.clone(), v.clone()));
+                    }
+                    return Err(DogDiagnostic::new(
+                        "E024",
+                        "Cannot infer key/value types of empty map '{}'.",
+                        span.clone(),
+                        "Strict typing requires every map to know its key and value types.",
+                        "Add a type annotation, e.g. `var m: map<text, number> = {}`.",
+                        "Non-empty maps like `{\"a\": 1}` infer their types automatically.",
+                        "An empty map with no legend.",
+                    ));
+                }
+                let (k_hint, v_hint) = match hint {
+                    Some(DogType::Map(k, v)) => (Some(k.as_ref()), Some(v.as_ref())),
+                    _ => (None, None),
+                };
+                let first_k = self.check_expr_with_hint(&entries[0].0, k_hint)?;
+                let first_v = self.check_expr_with_hint(&entries[0].1, v_hint)?;
+                for (k, v) in &entries[1..] {
+                    let kt = self.check_expr_with_hint(k, Some(&first_k))?;
+                    let vt = self.check_expr_with_hint(v, Some(&first_v))?;
+                    if kt != first_k {
+                        return Err(DogDiagnostic::new(
+                            "E021",
+                            "Mixed key types in map literal.",
+                            k.span().clone(),
+                            format!("Expected map key type '{first_k}', found '{kt}'."),
+                            "Use uniform key types across the map.",
+                            "Maps in DOG are strictly typed.",
+                            "Every key needs the same shape.",
+                        )
+                        .with_types(first_k.label(), kt.label()));
+                    }
+                    if vt != first_v {
+                        return Err(DogDiagnostic::new(
+                            "E021",
+                            "Mixed value types in map literal.",
+                            v.span().clone(),
+                            format!("Expected map value type '{first_v}', found '{vt}'."),
+                            "Use uniform value types across the map.",
+                            "Maps in DOG are strictly typed.",
+                            "Keep map values one consistent type.",
+                        )
+                        .with_types(first_v.label(), vt.label()));
+                    }
+                }
+                Ok(DogType::Map(Box::new(first_k), Box::new(first_v)))
+            }
+            Expr::StructInit { name, fields, span } => {
+                let Some(def_fields) = self.structs.get(name) else {
+                    return Err(DogDiagnostic::new(
+                        "E010",
+                        format!("Unknown struct '{name}'."),
+                        span.clone(),
+                        format!("No struct named '{name}' has been defined."),
+                        format!("Define `struct {name} ... end` before constructing it."),
+                        "Struct names are case-sensitive.",
+                        "Never seen that blueprint.",
+                    ));
+                };
+                let mut seen = HashMap::new();
+                for (fname, fexpr) in fields {
+                    let Some(expected_ty) = def_fields.get(fname) else {
+                        return Err(DogDiagnostic::new(
+                            "E010",
+                            format!("Unknown field '{fname}' on struct '{name}'."),
+                            fexpr.span().clone(),
+                            format!("Struct '{name}' does not have a field named '{fname}'."),
+                            "Check field spelling against the struct definition.",
+                            "Only declared fields can be initialized.",
+                            "Inventing extra fields won't fly.",
+                        ));
+                    };
+                    let got_ty = self.check_expr_with_hint(fexpr, Some(expected_ty))?;
+                    if got_ty != *expected_ty {
+                        return Err(DogDiagnostic::new(
+                            "E021",
+                            format!("Type mismatch for field '{name}.{fname}'."),
+                            fexpr.span().clone(),
+                            format!("Field '{fname}' expects '{expected_ty}', got '{got_ty}'."),
+                            format!("Pass a '{expected_ty}' value."),
+                            "Struct fields are strictly typed.",
+                            "Wrong value in that slot.",
+                        )
+                        .with_types(expected_ty.label(), got_ty.label()));
+                    }
+                    seen.insert(fname.clone(), true);
+                }
+                for req_field in def_fields.keys() {
+                    if !seen.contains_key(req_field) {
+                        return Err(DogDiagnostic::new(
+                            "E004",
+                            format!("Missing field '{req_field}' when initializing '{name}'."),
+                            span.clone(),
+                            format!("Struct '{name}' requires every field to be initialized."),
+                            format!("Provide `{req_field}: ...` inside `{name} {{ ... }}`."),
+                            "DOG avoids uninitialized fields by design.",
+                            "Forgot a piece of the puzzle.",
+                        ));
+                    }
+                }
+                Ok(DogType::Struct(name.clone()))
+            }
+            Expr::FieldAccess {
+                target,
+                field,
+                span,
+            } => {
+                if let Expr::Identifier { name, .. } = target.as_ref() {
+                    if let Some(variants) = self.enums.get(name) {
+                        if variants.contains(field) {
+                            return Ok(DogType::Enum(name.clone()));
+                        }
+                        return Err(DogDiagnostic::new(
+                            "E010",
+                            format!("Unknown variant '{field}' on enum '{name}'."),
+                            span.clone(),
+                            format!("Enum '{name}' has variants: {}.", variants.join(", ")),
+                            format!("Use a valid variant like `{name}.{}`.", variants.first().map(String::as_str).unwrap_or("Variant")),
+                            "Enum variants are case-sensitive.",
+                            "That variant isn't in the pack.",
+                        ));
+                    }
+                }
+                let target_ty = self.check_expr(target)?;
+                match target_ty {
+                    DogType::Struct(struct_name) => {
+                        let fields = self.structs.get(&struct_name).expect("struct exists");
+                        fields.get(field).cloned().ok_or_else(|| {
+                            DogDiagnostic::new(
+                                "E010",
+                                format!("Unknown field '{field}' on struct '{struct_name}'."),
+                                span.clone(),
+                                format!("Struct '{struct_name}' has no field named '{field}'."),
+                                "Check the struct definition.",
+                                "Inspect available field names.",
+                                "No such field.",
+                            )
+                        })
+                    }
+                    other => Err(DogDiagnostic::new(
+                        "E021",
+                        format!("Cannot access field '.{field}' on type '{other}'."),
+                        span.clone(),
+                        "Dot field access applies to struct values or Enum.Variant.",
+                        "Use a struct instance or enum name.",
+                        "For maps, use `map_get(m, key)`.",
+                        "Only structs and enums respond to dot syntax.",
+                    )),
+                }
+            }
             Expr::Index {
                 target,
                 index,
@@ -615,7 +1028,7 @@ impl TypeChecker {
                         span.clone(),
                         format!("Type '{other}' does not support `[...]` indexing."),
                         "Index only into `list<T>` or `text` values.",
-                        "Check the expression before `[`.",
+                        "For maps, use `map_get(m, key)`.",
                         "There's nothing inside that to index.",
                     )
                     .with_types("list<T> | text", other.label())),
@@ -800,7 +1213,6 @@ impl TypeChecker {
     }
 
     fn check_call(&self, callee: &str, args: &[Expr], span: &Span) -> Result<DogType, DogDiagnostic> {
-        // Special-case mutating list built-ins so we enforce `var` binding!
         if callee == "push" {
             if args.len() != 2 {
                 return Err(arity_error(callee, 2, args.len(), span));
@@ -827,6 +1239,47 @@ impl TypeChecker {
             }
             return self.require_mutable_list_arg(&args[0], callee);
         }
+        if callee == "map_set" {
+            if args.len() != 3 {
+                return Err(arity_error(callee, 3, args.len(), span));
+            }
+            let (k_ty, v_ty) = self.require_mutable_map_arg(&args[0], callee)?;
+            let got_k = self.check_expr_with_hint(&args[1], Some(&k_ty))?;
+            let got_v = self.check_expr_with_hint(&args[2], Some(&v_ty))?;
+            if got_k != k_ty || got_v != v_ty {
+                return Err(DogDiagnostic::new(
+                    "E021",
+                    "Type mismatch in map_set().",
+                    span.clone(),
+                    format!("Expected ({k_ty}, {v_ty}), received ({got_k}, {got_v})."),
+                    "Match the map's key and value types.",
+                    "Maps are strictly typed.",
+                    "Wrong key or value type for this map.",
+                )
+                .with_types(format!("{k_ty}, {v_ty}"), format!("{got_k}, {got_v}")));
+            }
+            return Ok(DogType::Void);
+        }
+        if callee == "map_remove" {
+            if args.len() != 2 {
+                return Err(arity_error(callee, 2, args.len(), span));
+            }
+            let (k_ty, _) = self.require_mutable_map_arg(&args[0], callee)?;
+            let got_k = self.check_expr_with_hint(&args[1], Some(&k_ty))?;
+            if got_k != k_ty {
+                return Err(DogDiagnostic::new(
+                    "E021",
+                    "Type mismatch in map_remove().",
+                    args[1].span().clone(),
+                    format!("Expected key type '{k_ty}', got '{got_k}'."),
+                    "Pass a matching key type.",
+                    "Check key types.",
+                    "Wrong key type.",
+                )
+                .with_types(k_ty.label(), got_k.label()));
+            }
+            return Ok(DogType::Bool);
+        }
 
         let mut arg_types = Vec::with_capacity(args.len());
         for arg in args {
@@ -844,7 +1297,7 @@ impl TypeChecker {
                         "Cannot pass 'void' to say().",
                         span.clone(),
                         "say() requires a printable value.",
-                        "Pass text, number, decimal, bool, or list to say().",
+                        "Pass text, number, decimal, bool, list, map, struct, or enum to say().",
                         "Do not nest say(say(...)).",
                         "Saying nothing out loud is called silence.",
                     )
@@ -854,65 +1307,142 @@ impl TypeChecker {
             }
             "answer" => {
                 if arg_types.len() > 1 {
-                    return Err(DogDiagnostic::new(
-                        "E014",
-                        "Too many arguments to answer().",
-                        span.clone(),
-                        format!("answer() takes 0 or 1 text prompt, received {}.", arg_types.len()),
-                        "Call `answer(\"Prompt: \")` or `answer()`.",
-                        "Keep prompts concise.",
-                        "One question at a time!",
-                    ));
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
                 }
                 if let Some(t) = arg_types.first() {
                     if *t != DogType::Text {
-                        return Err(DogDiagnostic::new(
-                            "E021",
-                            "Type mismatch detected.",
-                            span.clone(),
-                            format!("answer() prompt must be 'text', received '{t}'."),
-                            "Pass a quoted string prompt to answer().",
-                            "answer() always returns 'text'.",
-                            "Ask your question in words.",
-                        )
-                        .with_types("text", t.label()));
+                        return Err(type_err("text", &t.label(), span, "answer() prompt must be 'text'."));
                     }
                 }
                 Ok(DogType::Text)
             }
-            "lower" | "upper" | "trim" => {
+            "lower" | "upper" | "trim" | "hex_encode" | "hex_decode" | "base64_encode"
+            | "base64_decode" | "sha256" | "file_read" | "http_get" => {
                 if arg_types.len() != 1 {
                     return Err(arity_error(callee, 1, arg_types.len(), span));
                 }
                 if arg_types[0] != DogType::Text {
-                    return Err(DogDiagnostic::new(
-                        "E021",
-                        "Type mismatch detected.",
-                        span.clone(),
-                        format!("{callee}() expects 'text', received '{}'.", arg_types[0]),
-                        format!("Pass a 'text' value to {callee}()."),
-                        "String helpers only apply to text.",
-                        "Numbers don't have whitespace or uppercase.",
-                    )
-                    .with_types("text", arg_types[0].label()));
+                    return Err(type_err("text", &arg_types[0].label(), span, &format!("{callee}() expects 'text'.")));
                 }
                 Ok(DogType::Text)
+            }
+            "file_exists" | "file_delete" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err("text", &arg_types[0].label(), span, &format!("{callee}() expects path 'text'.")));
+                }
+                Ok(DogType::Bool)
+            }
+            "file_write" | "env_set" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err("text, text", &format!("{}, {}", arg_types[0], arg_types[1]), span, &format!("{callee}() expects two 'text' arguments.")));
+                }
+                Ok(DogType::Void)
+            }
+            "dir_list" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err("text", &arg_types[0].label(), span, "dir_list() expects directory path 'text'."));
+                }
+                Ok(DogType::List(Box::new(DogType::Text)))
+            }
+            "env_get" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err("text", &arg_types[0].label(), span, "env_get() expects variable name 'text'."));
+                }
+                Ok(DogType::Text)
+            }
+            "time_now_ms" => {
+                if !arg_types.is_empty() {
+                    return Err(arity_error(callee, 0, arg_types.len(), span));
+                }
+                Ok(DogType::Number)
+            }
+            "sleep_ms" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number {
+                    return Err(type_err("number", &arg_types[0].label(), span, "sleep_ms() expects milliseconds as 'number'."));
+                }
+                Ok(DogType::Void)
+            }
+            "json_parse" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err("text", &arg_types[0].label(), span, "json_parse() expects JSON 'text'."));
+                }
+                Ok(DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text)))
+            }
+            "json_stringify" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] == DogType::Void {
+                    return Err(type_err("non-void", "void", span, "Cannot serialize 'void' to JSON."));
+                }
+                Ok(DogType::Text)
+            }
+            "log_info" | "log_warn" | "log_error" | "fail" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err("text", &arg_types[0].label(), span, &format!("{callee}() expects 'text'.")));
+                }
+                Ok(DogType::Void)
+            }
+            "map_get" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                let DogType::Map(k, v) = &arg_types[0] else {
+                    return Err(type_err("map<K, V>", &arg_types[0].label(), span, "map_get() expects a map as first argument."));
+                };
+                if &arg_types[1] != k.as_ref() {
+                    return Err(type_err(&k.label(), &arg_types[1].label(), span, "map_get() key type mismatch."));
+                }
+                Ok((**v).clone())
+            }
+            "map_has" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                let DogType::Map(k, _) = &arg_types[0] else {
+                    return Err(type_err("map<K, V>", &arg_types[0].label(), span, "map_has() expects a map as first argument."));
+                };
+                if &arg_types[1] != k.as_ref() {
+                    return Err(type_err(&k.label(), &arg_types[1].label(), span, "map_has() key type mismatch."));
+                }
+                Ok(DogType::Bool)
+            }
+            "map_keys" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                let DogType::Map(k, _) = &arg_types[0] else {
+                    return Err(type_err("map<K, V>", &arg_types[0].label(), span, "map_keys() expects a map."));
+                };
+                Ok(DogType::List(k.clone()))
             }
             "contains" => {
                 if arg_types.len() != 2 {
                     return Err(arity_error(callee, 2, arg_types.len(), span));
                 }
                 if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
-                    return Err(DogDiagnostic::new(
-                        "E021",
-                        "Type mismatch detected.",
-                        span.clone(),
-                        "contains() expects two 'text' arguments: contains(haystack, needle).",
-                        "Convert values with text() if needed.",
-                        "Returns bool.",
-                        "Searching text inside non-text?",
-                    )
-                    .with_types("text, text", format!("{}, {}", arg_types[0], arg_types[1])));
+                    return Err(type_err("text, text", &format!("{}, {}", arg_types[0], arg_types[1]), span, "contains() expects two 'text' arguments."));
                 }
                 Ok(DogType::Bool)
             }
@@ -921,16 +1451,7 @@ impl TypeChecker {
                     return Err(arity_error(callee, 2, arg_types.len(), span));
                 }
                 if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
-                    return Err(DogDiagnostic::new(
-                        "E021",
-                        "Type mismatch detected.",
-                        span.clone(),
-                        "split() expects (text, text).",
-                        "Pass the source text and separator text.",
-                        "Returns list<text>.",
-                        "Can't split what isn't text.",
-                    )
-                    .with_types("text, text", format!("{}, {}", arg_types[0], arg_types[1])));
+                    return Err(type_err("text, text", &format!("{}, {}", arg_types[0], arg_types[1]), span, "split() expects (text, text)."));
                 }
                 Ok(DogType::List(Box::new(DogType::Text)))
             }
@@ -940,16 +1461,7 @@ impl TypeChecker {
                 }
                 let expected_list = DogType::List(Box::new(DogType::Text));
                 if arg_types[0] != expected_list || arg_types[1] != DogType::Text {
-                    return Err(DogDiagnostic::new(
-                        "E021",
-                        "Type mismatch detected.",
-                        span.clone(),
-                        "join() expects (list<text>, text).",
-                        "Pass a list of text and a separator string.",
-                        "Returns text.",
-                        "Join works on text lists.",
-                    )
-                    .with_types("list<text>, text", format!("{}, {}", arg_types[0], arg_types[1])));
+                    return Err(type_err("list<text>, text", &format!("{}, {}", arg_types[0], arg_types[1]), span, "join() expects (list<text>, text)."));
                 }
                 Ok(DogType::Text)
             }
@@ -958,17 +1470,8 @@ impl TypeChecker {
                     return Err(arity_error(callee, 1, arg_types.len(), span));
                 }
                 match &arg_types[0] {
-                    DogType::Text | DogType::List(_) => Ok(DogType::Number),
-                    other => Err(DogDiagnostic::new(
-                        "E021",
-                        "Type mismatch detected.",
-                        span.clone(),
-                        format!("len() expects 'text' or 'list<T>', received '{other}'."),
-                        "Pass text or a list to len().",
-                        "len() returns a whole number.",
-                        "How long is a boolean?",
-                    )
-                    .with_types("text | list<T>", other.label())),
+                    DogType::Text | DogType::List(_) | DogType::Map(_, _) => Ok(DogType::Number),
+                    other => Err(type_err("text | list<T> | map<K, V>", &other.label(), span, "len() expects text, list, or map.")),
                 }
             }
             "text" => {
@@ -976,16 +1479,7 @@ impl TypeChecker {
                     return Err(arity_error(callee, 1, arg_types.len(), span));
                 }
                 if arg_types[0] == DogType::Void {
-                    return Err(DogDiagnostic::new(
-                        "E021",
-                        "Cannot convert 'void' using text().",
-                        span.clone(),
-                        "void carries no value to convert.",
-                        "Pass text, number, decimal, bool, or list<T> to text().",
-                        "Explicit conversion makes string concatenation safe.",
-                        "Nothingness doesn't stringify well.",
-                    )
-                    .with_types("non-void", "void"));
+                    return Err(type_err("non-void", "void", span, "Cannot convert 'void' using text()."));
                 }
                 Ok(DogType::Text)
             }
@@ -995,16 +1489,7 @@ impl TypeChecker {
                 }
                 match &arg_types[0] {
                     DogType::Text | DogType::Number | DogType::Decimal => Ok(DogType::Number),
-                    other => Err(DogDiagnostic::new(
-                        "E021",
-                        "Type mismatch detected.",
-                        span.clone(),
-                        format!("Cannot convert '{other}' using number()."),
-                        "Pass text, number, or decimal to number().",
-                        "Booleans and void cannot become numbers.",
-                        "Nice try, still not a number.",
-                    )
-                    .with_types("text | number | decimal", other.label())),
+                    other => Err(type_err("text | number | decimal", &other.label(), span, "Cannot convert value using number().")),
                 }
             }
             "decimal" => {
@@ -1013,16 +1498,7 @@ impl TypeChecker {
                 }
                 match &arg_types[0] {
                     DogType::Text | DogType::Number | DogType::Decimal => Ok(DogType::Decimal),
-                    other => Err(DogDiagnostic::new(
-                        "E021",
-                        "Type mismatch detected.",
-                        span.clone(),
-                        format!("Cannot convert '{other}' using decimal()."),
-                        "Pass text, number, or decimal to decimal().",
-                        "Use decimal() when you need fractional precision.",
-                        "Can't turn that into a decimal.",
-                    )
-                    .with_types("text | number | decimal", other.label())),
+                    other => Err(type_err("text | number | decimal", &other.label(), span, "Cannot convert value using decimal().")),
                 }
             }
             "abs" => {
@@ -1032,16 +1508,7 @@ impl TypeChecker {
                 match &arg_types[0] {
                     DogType::Number => Ok(DogType::Number),
                     DogType::Decimal => Ok(DogType::Decimal),
-                    other => Err(DogDiagnostic::new(
-                        "E021",
-                        "Type mismatch detected.",
-                        span.clone(),
-                        format!("abs() expects 'number' or 'decimal', received '{other}'."),
-                        "Pass a numeric value to abs().",
-                        "Returns the same numeric type.",
-                        "Absolute text isn't a thing.",
-                    )
-                    .with_types("number | decimal", other.label())),
+                    other => Err(type_err("number | decimal", &other.label(), span, "abs() expects numeric value.")),
                 }
             }
             "min" | "max" => {
@@ -1053,54 +1520,19 @@ impl TypeChecker {
                 {
                     Ok(arg_types[0].clone())
                 } else {
-                    Err(DogDiagnostic::new(
-                        "E021",
-                        "Type mismatch detected.",
-                        span.clone(),
-                        format!("{callee}() expects two matching 'number' or 'decimal' values."),
-                        "Ensure both arguments have identical numeric types.",
-                        "Convert with number() or decimal() first.",
-                        "Pick one numeric type to compare.",
-                    )
-                    .with_types("T, T (number | decimal)", format!("{}, {}", arg_types[0], arg_types[1])))
+                    Err(type_err("T, T (number | decimal)", &format!("{}, {}", arg_types[0], arg_types[1]), span, &format!("{callee}() expects matching numeric arguments.")))
                 }
             }
             "assert" => {
                 if arg_types.is_empty() || arg_types.len() > 2 {
-                    return Err(DogDiagnostic::new(
-                        "E014",
-                        "Incorrect argument count for 'assert()'.",
-                        span.clone(),
-                        format!("assert() takes 1 or 2 arguments (cond, msg?), got {}.", arg_types.len()),
-                        "Write `assert(x == 5)` or `assert(x == 5, \"x must be 5\")`.",
-                        "Used in tests and invariants.",
-                        "Assert yourself properly.",
-                    ));
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
                 }
                 if arg_types[0] != DogType::Bool {
-                    return Err(DogDiagnostic::new(
-                        "E021",
-                        "Type mismatch detected.",
-                        span.clone(),
-                        format!("assert() condition must be 'bool', received '{}'.", arg_types[0]),
-                        "Pass a boolean comparison as the first argument.",
-                        "Example: `assert(age >= 18)`.",
-                        "Assert true or false, not guesses.",
-                    )
-                    .with_types("bool", arg_types[0].label()));
+                    return Err(type_err("bool", &arg_types[0].label(), span, "assert() condition must be 'bool'."));
                 }
                 if let Some(msg_ty) = arg_types.get(1) {
                     if *msg_ty != DogType::Text {
-                        return Err(DogDiagnostic::new(
-                            "E021",
-                            "Type mismatch detected.",
-                            span.clone(),
-                            format!("assert() message must be 'text', received '{msg_ty}'."),
-                            "Pass a string message as the second argument.",
-                            "Use text() to format values in assertion messages.",
-                            "Explain failures in plain text.",
-                        )
-                        .with_types("text", msg_ty.label()));
+                        return Err(type_err("text", &msg_ty.label(), span, "assert() message must be 'text'."));
                     }
                 }
                 Ok(DogType::Void)
@@ -1175,16 +1607,51 @@ impl TypeChecker {
         }
         match &info.ty {
             DogType::List(inner) => Ok((**inner).clone()),
-            other => Err(DogDiagnostic::new(
-                "E021",
-                "Type mismatch detected.",
+            other => Err(type_err("list<T>", &other.label(), span, &format!("'{callee}()' expects a 'list<T>' variable."))),
+        }
+    }
+
+    fn require_mutable_map_arg(
+        &self,
+        expr: &Expr,
+        callee: &str,
+    ) -> Result<(DogType, DogType), DogDiagnostic> {
+        let Expr::Identifier { name, span } = expr else {
+            return Err(DogDiagnostic::new(
+                "E004",
+                format!("First argument to '{callee}()' must be a mutable map variable."),
+                expr.span().clone(),
+                format!("'{callee}()' mutates a `var` map variable in place."),
+                format!("Declare `var m = {{...}}` and pass `m` to {callee}()."),
+                "Temporary map literals cannot be mutated in place.",
+                "Give that map a `var` name first.",
+            ));
+        };
+        let info = self.lookup(name).ok_or_else(|| {
+            DogDiagnostic::new(
+                "E010",
+                format!("Undefined variable '{name}'."),
                 span.clone(),
-                format!("'{callee}()' expects a 'list<T>' variable, received '{other}'."),
-                format!("Pass a `var` list to {callee}()."),
-                "Only lists support push() and pop().",
-                "Can't push items onto a scalar.",
+                format!("No variable named '{name}' exists in scope."),
+                format!("Declare `var {name} = {{...}}` first."),
+                "Check spelling.",
+                "Where is that map?",
             )
-            .with_types("list<T>", other.label())),
+        })?;
+        if info.kind != BindingKind::Var {
+            return Err(DogDiagnostic::new(
+                "E012",
+                format!("Cannot call '{callee}()' on immutable binding '{name}'."),
+                span.clone(),
+                format!("'{name}' was not declared with `var`."),
+                format!("Declare `{name}` with `var` to mutate it."),
+                "`let` and `const` maps stay fixed.",
+                "Immutable maps stay sealed.",
+            ));
+        }
+        match &info.ty {
+            DogType::Map(k, v) => Ok(((**k).clone(), (**v).clone())),
+            other => Err(type_err("map<K, V>", &other.label(), span, &format!("'{callee}()' expects a 'map<K, V>' variable."))),
         }
     }
 
@@ -1211,10 +1678,43 @@ fn guarantees_return(stmts: &[Stmt]) -> bool {
                     return true;
                 }
             }
+            Stmt::Match {
+                cases,
+                otherwise_branch: Some(else_branch),
+                ..
+            } => {
+                if cases.iter().all(|c| guarantees_return(&c.body))
+                    && guarantees_return(else_branch)
+                {
+                    return true;
+                }
+            }
+            Stmt::TryCatch {
+                try_body,
+                catch_body,
+                ..
+            } => {
+                if guarantees_return(try_body) && guarantees_return(catch_body) {
+                    return true;
+                }
+            }
             _ => {}
         }
     }
     false
+}
+
+fn type_err(expected: &str, received: &str, span: &Span, why: &str) -> DogDiagnostic {
+    DogDiagnostic::new(
+        "E021",
+        "Type mismatch detected.",
+        span.clone(),
+        why,
+        format!("Provide a value of type '{expected}'."),
+        "Keep your types consistent.",
+        "Math wasn't supposed to be this difficult.",
+    )
+    .with_types(expected, received)
 }
 
 fn arity_error(callee: &str, expected: usize, got: usize, span: &Span) -> DogDiagnostic {

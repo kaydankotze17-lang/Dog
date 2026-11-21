@@ -1,8 +1,15 @@
+use dog_lang::bytecode::{build_bundle, decode_bundle, run_bundle_with_io};
+use dog_lang::crypto::{base64_decode, base64_encode, hex_decode, hex_encode, sha256_hex};
 use dog_lang::editor::EditorBuffer;
 use dog_lang::formatter::format_source;
+use dog_lang::hub::DogPack;
 use dog_lang::interpreter::{check_source, run_source_with_io};
+use dog_lang::json::parse_json;
+use dog_lang::sdu::handle_sdu;
 use dog_lang::stdlib::InterpreterIo;
 use std::collections::VecDeque;
+use std::env;
+use std::fs;
 
 struct MockIo {
     inputs: VecDeque<String>,
@@ -100,6 +107,51 @@ fn runs_loops_and_lists() {
 }
 
 #[test]
+fn runs_structs_and_enums_example() {
+    let src = include_str!("../examples/structs_enums.dg");
+    let mut io = MockIo::new(vec![]);
+    run_source_with_io("examples/structs_enums.dg", src, &mut io)
+        .expect("structs_enums.dg should run");
+    assert!(io.output.contains("User: Ada (30)"));
+    assert!(io.output.contains("Access: full pack leader"));
+}
+
+#[test]
+fn runs_json_crypto_and_try_catch_example() {
+    let src = include_str!("../examples/json_crypto.dg");
+    let mut io = MockIo::new(vec![]);
+    run_source_with_io("examples/json_crypto.dg", src, &mut io)
+        .expect("json_crypto.dg should run");
+    assert!(io.output.contains("Parsed lang: DOG"));
+    assert!(io.output.contains("Recovered safely:"));
+}
+
+#[test]
+fn runs_module_imports_from_disk() {
+    let src = include_str!("../examples/modules_main.dg");
+    let mut io = MockIo::new(vec![]);
+    run_source_with_io("examples/modules_main.dg", src, &mut io)
+        .expect("modules_main.dg should import helpers.dg");
+    assert_eq!(io.output, "[DOG-MOD] MODULAR DOG PROJECT\n");
+}
+
+#[test]
+fn detects_circular_module_imports_e041() {
+    let dir = env::temp_dir().join("dog_cycle_test");
+    let _ = fs::create_dir_all(&dir);
+    let a = dir.join("a.dg");
+    let b = dir.join("b.dg");
+    fs::write(&a, "use \"b.dg\"\nsay(\"a\")\n").unwrap();
+    fs::write(&b, "use \"a.dg\"\nsay(\"b\")\n").unwrap();
+
+    let src = fs::read_to_string(&a).unwrap();
+    let diag = check_source(&a.display().to_string(), &src).expect_err("cycle must fail");
+    assert_eq!(diag.code, "E041");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn rejects_missing_return_path_e026() {
     let src = "\
 fn maybe(flag: bool) -> number
@@ -127,10 +179,76 @@ fn runs_language_test_file() {
 }
 
 #[test]
-fn formats_blocks_with_four_spaces() {
-    let messy = "if true\nsay(\"a\")\n   otherwise\n         say(\"b\")\n  end\n";
-    let expected = "if true\n    say(\"a\")\notherwise\n    say(\"b\")\nend\n";
+fn formats_blocks_including_match_and_try_cleanly() {
+    let messy = "match x\ncase 1\nif true\nsay(\"a\")\notherwise\nsay(\"b\")\nend\notherwise\nsay(\"c\")\nend\ntry\nsay(\"ok\")\ncatch err\nsay(err)\nend\n";
+    let expected = "\
+match x
+    case 1
+        if true
+            say(\"a\")
+        otherwise
+            say(\"b\")
+        end
+    otherwise
+        say(\"c\")
+end
+try
+    say(\"ok\")
+catch err
+    say(err)
+end
+";
     assert_eq!(format_source(messy), expected);
+}
+
+#[test]
+fn crypto_and_json_primitives_verify_known_vectors() {
+    assert_eq!(
+        sha256_hex(b""),
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
+    assert_eq!(hex_decode(&hex_encode(b"DOG!")).unwrap(), b"DOG!");
+    assert_eq!(base64_decode(&base64_encode(b"DOG!")).unwrap(), b"DOG!");
+    let val = parse_json("{\"ok\":true,\"n\":7}").unwrap();
+    assert_eq!(val.stringify(), "{\"n\": 7, \"ok\": true}");
+}
+
+#[test]
+fn builds_verifies_and_executes_dgb_bundle() {
+    let dir = env::temp_dir().join("dog_dgb_test");
+    let _ = fs::create_dir_all(&dir);
+    let src_path = dir.join("app.dg");
+    let dgb_path = dir.join("app.dgb");
+    fs::write(&src_path, "let who = \"Bundled\"\nsay(\"Hello \" + who)\n").unwrap();
+
+    let (out_path, bundle) = build_bundle(
+        &src_path.display().to_string(),
+        Some(&dgb_path.display().to_string()),
+    )
+    .expect("bundle build must succeed");
+    assert_eq!(out_path, dgb_path);
+
+    let decoded = decode_bundle(&fs::read(&dgb_path).unwrap()).expect("checksum must match");
+    assert_eq!(decoded.sha256, bundle.sha256);
+
+    let mut io = MockIo::new(vec![]);
+    run_bundle_with_io(&dgb_path.display().to_string(), &mut io)
+        .expect("bundle execution must succeed");
+    assert_eq!(io.output, "Hello Bundled\n");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn parses_and_renders_dog_pack_and_reports_sdu_status() {
+    let raw = "[package]\nname = \"kennel\"\nversion = \"0.2.0\"\nentry = \"src/main.dg\"\n\n[dependencies]\ncore = \"0.1.0\"\n";
+    let pack = DogPack::parse(raw).expect("dog.pack should parse");
+    assert_eq!(pack.name, "kennel");
+    assert_eq!(pack.dependencies.get("core").map(String::as_str), Some("0.1.0"));
+    assert!(pack.render().contains("[dependencies]"));
+
+    let sdu_out = handle_sdu(&["status".to_string()]).expect("sdu status should succeed");
+    assert!(sdu_out.contains("Actual kernel EUID=0"));
 }
 
 #[test]

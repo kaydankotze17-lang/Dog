@@ -1,5 +1,5 @@
 use crate::config::Personality;
-use crate::diagnostics::DogDiagnostic;
+use crate::diagnostics::{DogDiagnostic, DOG_TIPS};
 use crate::formatter::format_source;
 use crate::interpreter::{check_source, run_source_with_io};
 use crate::stdlib::InterpreterIo;
@@ -7,14 +7,6 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::Command;
-
-const DOG_TIPS: &[&str] = &[
-    "Use 4 spaces per block; `end` always closes blocks.",
-    "Prefer `let` by default and `var` only when mutation is intentional.",
-    "Convert answer() text explicitly using number() or decimal().",
-    "Press Ctrl+L anytime to auto-format your code to 4-space DOG style.",
-    "Press Ctrl+R to run the current buffer without leaving the editor.",
-];
 
 #[derive(Debug, Clone)]
 struct Snapshot {
@@ -170,8 +162,19 @@ impl EditorBuffer {
             .unwrap_or("");
         let extra = if matches!(
             first_word,
-            "if" | "otherwise" | "while" | "repeat" | "for" | "fn"
-        ) {
+            "if" | "otherwise"
+                | "while"
+                | "repeat"
+                | "for"
+                | "fn"
+                | "struct"
+                | "enum"
+                | "match"
+                | "case"
+                | "try"
+                | "catch"
+        ) || trimmed_left.ends_with('{')
+        {
             4
         } else {
             0
@@ -305,8 +308,10 @@ impl EditorBuffer {
         let (target, forward) = match ch {
             '(' => (')', true),
             '[' => (']', true),
+            '{' => ('}', true),
             ')' => ('(', false),
             ']' => ('[', false),
+            '}' => ('{', false),
             _ => return None,
         };
 
@@ -382,17 +387,55 @@ impl EditorBuffer {
             "join(",
             "push(",
             "pop(",
+            "abs(",
+            "min(",
+            "max(",
             "assert(",
+            "fail(",
+            "map_get(",
+            "map_set(",
+            "map_has(",
+            "map_keys(",
+            "map_remove(",
+            "file_read(",
+            "file_write(",
+            "file_exists(",
+            "file_delete(",
+            "dir_list(",
+            "env_get(",
+            "env_set(",
+            "time_now_ms()",
+            "sleep_ms(",
+            "json_parse(",
+            "json_stringify(",
+            "hex_encode(",
+            "hex_decode(",
+            "base64_encode(",
+            "base64_decode(",
+            "sha256(",
+            "http_get(",
+            "log_info(",
+            "log_warn(",
+            "log_error(",
             "let ",
             "var ",
             "const ",
             "if ",
             "otherwise",
+            "match ",
+            "case ",
+            "try",
+            "catch ",
             "while ",
             "repeat ",
             "for ",
             "fn ",
+            "struct ",
+            "enum ",
+            "use ",
             "return ",
+            "break",
+            "continue",
             "end",
         ];
         CANDIDATES
@@ -423,12 +466,12 @@ fn char_to_byte_idx(s: &str, char_idx: usize) -> usize {
         .unwrap_or(s.len())
 }
 
-struct TermGuard {
+pub(crate) struct TermGuard {
     saved_stty: Option<String>,
 }
 
 impl TermGuard {
-    fn enter_raw() -> Result<Self, String> {
+    pub(crate) fn enter_raw() -> Result<Self, String> {
         let output = Command::new("stty")
             .arg("-g")
             .stdin(std::process::Stdio::inherit())
@@ -467,7 +510,7 @@ impl Drop for TermGuard {
     }
 }
 
-fn query_terminal_size() -> (usize, usize) {
+pub(crate) fn query_terminal_size() -> (usize, usize) {
     if let Ok(out) = Command::new("stty")
         .arg("size")
         .stdin(std::process::Stdio::inherit())
@@ -486,7 +529,7 @@ fn query_terminal_size() -> (usize, usize) {
     (24, 80)
 }
 
-enum KeyEvent {
+pub(crate) enum KeyEvent {
     Char(char),
     Enter,
     Tab,
@@ -501,7 +544,7 @@ enum KeyEvent {
     Esc,
 }
 
-fn read_key(stdin: &mut io::StdinLock<'_>) -> io::Result<KeyEvent> {
+pub(crate) fn read_key(stdin: &mut io::StdinLock<'_>) -> io::Result<KeyEvent> {
     let mut buf = [0u8; 1];
     stdin.read_exact(&mut buf)?;
     let b = buf[0];
@@ -556,8 +599,8 @@ fn read_key(stdin: &mut io::StdinLock<'_>) -> io::Result<KeyEvent> {
     }
 }
 
-struct BufferRunIo {
-    output: String,
+pub(crate) struct BufferRunIo {
+    pub(crate) output: String,
 }
 
 impl InterpreterIo for BufferRunIo {
@@ -832,9 +875,10 @@ fn render_screen(
             "Ctrl+T  New tab           Ctrl+N  Next tab",
             "Ctrl+G  Toggle help       Ctrl+Q  Quit (Ctrl+X force)",
             "",
-            "DOG Syntax: let (immutable), var (mutable), const",
-            "Built-ins : say(), answer(), lower(), upper(), number(), decimal()",
-            "Blocks    : if ... otherwise ... end | while ... end | fn ... end",
+            "DOG Syntax: let (immutable), var (mutable), const, use \"mod.dg\"",
+            "Types     : struct ... end | enum ... end | list<T> | map<K, V>",
+            "Built-ins : say(), answer(), number(), json_parse(), sha256(), http_get()",
+            "Blocks    : if/otherwise/end | match/case/end | try/catch/end | while/for/fn",
             "Press any key to return to editor...",
         ];
         for r in 0..body_rows {
@@ -911,7 +955,7 @@ fn render_screen(
     let _ = io::stdout().flush();
 }
 
-fn highlight_dog_line(line: &str) -> String {
+pub(crate) fn highlight_dog_line(line: &str) -> String {
     let trimmed = line.trim_start();
     if trimmed.starts_with('#') || trimmed.starts_with("//") {
         return format!("\x1b[90m{line}\x1b[0m");
@@ -954,6 +998,13 @@ fn highlight_dog_line(line: &str) -> String {
                     | "const"
                     | "if"
                     | "otherwise"
+                    | "match"
+                    | "case"
+                    | "try"
+                    | "catch"
+                    | "struct"
+                    | "enum"
+                    | "use"
                     | "end"
                     | "or"
                     | "and"
@@ -990,6 +1041,32 @@ fn highlight_dog_line(line: &str) -> String {
                     | "min"
                     | "max"
                     | "assert"
+                    | "fail"
+                    | "map_get"
+                    | "map_set"
+                    | "map_has"
+                    | "map_keys"
+                    | "map_remove"
+                    | "file_read"
+                    | "file_write"
+                    | "file_exists"
+                    | "file_delete"
+                    | "dir_list"
+                    | "env_get"
+                    | "env_set"
+                    | "time_now_ms"
+                    | "sleep_ms"
+                    | "json_parse"
+                    | "json_stringify"
+                    | "hex_encode"
+                    | "hex_decode"
+                    | "base64_encode"
+                    | "base64_decode"
+                    | "sha256"
+                    | "http_get"
+                    | "log_info"
+                    | "log_warn"
+                    | "log_error"
             ) {
                 out.push_str(&format!("\x1b[33m{word}\x1b[0m"));
             } else {

@@ -1,0 +1,17 @@
+let raw = "{\"lang\": \"DOG\", \"version\": \"0.1.0\"}"
+let parsed = json_parse(raw)
+say("Parsed lang: " + map_get(parsed, "lang"))
+say("Serialized : " + json_stringify(parsed))
+
+let digest = sha256("dog-lang")
+let encoded = base64_encode("dog-lang")
+say("SHA-256    : " + digest)
+say("Base64     : " + encoded)
+say("Decoded    : " + base64_decode(encoded))
+
+try
+    let bad = number("not-a-number")
+    say(text(bad))
+catch err
+    say("Recovered safely: " + err)
+end

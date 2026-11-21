@@ -1,28 +1,41 @@
+use crate::bytecode::{build_bundle, build_native, is_dgb_path, run_bundle_with_io};
 use crate::checker::TypeChecker;
 use crate::config::{DogConfig, Personality};
+use crate::diagnostics::{achievement_for_runs, welcome_banner};
 use crate::doctor::run_doctor;
 use crate::editor::launch_editor;
 use crate::formatter::format_source;
+use crate::hub::{handle_add, handle_info, handle_list, handle_remove, handle_search};
 use crate::interpreter::{check_source, run_source, Interpreter};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
+use crate::sdu::{detect_actual_root, handle_sdu};
 use crate::stdlib::StdIo;
+use crate::studio::launch_studio;
+use crate::sys::{
+    handle_clean, handle_docs, handle_env, handle_forge, handle_inspect, handle_logs,
+    handle_permissions, handle_process, handle_profile, handle_server, handle_status,
+    handle_system, handle_update,
+};
 use crate::tester::run_tests;
 use std::env;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, Write};
 use std::process;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn run() {
     let args: Vec<String> = env::args().skip(1).collect();
-    let config = DogConfig::load();
+    let mut config = DogConfig::load();
 
     if args.is_empty() {
         print_help();
         return;
     }
+
+    append_cli_log(&args[0]);
 
     match args[0].as_str() {
         "--help" | "-h" | "help" => print_help(),
@@ -31,13 +44,75 @@ pub fn run() {
         }
         "run" => {
             let Some(path) = args.get(1) else {
-                eprintln!("Usage: dog run <file.dg>");
+                eprintln!("Usage: dog run <file.dg | file.dgb>");
                 process::exit(2);
             };
-            let source = read_file_or_exit(path);
-            if let Err(diag) = run_source(path, &source) {
-                eprintln!("{}", diag.format_with(config.personality, Some(&source)));
-                process::exit(1);
+            config.record_run();
+            if is_dgb_path(path) {
+                let mut stdio = StdIo;
+                if let Err(err) = run_bundle_with_io(path, &mut stdio) {
+                    eprintln!("{err}");
+                    process::exit(1);
+                }
+            } else {
+                let source = read_file_or_exit(path);
+                if let Err(diag) = run_source(path, &source) {
+                    eprintln!("{}", diag.format_with(config.personality, Some(&source)));
+                    process::exit(1);
+                }
+            }
+        }
+        "build" => {
+            let native = args.iter().any(|a| a == "--native");
+            let mut input_path: Option<&str> = None;
+            let mut out_path: Option<&str> = None;
+            let mut i = 1usize;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--native" => {}
+                    "--out" | "-o" => {
+                        if let Some(v) = args.get(i + 1) {
+                            out_path = Some(v.as_str());
+                            i += 1;
+                        } else {
+                            eprintln!("Missing output path after --out");
+                            process::exit(2);
+                        }
+                    }
+                    a if !a.starts_with('-') && input_path.is_none() => {
+                        input_path = Some(a);
+                    }
+                    other => {
+                        eprintln!("Unexpected build argument '{other}'.");
+                        process::exit(2);
+                    }
+                }
+                i += 1;
+            }
+            let Some(input) = input_path else {
+                eprintln!("Usage: dog build <file.dg> [--out <path>] [--native]");
+                process::exit(2);
+            };
+            if native {
+                match build_native(input, out_path) {
+                    Ok(out) => println!("Built native binary: {}", out.display()),
+                    Err(e) => {
+                        eprintln!("{e}");
+                        process::exit(1);
+                    }
+                }
+            } else {
+                match build_bundle(input, out_path) {
+                    Ok((out, bundle)) => println!(
+                        "Built DOG bundle: {} (sha256:{})",
+                        out.display(),
+                        &bundle.sha256[..16]
+                    ),
+                    Err(e) => {
+                        eprintln!("{e}");
+                        process::exit(1);
+                    }
+                }
             }
         }
         "check" => {
@@ -103,12 +178,19 @@ pub fn run() {
                 process::exit(1);
             }
         }
+        "studio" => {
+            let target = args.get(1).map(String::as_str);
+            if let Err(err) = launch_studio(target, config.personality) {
+                eprintln!("{err}");
+                process::exit(1);
+            }
+        }
         "config" => {
             if args.get(1).map(String::as_str) == Some("personality") {
                 if let Some(mode_raw) = args.get(2) {
                     if let Some(mode) = Personality::parse(mode_raw) {
-                        let next = DogConfig { personality: mode };
-                        if let Err(err) = next.save() {
+                        config.personality = mode;
+                        if let Err(err) = config.save() {
                             eprintln!("{err}");
                             process::exit(1);
                         }
@@ -123,15 +205,126 @@ pub fn run() {
                     println!("Current personality: {}", config.personality.as_str());
                 }
             } else {
-                eprintln!("Usage: dog config personality [normal|sarcastic|chaotic|professional|silent]");
+                eprintln!(
+                    "Usage: dog config personality [normal|sarcastic|chaotic|professional|silent]"
+                );
                 process::exit(2);
             }
         }
-        "repl" => run_repl(config.personality),
+        "repl" => {
+            config.record_run();
+            run_repl(&config);
+        }
+        "inspect" => {
+            let Some(path) = args.get(1) else {
+                eprintln!("Usage: dog inspect <file.dg>");
+                process::exit(2);
+            };
+            match handle_inspect(path) {
+                Ok(out) => println!("{out}"),
+                Err(e) => {
+                    eprintln!("{e}");
+                    process::exit(1);
+                }
+            }
+        }
+        "profile" => {
+            let Some(path) = args.get(1) else {
+                eprintln!("Usage: dog profile <file.dg>");
+                process::exit(2);
+            };
+            match handle_profile(path) {
+                Ok(out) => println!("{out}"),
+                Err(e) => {
+                    eprintln!("{e}");
+                    process::exit(1);
+                }
+            }
+        }
+        "docs" => {
+            println!("{}", handle_docs(args.get(1).map(String::as_str)));
+        }
+        "forge" => match handle_forge(&args[1..]) {
+            Ok(out) => println!("{out}"),
+            Err(e) => {
+                eprintln!("{e}");
+                process::exit(1);
+            }
+        },
+        "server" => {
+            if let Err(e) = handle_server(&args[1..]) {
+                eprintln!("{e}");
+                process::exit(1);
+            }
+        }
+        "system" => println!("{}", handle_system()),
+        "status" => println!("{}", handle_status()),
+        "env" => print!("{}", handle_env()),
+        "process" => println!("{}", handle_process()),
+        "permissions" => println!("{}", handle_permissions()),
+        "update" => println!("{}", handle_update()),
+        "clean" => println!("{}", handle_clean()),
+        "logs" => match handle_logs(&args[1..]) {
+            Ok(out) => print!("{out}"),
+            Err(e) => {
+                eprintln!("{e}");
+                process::exit(1);
+            }
+        },
+        "add" => match handle_add(&args[1..]) {
+            Ok(out) => println!("{out}"),
+            Err(e) => {
+                eprintln!("{e}");
+                process::exit(1);
+            }
+        },
+        "remove" => match handle_remove(&args[1..]) {
+            Ok(out) => println!("{out}"),
+            Err(e) => {
+                eprintln!("{e}");
+                process::exit(1);
+            }
+        },
+        "search" => println!("{}", handle_search(&args[1..])),
+        "list" => match handle_list() {
+            Ok(out) => print!("{out}"),
+            Err(e) => {
+                eprintln!("{e}");
+                process::exit(1);
+            }
+        },
+        "info" => match handle_info(&args[1..]) {
+            Ok(out) => println!("{out}"),
+            Err(e) => {
+                eprintln!("{e}");
+                process::exit(1);
+            }
+        },
+        "sdu" => match handle_sdu(&args[1..]) {
+            Ok(out) => println!("{out}"),
+            Err(e) => {
+                eprintln!("{e}");
+                process::exit(1);
+            }
+        },
         unknown => {
             eprintln!("Unknown command '{unknown}'. Run `dog --help` to see working commands.");
             process::exit(2);
         }
+    }
+}
+
+fn append_cli_log(cmd: &str) {
+    let log_file = DogConfig::home_dir().join("logs").join("dog.log");
+    if let Some(parent) = log_file.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_file) {
+        let _ = writeln!(f, "[{ts}] cmd={cmd}");
     }
 }
 
@@ -160,26 +353,6 @@ fn detect_prompt_identity() -> (String, char) {
         ("root".to_string(), '#')
     } else {
         (user, '$')
-    }
-}
-
-fn detect_actual_root() -> bool {
-    #[cfg(unix)]
-    {
-        if let Ok(status) = fs::read_to_string("/proc/self/status") {
-            for line in status.lines() {
-                if let Some(rest) = line.strip_prefix("Uid:") {
-                    if rest.split_whitespace().nth(1) == Some("0") {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
-    }
-    #[cfg(not(unix))]
-    {
-        false
     }
 }
 
@@ -212,8 +385,15 @@ fn format_kali_prompt() -> String {
     )
 }
 
-fn run_repl(personality: Personality) {
+fn run_repl(config: &DogConfig) {
     println!("DOG {VERSION} interactive REPL (type 'exit' to quit)");
+    if let Some(banner) = welcome_banner(config.personality, config.runs_completed) {
+        println!("{banner}");
+    }
+    if let Some(ach) = achievement_for_runs(config.runs_completed) {
+        println!("{ach}");
+    }
+
     let stdin = io::stdin();
     let mut checker = TypeChecker::new();
     let mut stdio = StdIo;
@@ -245,7 +425,10 @@ fn run_repl(personality: Personality) {
                     .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
                     .next()
                     .unwrap_or("");
-                if matches!(lead, "if" | "while" | "repeat" | "for" | "fn") {
+                if matches!(
+                    lead,
+                    "if" | "match" | "try" | "while" | "repeat" | "for" | "fn" | "struct" | "enum"
+                ) {
                     block_depth += 1;
                 } else if lead == "end" {
                     block_depth = block_depth.saturating_sub(1);
@@ -266,7 +449,7 @@ fn run_repl(personality: Personality) {
                     });
 
                 if let Err(diag) = res {
-                    eprintln!("{}", diag.format_with(personality, Some(&snippet)));
+                    eprintln!("{}", diag.format_with(config.personality, Some(&snippet)));
                 }
             }
             Err(err) => {
@@ -281,17 +464,37 @@ fn print_help() {
     println!(
         "DOG Programming Language CLI ({VERSION})
 
-Usage:
-  dog run <file.dg>                 Execute a .dg program
+Core Language & Tooling:
+  dog run <file.dg | file.dgb>      Execute a .dg program or compiled .dgb bundle
+  dog build <file.dg> [--native]    Compile to .dgb bundle (or native binary via rustc)
   dog check <file.dg>               Type-check a .dg program without running it
   dog format [--check] <file.dg>    Format a .dg file with 4-space indentation
   dog test [path]                   Run *_test.dg test files
-  dog doctor                        Inspect environment, Termux, and DOG config
-  dog edit [file.dg]                Open the terminal DOG EDITOR
-  dog editor [file.dg]              Alias for `dog edit`
-  dog repl                          Start stateful interactive DOG terminal
-  dog config personality <mode>     Set personality (normal|sarcastic|chaotic|professional|silent)
-  dog version | --version           Print DOG CLI version
-  dog help | --help                 Show this help message"
+  dog inspect <file.dg>             Print tokens, AST outline, and checked symbols
+  dog profile <file.dg>             Measure lex, parse, check, and runtime timings
+
+Interactive & Workspace IDEs:
+  dog repl                          Stateful interactive DOG terminal
+  dog edit [file.dg]                Nano-inspired terminal DOG EDITOR
+  dog studio [dir]                  Split-pane DOG Studio terminal IDE
+  dog forge new <name>              Scaffold a new DOG project with dog.pack
+
+Packages (DOG Hub & dog.pack):
+  dog add <path | pkg>              Add local package or cached dependency
+  dog remove <pkg>                  Remove dependency from dog.pack
+  dog search [query]                Search local ~/.dog/cache package index
+  dog list                          List project dependencies
+  dog info [pkg]                    Inspect project or cached package metadata
+
+System, Server, Docs & SDU:
+  dog docs [topic]                  Offline language/stdlib/CLI documentation
+  dog server [dir] [port]           Serve static files over local HTTP
+  dog doctor                        Inspect environment, Termux, rustc, and config
+  dog system | status | env         Inspect host, project state, and masked env
+  dog process | permissions         Inspect PID/memory and filesystem privileges
+  dog logs [sdu] | clean | update   View logs, remove .dgb artifacts, check version
+  dog config personality <mode>     Set normal|sarcastic|chaotic|professional|silent
+  dog sdu <subcommand>              Super Dog User status, scoped auth, and audit logs
+  dog version | help                Print version or this help message"
     );
 }

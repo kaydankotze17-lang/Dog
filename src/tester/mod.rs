@@ -68,6 +68,9 @@ pub fn run_tests(target: Option<&str>, personality: Personality) -> Result<TestR
             }
             Err(diag) => {
                 eprintln!("FAIL {label}");
+                if !io.output.is_empty() {
+                    eprintln!("--- stdout ---\n{}", io.output.trim_end());
+                }
                 eprintln!("{}", diag.format_with(personality, Some(&source)));
                 failed += 1;
             }

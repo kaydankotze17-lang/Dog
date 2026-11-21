@@ -23,6 +23,13 @@ pub enum TokenKind {
     In,
     Break,
     Continue,
+    Struct,
+    Enum,
+    Match,
+    Case,
+    Try,
+    Catch,
+    Use,
 
     // Literals & Identifiers
     Identifier(String),
@@ -45,10 +52,13 @@ pub enum TokenKind {
     Percent,
     Arrow,
     Colon,
+    Dot,
     LParen,
     RParen,
     LBracket,
     RBracket,
+    LBrace,
+    RBrace,
     Comma,
 
     Newline,
@@ -213,6 +223,11 @@ impl Lexer {
                     self.advance();
                     tokens.push(Token { kind: TokenKind::Colon, span });
                 }
+                '.' => {
+                    let span = self.span();
+                    self.advance();
+                    tokens.push(Token { kind: TokenKind::Dot, span });
+                }
                 '(' => {
                     let span = self.span();
                     self.advance();
@@ -232,6 +247,16 @@ impl Lexer {
                     let span = self.span();
                     self.advance();
                     tokens.push(Token { kind: TokenKind::RBracket, span });
+                }
+                '{' => {
+                    let span = self.span();
+                    self.advance();
+                    tokens.push(Token { kind: TokenKind::LBrace, span });
+                }
+                '}' => {
+                    let span = self.span();
+                    self.advance();
+                    tokens.push(Token { kind: TokenKind::RBrace, span });
                 }
                 ',' => {
                     let span = self.span();
@@ -432,6 +457,13 @@ impl Lexer {
             "in" => TokenKind::In,
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
+            "struct" => TokenKind::Struct,
+            "enum" => TokenKind::Enum,
+            "match" => TokenKind::Match,
+            "case" => TokenKind::Case,
+            "try" => TokenKind::Try,
+            "catch" => TokenKind::Catch,
+            "use" => TokenKind::Use,
             _ => TokenKind::Identifier(raw),
         };
 

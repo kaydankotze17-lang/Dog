@@ -1,4 +1,6 @@
-use crate::ast::{BinOp, BindingKind, Expr, Param, Program, Stmt, TypeRef, UnaryOp};
+use crate::ast::{
+    BinOp, BindingKind, Expr, MatchCase, Param, Program, Stmt, StructField, TypeRef, UnaryOp,
+};
 use crate::diagnostics::DogDiagnostic;
 use crate::lexer::{Token, TokenKind};
 
@@ -27,10 +29,15 @@ impl Parser {
     fn parse_statement(&mut self) -> Result<Stmt, DogDiagnostic> {
         let tok = self.peek().clone();
         match &tok.kind {
+            TokenKind::Use => self.parse_use(),
+            TokenKind::Struct => self.parse_struct(),
+            TokenKind::Enum => self.parse_enum(),
             TokenKind::Let => self.parse_binding(BindingKind::Let),
             TokenKind::Var => self.parse_binding(BindingKind::Var),
             TokenKind::Const => self.parse_binding(BindingKind::Const),
             TokenKind::If => self.parse_if(),
+            TokenKind::Match => self.parse_match(),
+            TokenKind::Try => self.parse_try(),
             TokenKind::While => self.parse_while(),
             TokenKind::Repeat => self.parse_repeat(),
             TokenKind::For => self.parse_for(),
@@ -59,25 +66,41 @@ impl Parser {
                 let span = tok.span.clone();
                 let expr = self.parse_expression()?;
                 if self.peek().kind == TokenKind::Assign {
-                    if let Expr::Index { target, index, .. } = expr {
-                        if let Expr::Identifier { name, .. } = *target {
-                            self.advance(); // =
-                            let value = self.parse_expression()?;
-                            self.expect_end_of_statement()?;
-                            return Ok(Stmt::IndexAssign {
-                                target: name,
-                                index: *index,
-                                value,
-                                span,
-                            });
+                    match expr {
+                        Expr::Index { target, index, .. } => {
+                            if let Expr::Identifier { name, .. } = *target {
+                                self.advance(); // =
+                                let value = self.parse_expression()?;
+                                self.expect_end_of_statement()?;
+                                return Ok(Stmt::IndexAssign {
+                                    target: name,
+                                    index: *index,
+                                    value,
+                                    span,
+                                });
+                            }
                         }
+                        Expr::FieldAccess { target, field, .. } => {
+                            if let Expr::Identifier { name, .. } = *target {
+                                self.advance(); // =
+                                let value = self.parse_expression()?;
+                                self.expect_end_of_statement()?;
+                                return Ok(Stmt::FieldAssign {
+                                    target: name,
+                                    field,
+                                    value,
+                                    span,
+                                });
+                            }
+                        }
+                        _ => {}
                     }
                     return Err(DogDiagnostic::new(
                         "E004",
                         "Invalid assignment target.",
                         self.peek().span.clone(),
-                        "Only variables or indexed list variables can appear on the left side of '='.",
-                        "Assign to a variable name like `x = 10` or `items[0] = 10`.",
+                        "Only variables, struct fields (`obj.field`), or indexed lists (`items[0]`) can appear on the left side of '='.",
+                        "Assign to a variable name like `x = 10`, `u.age = 22`, or `items[0] = 10`.",
                         "Use `==` when checking equality.",
                         "You can't assign a value to thin air.",
                     ));
@@ -86,6 +109,289 @@ impl Parser {
                 Ok(Stmt::ExprStmt { expr, span })
             }
         }
+    }
+
+    fn parse_use(&mut self) -> Result<Stmt, DogDiagnostic> {
+        let kw_tok = self.advance().clone();
+        let path = match &self.peek().kind {
+            TokenKind::StringLit(s) => s.clone(),
+            _ => {
+                return Err(DogDiagnostic::new(
+                    "E004",
+                    "Expected module path string after 'use'.",
+                    self.peek().span.clone(),
+                    "Local imports must specify a quoted `.dg` path.",
+                    "Write e.g. `use \"helpers.dg\"`.",
+                    "Paths are resolved relative to the importing file.",
+                    "Use what? Give me a filename in quotes.",
+                ));
+            }
+        };
+        self.advance();
+        self.expect_end_of_statement()?;
+        Ok(Stmt::Use {
+            path,
+            span: kw_tok.span,
+        })
+    }
+
+    fn parse_struct(&mut self) -> Result<Stmt, DogDiagnostic> {
+        let kw_tok = self.advance().clone();
+        let name = match &self.peek().kind {
+            TokenKind::Identifier(n) => n.clone(),
+            _ => {
+                return Err(DogDiagnostic::new(
+                    "E004",
+                    "Expected struct name after 'struct'.",
+                    self.peek().span.clone(),
+                    "Struct definitions require a type name.",
+                    "Write e.g. `struct User`.",
+                    "Use PascalCase for struct names.",
+                    "An unnamed blueprint builds nothing.",
+                ));
+            }
+        };
+        self.advance();
+        self.expect_end_of_statement()?;
+        self.skip_newlines();
+
+        let mut fields = Vec::new();
+        while !self.is_at_end() && self.peek().kind != TokenKind::End {
+            let f_span = self.peek().span.clone();
+            let f_name = match &self.peek().kind {
+                TokenKind::Identifier(n) => n.clone(),
+                _ => {
+                    return Err(DogDiagnostic::new(
+                        "E004",
+                        "Expected field name inside struct.",
+                        f_span,
+                        "Each line inside `struct ... end` defines `field: type`.",
+                        "Example: `name: text`.",
+                        "Close the struct with `end`.",
+                        "Fields need names.",
+                    ));
+                }
+            };
+            self.advance();
+            if self.peek().kind != TokenKind::Colon {
+                return Err(DogDiagnostic::new(
+                    "E004",
+                    format!("Expected ':' after field '{f_name}'."),
+                    self.peek().span.clone(),
+                    "Struct fields require explicit type annotations.",
+                    format!("Write `{f_name}: text` or another type."),
+                    "Strict typing forbids untyped struct fields.",
+                    "Every field needs a type collar.",
+                ));
+            }
+            self.advance();
+            let ty = self.parse_type_ref()?;
+            self.expect_end_of_statement()?;
+            self.skip_newlines();
+            fields.push(StructField {
+                name: f_name,
+                ty,
+                span: f_span,
+            });
+        }
+
+        if self.peek().kind != TokenKind::End {
+            return Err(DogDiagnostic::new(
+                "E005",
+                format!("Missing 'end' for struct '{name}'."),
+                kw_tok.span,
+                "Every `struct` definition must be closed with `end`.",
+                "Add `end` on its own line.",
+                "Indentation is visual; `end` closes blocks.",
+                "Left the blueprint unfinished.",
+            ));
+        }
+        self.advance();
+        self.expect_end_of_statement()?;
+
+        Ok(Stmt::StructDef {
+            name,
+            fields,
+            span: kw_tok.span,
+        })
+    }
+
+    fn parse_enum(&mut self) -> Result<Stmt, DogDiagnostic> {
+        let kw_tok = self.advance().clone();
+        let name = match &self.peek().kind {
+            TokenKind::Identifier(n) => n.clone(),
+            _ => {
+                return Err(DogDiagnostic::new(
+                    "E004",
+                    "Expected enum name after 'enum'.",
+                    self.peek().span.clone(),
+                    "Enum definitions require a type name.",
+                    "Write e.g. `enum Role`.",
+                    "Use PascalCase for enum names.",
+                    "An enum without a name?",
+                ));
+            }
+        };
+        self.advance();
+        self.expect_end_of_statement()?;
+        self.skip_newlines();
+
+        let mut variants = Vec::new();
+        while !self.is_at_end() && self.peek().kind != TokenKind::End {
+            let v_span = self.peek().span.clone();
+            let v_name = match &self.peek().kind {
+                TokenKind::Identifier(n) => n.clone(),
+                _ => {
+                    return Err(DogDiagnostic::new(
+                        "E004",
+                        "Expected variant name inside enum.",
+                        v_span,
+                        "Each line inside `enum ... end` lists a variant identifier.",
+                        "Example: `Admin`.",
+                        "Close the enum with `end`.",
+                        "Variants must be valid identifiers.",
+                    ));
+                }
+            };
+            self.advance();
+            self.expect_end_of_statement()?;
+            self.skip_newlines();
+            variants.push(v_name);
+        }
+
+        if self.peek().kind != TokenKind::End {
+            return Err(DogDiagnostic::new(
+                "E005",
+                format!("Missing 'end' for enum '{name}'."),
+                kw_tok.span,
+                "Every `enum` definition must be closed with `end`.",
+                "Add `end` on its own line.",
+                "Check matching `end` keywords.",
+                "Enum left hanging.",
+            ));
+        }
+        self.advance();
+        self.expect_end_of_statement()?;
+
+        Ok(Stmt::EnumDef {
+            name,
+            variants,
+            span: kw_tok.span,
+        })
+    }
+
+    fn parse_match(&mut self) -> Result<Stmt, DogDiagnostic> {
+        let kw_tok = self.advance().clone();
+        let subject = self.parse_expression()?;
+        self.expect_end_of_statement()?;
+        self.skip_newlines();
+
+        let mut cases = Vec::new();
+        while self.peek().kind == TokenKind::Case {
+            let case_tok = self.advance().clone();
+            let pattern = self.parse_expression()?;
+            self.expect_end_of_statement()?;
+            self.skip_newlines();
+            let mut body = Vec::new();
+            while !self.is_at_end()
+                && self.peek().kind != TokenKind::Case
+                && self.peek().kind != TokenKind::Otherwise
+                && self.peek().kind != TokenKind::End
+            {
+                body.push(self.parse_statement()?);
+                self.skip_newlines();
+            }
+            cases.push(MatchCase {
+                pattern,
+                body,
+                span: case_tok.span,
+            });
+        }
+
+        let otherwise_branch = if self.peek().kind == TokenKind::Otherwise {
+            self.advance();
+            self.expect_end_of_statement()?;
+            self.skip_newlines();
+            let mut body = Vec::new();
+            while !self.is_at_end() && self.peek().kind != TokenKind::End {
+                body.push(self.parse_statement()?);
+                self.skip_newlines();
+            }
+            Some(body)
+        } else {
+            None
+        };
+
+        if self.peek().kind != TokenKind::End {
+            return Err(DogDiagnostic::new(
+                "E005",
+                "Missing 'end' for 'match' block.",
+                kw_tok.span,
+                "Every `match` block must end with `end`.",
+                "Add `end` after the final `case` or `otherwise` branch.",
+                "Use `case <value>` and optional `otherwise` inside `match`.",
+                "Matched everything except the closing `end`.",
+            ));
+        }
+        self.advance();
+        self.expect_end_of_statement()?;
+
+        Ok(Stmt::Match {
+            subject,
+            cases,
+            otherwise_branch,
+            span: kw_tok.span,
+        })
+    }
+
+    fn parse_try(&mut self) -> Result<Stmt, DogDiagnostic> {
+        let kw_tok = self.advance().clone();
+        self.expect_end_of_statement()?;
+        self.skip_newlines();
+
+        let mut try_body = Vec::new();
+        while !self.is_at_end() && self.peek().kind != TokenKind::Catch {
+            try_body.push(self.parse_statement()?);
+            self.skip_newlines();
+        }
+
+        if self.peek().kind != TokenKind::Catch {
+            return Err(DogDiagnostic::new(
+                "E005",
+                "Expected 'catch <err>' after 'try' block.",
+                kw_tok.span,
+                "Every `try` block must be paired with `catch err ... end`.",
+                "Add `catch err` to handle runtime errors.",
+                "Caught errors bind to `err` as `text`.",
+                "You tried, but forgot to catch.",
+            ));
+        }
+        self.advance(); // catch
+
+        let err_name = match &self.peek().kind {
+            TokenKind::Identifier(n) => n.clone(),
+            _ => {
+                return Err(DogDiagnostic::new(
+                    "E004",
+                    "Expected error variable name after 'catch'.",
+                    self.peek().span.clone(),
+                    "Specify a variable name to bind the error message, e.g. `catch err`.",
+                    "Write `catch err`.",
+                    "The error variable has type `text`.",
+                    "Catch into what variable?",
+                ));
+            }
+        };
+        self.advance();
+        self.expect_end_of_statement()?;
+        let catch_body = self.parse_block_until_end(&kw_tok, "try")?;
+
+        Ok(Stmt::TryCatch {
+            try_body,
+            err_name,
+            catch_body,
+            span: kw_tok.span,
+        })
     }
 
     fn parse_binding(&mut self, kind: BindingKind) -> Result<Stmt, DogDiagnostic> {
@@ -313,7 +619,7 @@ impl Parser {
                         self.peek().span.clone(),
                         "Strict typing requires explicit parameter types in function signatures.",
                         format!("Annotate the parameter type, e.g. `{param_name}: number`."),
-                        "Available types: text, number, decimal, bool, list<T>.",
+                        "Available types: text, number, decimal, bool, list<T>, map<K, V>, Struct, Enum.",
                         "DOG refuses to guess parameter types.",
                     ));
                 }
@@ -420,7 +726,7 @@ impl Parser {
                             "E004",
                             "Expected '<type>' after 'list'.",
                             self.peek().span.clone(),
-                            "Lists are strictly typed in DOG and require an element type.",
+                            "Lists require an element type.",
                             "Write e.g. `list<text>` or `list<number>`.",
                             "Specify the inner element type inside `<...>`.",
                             "A list of what, exactly?",
@@ -442,22 +748,55 @@ impl Parser {
                     self.advance(); // >
                     Ok(TypeRef::List(Box::new(inner)))
                 }
-                other => Err(DogDiagnostic::new(
-                    "E004",
-                    format!("Unknown type '{other}'."),
-                    tok.span,
-                    format!("'{other}' is not a built-in DOG type."),
-                    "Use text, number, decimal, bool, void, or list<T>.",
-                    "Check spelling of the type annotation.",
-                    "I haven't learned that species yet.",
-                )),
+                "map" => {
+                    if self.peek().kind != TokenKind::Lt {
+                        return Err(DogDiagnostic::new(
+                            "E004",
+                            "Expected '<key, value>' after 'map'.",
+                            self.peek().span.clone(),
+                            "Maps require key and value types.",
+                            "Write e.g. `map<text, number>`.",
+                            "Specify key and value types inside `<...>`.",
+                            "A map from what to what?",
+                        ));
+                    }
+                    self.advance(); // <
+                    let k = self.parse_type_ref()?;
+                    if self.peek().kind != TokenKind::Comma {
+                        return Err(DogDiagnostic::new(
+                            "E004",
+                            "Expected ',' between map key and value types.",
+                            self.peek().span.clone(),
+                            "Map types take two type arguments: `map<key, value>`.",
+                            "Write e.g. `map<text, text>`.",
+                            "Separate key and value types with a comma.",
+                            "Maps always need two types.",
+                        ));
+                    }
+                    self.advance(); // ,
+                    let v = self.parse_type_ref()?;
+                    if self.peek().kind != TokenKind::Gt {
+                        return Err(DogDiagnostic::new(
+                            "E004",
+                            "Expected '>' to close 'map<...>' type.",
+                            self.peek().span.clone(),
+                            "Generic map type was not closed with '>'.",
+                            "Add '>' after the value type.",
+                            "Check angle brackets.",
+                            "Angle brackets need closure too.",
+                        ));
+                    }
+                    self.advance(); // >
+                    Ok(TypeRef::Map(Box::new(k), Box::new(v)))
+                }
+                other => Ok(TypeRef::Named(other.to_string())),
             },
             _ => Err(DogDiagnostic::new(
                 "E004",
                 "Expected type name.",
                 tok.span,
                 "Expected a DOG type annotation here.",
-                "Use text, number, decimal, bool, void, or list<T>.",
+                "Use text, number, decimal, bool, void, list<T>, map<K, V>, or a struct/enum name.",
                 "Check type syntax after `:` or `->`.",
                 "Types aren't optional when you ask for one.",
             )),
@@ -607,26 +946,52 @@ impl Parser {
 
     fn parse_postfix(&mut self) -> Result<Expr, DogDiagnostic> {
         let mut expr = self.parse_primary()?;
-        while self.peek().kind == TokenKind::LBracket {
-            let bracket_tok = self.advance().clone();
-            let index = self.parse_expression()?;
-            if self.peek().kind != TokenKind::RBracket {
-                return Err(DogDiagnostic::new(
-                    "E004",
-                    "Expected ']' after index expression.",
-                    self.peek().span.clone(),
-                    "An index expression opened with '[' must be closed with ']'.",
-                    "Add ']' after the index expression.",
-                    "Example: `items[0]`.",
-                    "Open bracket, missing end.",
-                ));
+        loop {
+            if self.peek().kind == TokenKind::LBracket {
+                let bracket_tok = self.advance().clone();
+                let index = self.parse_expression()?;
+                if self.peek().kind != TokenKind::RBracket {
+                    return Err(DogDiagnostic::new(
+                        "E004",
+                        "Expected ']' after index expression.",
+                        self.peek().span.clone(),
+                        "An index expression opened with '[' must be closed with ']'.",
+                        "Add ']' after the index expression.",
+                        "Example: `items[0]`.",
+                        "Open bracket, missing end.",
+                    ));
+                }
+                self.advance(); // ]
+                expr = Expr::Index {
+                    target: Box::new(expr),
+                    index: Box::new(index),
+                    span: bracket_tok.span,
+                };
+            } else if self.peek().kind == TokenKind::Dot {
+                let dot_tok = self.advance().clone();
+                let field = match &self.peek().kind {
+                    TokenKind::Identifier(n) => n.clone(),
+                    _ => {
+                        return Err(DogDiagnostic::new(
+                            "E004",
+                            "Expected field or variant name after '.'.",
+                            self.peek().span.clone(),
+                            "Dot access requires an identifier on the right side.",
+                            "Example: `user.name` or `Role.Admin`.",
+                            "Check property spelling.",
+                            "A dot pointing at nothing.",
+                        ));
+                    }
+                };
+                self.advance();
+                expr = Expr::FieldAccess {
+                    target: Box::new(expr),
+                    field,
+                    span: dot_tok.span,
+                };
+            } else {
+                break;
             }
-            self.advance(); // ]
-            expr = Expr::Index {
-                target: Box::new(expr),
-                index: Box::new(index),
-                span: bracket_tok.span,
-            };
         }
         Ok(expr)
     }
@@ -683,6 +1048,56 @@ impl Parser {
                     span: tok.span,
                 })
             }
+            TokenKind::LBrace => {
+                let mut entries = Vec::new();
+                self.skip_newlines();
+                if self.peek().kind != TokenKind::RBrace {
+                    loop {
+                        self.skip_newlines();
+                        let key = self.parse_expression()?;
+                        if self.peek().kind != TokenKind::Colon {
+                            return Err(DogDiagnostic::new(
+                                "E004",
+                                "Expected ':' after map key.",
+                                self.peek().span.clone(),
+                                "Map entries use `key: value` syntax.",
+                                "Example: `{\"host\": \"localhost\"}`.",
+                                "Separate entries with commas.",
+                                "Keys and values need a colon bridge.",
+                            ));
+                        }
+                        self.advance(); // :
+                        let val = self.parse_expression()?;
+                        entries.push((key, val));
+                        self.skip_newlines();
+                        if self.peek().kind == TokenKind::Comma {
+                            self.advance();
+                            self.skip_newlines();
+                            if self.peek().kind == TokenKind::RBrace {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                if self.peek().kind != TokenKind::RBrace {
+                    return Err(DogDiagnostic::new(
+                        "E004",
+                        "Expected '}' after map literal.",
+                        self.peek().span.clone(),
+                        "A map literal opened with '{' was not closed with '}'.",
+                        "Add '}' after the last entry.",
+                        "Example: `{\"a\": 1, \"b\": 2}`.",
+                        "Unclosed map brace.",
+                    ));
+                }
+                self.advance(); // }
+                Ok(Expr::MapLit {
+                    entries,
+                    span: tok.span,
+                })
+            }
             TokenKind::Identifier(name) => {
                 if self.peek().kind == TokenKind::LParen {
                     self.advance(); // (
@@ -712,6 +1127,71 @@ impl Parser {
                     Ok(Expr::Call {
                         callee: name,
                         args,
+                        span: tok.span,
+                    })
+                } else if self.peek().kind == TokenKind::LBrace {
+                    self.advance(); // {
+                    self.skip_newlines();
+                    let mut fields = Vec::new();
+                    if self.peek().kind != TokenKind::RBrace {
+                        loop {
+                            self.skip_newlines();
+                            let f_name = match &self.peek().kind {
+                                TokenKind::Identifier(n) => n.clone(),
+                                _ => {
+                                    return Err(DogDiagnostic::new(
+                                        "E004",
+                                        "Expected field name in struct initializer.",
+                                        self.peek().span.clone(),
+                                        "Struct initializers write `field: value` inside `{ ... }`.",
+                                        format!("Example: `{name} {{ field: value }}`."),
+                                        "Check field names against the struct definition.",
+                                        "Fields need identifier names.",
+                                    ));
+                                }
+                            };
+                            self.advance();
+                            if self.peek().kind != TokenKind::Colon {
+                                return Err(DogDiagnostic::new(
+                                    "E004",
+                                    format!("Expected ':' after field '{f_name}'."),
+                                    self.peek().span.clone(),
+                                    "Struct initializers use `field: value`.",
+                                    format!("Write `{f_name}: ...`."),
+                                    "Use commas between fields.",
+                                    "Colon missing between field and value.",
+                                ));
+                            }
+                            self.advance();
+                            let val = self.parse_expression()?;
+                            fields.push((f_name, val));
+                            self.skip_newlines();
+                            if self.peek().kind == TokenKind::Comma {
+                                self.advance();
+                                self.skip_newlines();
+                                if self.peek().kind == TokenKind::RBrace {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    if self.peek().kind != TokenKind::RBrace {
+                        return Err(DogDiagnostic::new(
+                            "E004",
+                            format!("Expected '}}' to close '{name}' initializer."),
+                            self.peek().span.clone(),
+                            "A struct initializer opened with '{' was not closed.",
+                            "Add '}' after the last field.",
+                            "Check comma and brace balance.",
+                            "Left the struct door open.",
+                        ));
+                    }
+                    self.advance();
+                    Ok(Expr::StructInit {
+                        name,
+                        fields,
                         span: tok.span,
                     })
                 } else {

@@ -1,0 +1,5 @@
+const APP_TAG = "DOG-MOD"
+
+fn format_banner(title: text) -> text
+    return "[" + APP_TAG + "] " + upper(trim(title))
+end

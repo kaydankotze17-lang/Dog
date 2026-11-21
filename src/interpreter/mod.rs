@@ -5,7 +5,9 @@ use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::runtime::{Environment, Value};
 use crate::stdlib::{call_builtin, InterpreterIo, StdIo};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 const MAX_CALL_DEPTH: usize = 256;
 
@@ -25,6 +27,7 @@ enum ExecFlow {
 pub struct Interpreter<'a> {
     env: Environment,
     functions: HashMap<String, FnDefRuntime>,
+    enum_names: HashSet<String>,
     io: &'a mut dyn InterpreterIo,
     call_depth: usize,
 }
@@ -34,6 +37,7 @@ impl<'a> Interpreter<'a> {
         Self {
             env: Environment::new(),
             functions: HashMap::new(),
+            enum_names: HashSet::new(),
             io,
             call_depth: 0,
         }
@@ -41,22 +45,30 @@ impl<'a> Interpreter<'a> {
 
     pub fn eval_program(&mut self, program: &Program) -> Result<(), DogDiagnostic> {
         for stmt in &program.statements {
-            if let Stmt::FnDef {
-                name, params, body, ..
-            } = stmt
-            {
-                self.functions.insert(
-                    name.clone(),
-                    FnDefRuntime {
-                        params: params.clone(),
-                        body: body.clone(),
-                    },
-                );
+            match stmt {
+                Stmt::FnDef {
+                    name, params, body, ..
+                } => {
+                    self.functions.insert(
+                        name.clone(),
+                        FnDefRuntime {
+                            params: params.clone(),
+                            body: body.clone(),
+                        },
+                    );
+                }
+                Stmt::EnumDef { name, .. } => {
+                    self.enum_names.insert(name.clone());
+                }
+                _ => {}
             }
         }
 
         for stmt in &program.statements {
-            if matches!(stmt, Stmt::FnDef { .. }) {
+            if matches!(
+                stmt,
+                Stmt::FnDef { .. } | Stmt::StructDef { .. } | Stmt::EnumDef { .. } | Stmt::Use { .. }
+            ) {
                 continue;
             }
             match self.eval_stmt(stmt)? {
@@ -67,9 +79,15 @@ impl<'a> Interpreter<'a> {
         Ok(())
     }
 
+    pub fn top_symbols(&self) -> Vec<(String, String)> {
+        self.env.snapshot_top_symbols()
+    }
+
     fn eval_stmt(&mut self, stmt: &Stmt) -> Result<ExecFlow, DogDiagnostic> {
         match stmt {
-            Stmt::FnDef { .. } => Ok(ExecFlow::Next),
+            Stmt::FnDef { .. } | Stmt::StructDef { .. } | Stmt::EnumDef { .. } | Stmt::Use { .. } => {
+                Ok(ExecFlow::Next)
+            }
             Stmt::Binding {
                 kind, name, value, ..
             } => {
@@ -93,19 +111,36 @@ impl<'a> Interpreter<'a> {
                 let idx_val = self.eval_expr(index)?;
                 let val = self.eval_expr(value)?;
                 let Value::Number(raw_idx) = idx_val else {
-                    unreachable!("Type checker ensures index is number");
+                    unreachable!();
                 };
                 let list_val = self
                     .env
                     .get_mut_var(target)
                     .map_err(|_| immutable_err(target, span))?;
                 let Value::List(items) = list_val else {
-                    unreachable!("Type checker ensures target is list");
+                    unreachable!();
                 };
                 if raw_idx < 0 || (raw_idx as usize) >= items.len() {
                     return Err(index_bounds_err(raw_idx, items.len(), span));
                 }
                 items[raw_idx as usize] = val;
+                Ok(ExecFlow::Next)
+            }
+            Stmt::FieldAssign {
+                target,
+                field,
+                value,
+                span,
+            } => {
+                let val = self.eval_expr(value)?;
+                let struct_val = self
+                    .env
+                    .get_mut_var(target)
+                    .map_err(|_| immutable_err(target, span))?;
+                let Value::Struct { fields, .. } = struct_val else {
+                    unreachable!();
+                };
+                fields.insert(field.clone(), val);
                 Ok(ExecFlow::Next)
             }
             Stmt::If {
@@ -129,6 +164,51 @@ impl<'a> Interpreter<'a> {
                     Ok(ExecFlow::Next)
                 }
             }
+            Stmt::Match {
+                subject,
+                cases,
+                otherwise_branch,
+                ..
+            } => {
+                let subj_val = self.eval_expr(subject)?;
+                for case in cases {
+                    let pat_val = self.eval_expr(&case.pattern)?;
+                    if pat_val == subj_val {
+                        self.env.push_scope();
+                        let res = self.eval_block(&case.body);
+                        self.env.pop_scope();
+                        return res;
+                    }
+                }
+                if let Some(else_stmts) = otherwise_branch {
+                    self.env.push_scope();
+                    let res = self.eval_block(else_stmts);
+                    self.env.pop_scope();
+                    return res;
+                }
+                Ok(ExecFlow::Next)
+            }
+            Stmt::TryCatch {
+                try_body,
+                err_name,
+                catch_body,
+                ..
+            } => {
+                self.env.push_scope();
+                let res = self.eval_block(try_body);
+                self.env.pop_scope();
+                match res {
+                    Ok(flow) => Ok(flow),
+                    Err(diag) => {
+                        self.env.push_scope();
+                        self.env
+                            .define(err_name.clone(), BindingKind::Let, Value::Text(diag.title));
+                        let catch_res = self.eval_block(catch_body);
+                        self.env.pop_scope();
+                        catch_res
+                    }
+                }
+            }
             Stmt::While {
                 condition, body, ..
             } => {
@@ -150,7 +230,7 @@ impl<'a> Interpreter<'a> {
             }
             Stmt::Repeat { count, body, span } => {
                 let Value::Number(n) = self.eval_expr(count)? else {
-                    unreachable!("Type checker enforces number");
+                    unreachable!();
                 };
                 if n < 0 {
                     return Err(DogDiagnostic::new(
@@ -182,7 +262,7 @@ impl<'a> Interpreter<'a> {
                 ..
             } => {
                 let Value::List(items) = self.eval_expr(iterable)? else {
-                    unreachable!("Type checker enforces list iterable");
+                    unreachable!();
                 };
                 for item in items {
                     self.env.push_scope();
@@ -236,6 +316,44 @@ impl<'a> Interpreter<'a> {
                 }
                 Ok(Value::List(items))
             }
+            Expr::MapLit { entries, .. } => {
+                let mut map = Vec::with_capacity(entries.len());
+                for (k, v) in entries {
+                    let kv = self.eval_expr(k)?;
+                    let vv = self.eval_expr(v)?;
+                    if let Some((_, slot)) = map.iter_mut().find(|(ek, _)| ek == &kv) {
+                        *slot = vv;
+                    } else {
+                        map.push((kv, vv));
+                    }
+                }
+                Ok(Value::Map(map))
+            }
+            Expr::StructInit { name, fields, .. } => {
+                let mut map = BTreeMap::new();
+                for (fname, fexpr) in fields {
+                    map.insert(fname.clone(), self.eval_expr(fexpr)?);
+                }
+                Ok(Value::Struct {
+                    type_name: name.clone(),
+                    fields: map,
+                })
+            }
+            Expr::FieldAccess { target, field, .. } => {
+                if let Expr::Identifier { name, .. } = target.as_ref() {
+                    if self.enum_names.contains(name) && self.env.get(name).is_none() {
+                        return Ok(Value::Enum {
+                            type_name: name.clone(),
+                            variant: field.clone(),
+                        });
+                    }
+                }
+                let val = self.eval_expr(target)?;
+                match val {
+                    Value::Struct { fields, .. } => Ok(fields.get(field).cloned().unwrap_or(Value::Void)),
+                    _ => unreachable!("Type checker validates field access"),
+                }
+            }
             Expr::Index {
                 target,
                 index,
@@ -244,7 +362,7 @@ impl<'a> Interpreter<'a> {
                 let target_val = self.eval_expr(target)?;
                 let idx_val = self.eval_expr(index)?;
                 let Value::Number(idx) = idx_val else {
-                    unreachable!("Type checker ensures index is number");
+                    unreachable!();
                 };
                 match target_val {
                     Value::List(items) => {
@@ -260,7 +378,7 @@ impl<'a> Interpreter<'a> {
                         }
                         Ok(Value::Text(chars[idx as usize].to_string()))
                     }
-                    _ => unreachable!("Type checker validates index target"),
+                    _ => unreachable!(),
                 }
             }
             Expr::Identifier { name, span } => self.env.get(name).cloned().ok_or_else(|| {
@@ -280,7 +398,7 @@ impl<'a> Interpreter<'a> {
                     (UnaryOp::Neg, Value::Number(n)) => Ok(Value::Number(n.wrapping_neg())),
                     (UnaryOp::Neg, Value::Decimal(d)) => Ok(Value::Decimal(-d)),
                     (UnaryOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
-                    _ => unreachable!("Type checker enforces unary operand types"),
+                    _ => unreachable!(),
                 }
             }
             Expr::Binary {
@@ -330,13 +448,13 @@ impl<'a> Interpreter<'a> {
                     (BinOp::GtEq, Value::Decimal(a), Value::Decimal(b)) => Ok(Value::Bool(a >= b)),
                     (BinOp::LtEq, Value::Number(a), Value::Number(b)) => Ok(Value::Bool(a <= b)),
                     (BinOp::LtEq, Value::Decimal(a), Value::Decimal(b)) => Ok(Value::Bool(a <= b)),
-                    _ => unreachable!("Type checker validates binary operations"),
+                    _ => unreachable!(),
                 }
             }
             Expr::Call { callee, args, span } => {
                 if callee == "push" {
                     let Expr::Identifier { name, .. } = &args[0] else {
-                        unreachable!("Type checker enforces mutable identifier");
+                        unreachable!();
                     };
                     let item = self.eval_expr(&args[1])?;
                     let list_val = self
@@ -344,21 +462,21 @@ impl<'a> Interpreter<'a> {
                         .get_mut_var(name)
                         .map_err(|_| immutable_err(name, span))?;
                     let Value::List(items) = list_val else {
-                        unreachable!("Type checker ensures list");
+                        unreachable!();
                     };
                     items.push(item);
                     return Ok(Value::Void);
                 }
                 if callee == "pop" {
                     let Expr::Identifier { name, .. } = &args[0] else {
-                        unreachable!("Type checker enforces mutable identifier");
+                        unreachable!();
                     };
                     let list_val = self
                         .env
                         .get_mut_var(name)
                         .map_err(|_| immutable_err(name, span))?;
                     let Value::List(items) = list_val else {
-                        unreachable!("Type checker ensures list");
+                        unreachable!();
                     };
                     return items.pop().ok_or_else(|| {
                         DogDiagnostic::new(
@@ -371,6 +489,42 @@ impl<'a> Interpreter<'a> {
                             "Nothing left in the treat jar.",
                         )
                     });
+                }
+                if callee == "map_set" {
+                    let Expr::Identifier { name, .. } = &args[0] else {
+                        unreachable!();
+                    };
+                    let k = self.eval_expr(&args[1])?;
+                    let v = self.eval_expr(&args[2])?;
+                    let map_val = self
+                        .env
+                        .get_mut_var(name)
+                        .map_err(|_| immutable_err(name, span))?;
+                    let Value::Map(entries) = map_val else {
+                        unreachable!();
+                    };
+                    if let Some((_, slot)) = entries.iter_mut().find(|(ek, _)| ek == &k) {
+                        *slot = v;
+                    } else {
+                        entries.push((k, v));
+                    }
+                    return Ok(Value::Void);
+                }
+                if callee == "map_remove" {
+                    let Expr::Identifier { name, .. } = &args[0] else {
+                        unreachable!();
+                    };
+                    let k = self.eval_expr(&args[1])?;
+                    let map_val = self
+                        .env
+                        .get_mut_var(name)
+                        .map_err(|_| immutable_err(name, span))?;
+                    let Value::Map(entries) = map_val else {
+                        unreachable!();
+                    };
+                    let before = entries.len();
+                    entries.retain(|(ek, _)| ek != &k);
+                    return Ok(Value::Bool(entries.len() < before));
                 }
 
                 let mut evaluated = Vec::with_capacity(args.len());
@@ -446,9 +600,90 @@ fn div_zero(span: &Span) -> DogDiagnostic {
     )
 }
 
-pub fn check_source(file: &str, source: &str) -> Result<Program, DogDiagnostic> {
+pub fn resolve_program(file: &str, source: &str) -> Result<Program, DogDiagnostic> {
+    let mut visited = HashSet::new();
+    let mut active = HashSet::new();
+    let base_dir = Path::new(file)
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    resolve_recursive(file, source, &base_dir, &mut visited, &mut active)
+}
+
+fn resolve_recursive(
+    file: &str,
+    source: &str,
+    base_dir: &Path,
+    visited: &mut HashSet<PathBuf>,
+    active: &mut HashSet<PathBuf>,
+) -> Result<Program, DogDiagnostic> {
     let tokens = Lexer::new(file, source).tokenize()?;
     let program = Parser::new(tokens).parse()?;
+
+    let mut merged = Vec::new();
+    for stmt in program.statements {
+        if let Stmt::Use { path, span } = stmt {
+            let target = base_dir.join(&path);
+            let canonical = fs::canonicalize(&target).unwrap_or_else(|_| target.clone());
+            if active.contains(&canonical) {
+                return Err(DogDiagnostic::new(
+                    "E041",
+                    format!("Circular module import detected for '{path}'."),
+                    span,
+                    "A module cannot directly or indirectly `use` itself.",
+                    "Break the cycle by extracting shared definitions into a third `.dg` file.",
+                    "Keep module dependencies acyclic.",
+                    "Chasing your own tail across files.",
+                ));
+            }
+            if visited.contains(&canonical) {
+                continue;
+            }
+            let mod_src = fs::read_to_string(&target).map_err(|e| {
+                DogDiagnostic::new(
+                    "E040",
+                    format!("Failed to load module '{path}'."),
+                    span,
+                    format!("Could not read '{}': {e}", target.display()),
+                    "Verify the relative `.dg` path in `use \"...\"`.",
+                    "Module paths are resolved relative to the importing file.",
+                    "Module went missing.",
+                )
+            })?;
+            active.insert(canonical.clone());
+            let mod_dir = target.parent().unwrap_or(base_dir);
+            let sub = resolve_recursive(
+                &target.display().to_string(),
+                &mod_src,
+                mod_dir,
+                visited,
+                active,
+            )?;
+            active.remove(&canonical);
+            visited.insert(canonical);
+            for sub_stmt in sub.statements {
+                if matches!(
+                    sub_stmt,
+                    Stmt::FnDef { .. }
+                        | Stmt::StructDef { .. }
+                        | Stmt::EnumDef { .. }
+                        | Stmt::Binding {
+                            kind: BindingKind::Const,
+                            ..
+                        }
+                ) {
+                    merged.push(sub_stmt);
+                }
+            }
+        } else {
+            merged.push(stmt);
+        }
+    }
+    Ok(Program { statements: merged })
+}
+
+pub fn check_source(file: &str, source: &str) -> Result<Program, DogDiagnostic> {
+    let program = resolve_program(file, source)?;
     let mut checker = TypeChecker::new();
     checker.check(&program)?;
     Ok(program)

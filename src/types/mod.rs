@@ -9,17 +9,32 @@ pub enum DogType {
     Bool,
     Void,
     List(Box<DogType>),
+    Map(Box<DogType>, Box<DogType>),
+    Struct(String),
+    Enum(String),
 }
 
 impl DogType {
-    pub fn from_ref(tr: &TypeRef) -> Self {
+    pub fn from_ref_with<F>(tr: &TypeRef, resolve_named: &F) -> Result<Self, String>
+    where
+        F: Fn(&str) -> Option<DogType>,
+    {
         match tr {
-            TypeRef::Text => DogType::Text,
-            TypeRef::Number => DogType::Number,
-            TypeRef::Decimal => DogType::Decimal,
-            TypeRef::Bool => DogType::Bool,
-            TypeRef::Void => DogType::Void,
-            TypeRef::List(inner) => DogType::List(Box::new(Self::from_ref(inner))),
+            TypeRef::Text => Ok(DogType::Text),
+            TypeRef::Number => Ok(DogType::Number),
+            TypeRef::Decimal => Ok(DogType::Decimal),
+            TypeRef::Bool => Ok(DogType::Bool),
+            TypeRef::Void => Ok(DogType::Void),
+            TypeRef::List(inner) => Ok(DogType::List(Box::new(Self::from_ref_with(
+                inner,
+                resolve_named,
+            )?))),
+            TypeRef::Map(k, v) => Ok(DogType::Map(
+                Box::new(Self::from_ref_with(k, resolve_named)?),
+                Box::new(Self::from_ref_with(v, resolve_named)?),
+            )),
+            TypeRef::Named(name) => resolve_named(name)
+                .ok_or_else(|| format!("Unknown type '{name}'.")),
         }
     }
 
@@ -31,6 +46,9 @@ impl DogType {
             DogType::Bool => "bool".to_string(),
             DogType::Void => "void".to_string(),
             DogType::List(inner) => format!("list<{}>", inner.label()),
+            DogType::Map(k, v) => format!("map<{}, {}>", k.label(), v.label()),
+            DogType::Struct(name) => name.clone(),
+            DogType::Enum(name) => name.clone(),
         }
     }
 }

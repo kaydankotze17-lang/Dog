@@ -1,0 +1,115 @@
+name: Build Termux APT Repository & Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build-termux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read Cargo version
+        id: meta
+        run: |
+          VERSION=$(grep '^version =' Cargo.toml | head -n1 | cut -d'"' -f2)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust & Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Install dpkg-dev and apt-utils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev apt-utils
+
+      - name: Run host unit & integration tests
+        run: cargo test
+
+      - name: Cross-compile for Termux (aarch64, armv7, x86_64) & package .deb
+        run: |
+          set -euo pipefail
+          NDK_BIN="${ANDROID_NDK_LATEST_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          chmod +x packaging/termux/build-deb.sh
+          mkdir -p apt-repo/pool/main/d/dog
+
+          # 1. aarch64 (64-bit ARM Android)
+          CC_aarch64_linux_android="${NDK_BIN}/aarch64-linux-android24-clang" \
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${NDK_BIN}/aarch64-linux-android24-clang" \
+          cargo build --release --target aarch64-linux-android
+          "${NDK_BIN}/llvm-strip" target/aarch64-linux-android/release/dog
+          ./packaging/termux/build-deb.sh aarch64 "${{ steps.meta.outputs.version }}" \
+            target/aarch64-linux-android/release/dog \
+            "apt-repo/pool/main/d/dog/dog_${{ steps.meta.outputs.version }}_aarch64.deb"
+
+          # 2. arm (32-bit ARMv7 Android)
+          CC_armv7_linux_androideabi="${NDK_BIN}/armv7a-linux-androideabi24-clang" \
+          CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="${NDK_BIN}/armv7a-linux-androideabi24-clang" \
+          cargo build --release --target armv7-linux-androideabi
+          "${NDK_BIN}/llvm-strip" target/armv7-linux-androideabi/release/dog
+          ./packaging/termux/build-deb.sh arm "${{ steps.meta.outputs.version }}" \
+            target/armv7-linux-androideabi/release/dog \
+            "apt-repo/pool/main/d/dog/dog_${{ steps.meta.outputs.version }}_arm.deb"
+
+          # 3. x86_64 (Android emulators / Chromebooks)
+          CC_x86_64_linux_android="${NDK_BIN}/x86_64-linux-android24-clang" \
+          CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="${NDK_BIN}/x86_64-linux-android24-clang" \
+          cargo build --release --target x86_64-linux-android
+          "${NDK_BIN}/llvm-strip" target/x86_64-linux-android/release/dog
+          ./packaging/termux/build-deb.sh x86_64 "${{ steps.meta.outputs.version }}" \
+            target/x86_64-linux-android/release/dog \
+            "apt-repo/pool/main/d/dog/dog_${{ steps.meta.outputs.version }}_x86_64.deb"
+
+      - name: Generate Termux APT Repository Index
+        run: |
+          set -euo pipefail
+          cd apt-repo
+          for arch in aarch64 arm x86_64; do
+            mkdir -p "dists/termux/main/binary-${arch}"
+            dpkg-scanpackages --multiversion --arch "${arch}" pool/ > "dists/termux/main/binary-${arch}/Packages"
+            gzip -9c "dists/termux/main/binary-${arch}/Packages" > "dists/termux/main/binary-${arch}/Packages.gz"
+          done
+
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Origin="DOG Language" \
+            -o APT::FTPArchive::Release::Label="DOG Termux APT" \
+            -o APT::FTPArchive::Release::Suite="termux" \
+            -o APT::FTPArchive::Release::Codename="termux" \
+            -o APT::FTPArchive::Release::Architectures="aarch64 arm x86_64" \
+            -o APT::FTPArchive::Release::Components="main" \
+            release dists/termux > dists/termux/Release
+
+          cat > index.html <<EOF
+          <!doctype html>
+          <html><body>
+          <h1>DOG Language Termux APT Repository</h1>
+          <pre>echo "deb [trusted=yes] https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }} termux main" &gt; \$PREFIX/etc/apt/sources.list.d/dog.list
+          pkg update &amp;&amp; pkg install -y dog</pre>
+          </body></html>
+          EOF
+
+      - name: Publish APT Repo to GitHub Pages
+        if: github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./apt-repo
+
+      - name: Create GitHub Release on Tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apt-repo/pool/main/d/dog/*.deb

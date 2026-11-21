@@ -5,6 +5,8 @@ edition = "2021"
 authors = ["DOG Language Contributors"]
 license = "Apache-2.0"
 description = "The DOG general-purpose programming language interpreter, type checker, and CLI."
+homepage = "https://github.com/kaydankotze17-lang/dog"
+repository = "https://github.com/kaydankotze17-lang/dog"
 readme = "README.md"
 
 [[bin]]
