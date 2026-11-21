@@ -553,4 +553,25 @@ tcp_close(conn)
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn forge_scaffolds_bot_and_web_templates() {
+    let dir = env::temp_dir().join("dog_forge_bot_test");
+    let _ = fs::remove_dir_all(&dir);
+    let target = dir.display().to_string();
+
+    let out = dog_lang::sys::handle_forge(&[
+        "new".to_string(),
+        target.clone(),
+        "--bot".to_string(),
+    ])
+    .expect("forge --bot should succeed");
+    assert!(out.contains("bot template"));
+
+    let main_dg = fs::read_to_string(dir.join("src/main.dg")).unwrap();
+    check_source("forged_bot.dg", &main_dg).expect("forged bot template must type-check");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+
 

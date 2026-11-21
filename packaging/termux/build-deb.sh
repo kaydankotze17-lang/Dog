@@ -22,11 +22,17 @@ fi
 STAGE_DIR="$(mktemp -d)"
 trap 'rm -rf "$STAGE_DIR"' EXIT
 
-TERMUX_BIN_DIR="$STAGE_DIR/data/data/com.termux/files/usr/bin"
-mkdir -p "$STAGE_DIR/DEBIAN" "$TERMUX_BIN_DIR"
+TERMUX_USR_DIR="$STAGE_DIR/data/data/com.termux/files/usr"
+TERMUX_BIN_DIR="$TERMUX_USR_DIR/bin"
+TERMUX_EX_DIR="$TERMUX_USR_DIR/share/dog/examples"
+mkdir -p "$STAGE_DIR/DEBIAN" "$TERMUX_BIN_DIR" "$TERMUX_EX_DIR"
 
 cp "$BIN_PATH" "$TERMUX_BIN_DIR/dog"
 chmod 0755 "$TERMUX_BIN_DIR/dog"
+if [ -d "examples" ]; then
+    cp examples/*.dg "$TERMUX_EX_DIR/" 2>/dev/null || true
+    chmod 0644 "$TERMUX_EX_DIR"/*.dg 2>/dev/null || true
+fi
 
 INSTALLED_KB="$(du -sk "$STAGE_DIR/data" | awk '{print $1}')"
 

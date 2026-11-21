@@ -19,6 +19,12 @@ mkdir -p "$LIST_DIR"
 echo "deb [trusted=yes] ${REPO_URL} termux main" > "$LIST_DIR/dog.list"
 
 echo "Added DOG Termux APT source: $REPO_URL"
-pkg update -y
-pkg install -y dog
+if ! pkg update -y; then
+    echo "Upstream Termux mirror sync error detected — updating DOG APT index directly..."
+    apt-get update \
+        -o Dir::Etc::sourcelist="sources.list.d/dog.list" \
+        -o Dir::Etc::sourceparts="-" \
+        -o APT::Get::List-Cleanup="0"
+fi
+apt-get install -y dog
 dog --version

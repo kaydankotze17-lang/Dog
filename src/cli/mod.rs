@@ -271,6 +271,17 @@ pub fn run() {
                 }
             }
         }
+        "init" => {
+            let mut forge_args = vec!["new".to_string(), ".".to_string()];
+            forge_args.extend(args[1..].iter().cloned());
+            match handle_forge(&forge_args) {
+                Ok(out) => println!("{out}"),
+                Err(e) => {
+                    eprintln!("{e}");
+                    process::exit(1);
+                }
+            }
+        }
         "prompt" => match handle_prompt(&args[1..]) {
             Ok(out) => println!("{out}"),
             Err(e) => {
@@ -466,7 +477,7 @@ Interactive, Prompt & Workspace IDEs:
   dog studio [dir]                  Split-pane DOG Studio terminal IDE
   dog prompt <install|status|...>   Add/remove Kali-style DOG shell prompt & completions
   dog completions [bash|zsh|fish]   Generate shell tab-completion script
-  dog forge new <name>              Scaffold a new DOG project (alias: dog new <name>)
+  dog forge new <name> [--web|--bot] Scaffold a new project (alias: dog new / dog init)
 
 Packages (DOG Hub & dog.pack):
   dog add <path | pkg>              Add local package or cached dependency

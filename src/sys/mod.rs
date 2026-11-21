@@ -241,18 +241,57 @@ pub fn handle_docs(topic: Option<&str>) -> String {
 
 pub fn handle_forge(args: &[String]) -> Result<String, String> {
     if args.first().map(String::as_str) != Some("new") {
-        return Err("Usage: dog forge new <project-name>".to_string());
+        return Err("Usage: dog forge new <project-name | .> [--web | --bot]".to_string());
     }
-    let Some(name) = args.get(1) else {
-        return Err("Usage: dog forge new <project-name>".to_string());
+    let mut target: Option<&str> = None;
+    let mut template = "default";
+    for arg in &args[1..] {
+        match arg.as_str() {
+            "--web" | "-w" => template = "web",
+            "--bot" | "--discord" | "-b" => template = "bot",
+            flag if flag.starts_with('-') => {
+                return Err(format!(
+                    "Unknown template option '{flag}'. Use --web or --bot."
+                ));
+            }
+            val if target.is_none() => target = Some(val),
+            extra => {
+                return Err(format!(
+                    "Unexpected argument '{extra}'. Usage: dog forge new <project-name | .> [--web | --bot]"
+                ));
+            }
+        }
+    }
+
+    let Some(name) = target else {
+        return Err("Usage: dog forge new <project-name | .> [--web | --bot]".to_string());
     };
-    if name.is_empty() || name.contains('/') || name.contains('\\') || name == "." || name == ".." {
+    if name.is_empty() || name.contains('\\') || name == ".." {
         return Err(format!("Invalid project directory name '{name}'."));
     }
+
+    let in_place = name == ".";
     let root = Path::new(name);
-    if root.exists() {
+    if !in_place && root.exists() {
         return Err(format!("Directory '{name}' already exists."));
     }
+    if in_place && (root.join("dog.pack").exists() || root.join("src/main.dg").exists()) {
+        return Err("Current directory already contains dog.pack or src/main.dg.".to_string());
+    }
+
+    let pkg_name = if in_place {
+        env::current_dir()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "dog_app".to_string())
+    } else {
+        Path::new(name)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| name.to_string())
+    };
 
     fs::create_dir_all(root.join("src"))
         .map_err(|e| format!("Failed to create '{name}/src': {e}"))?;
@@ -260,37 +299,57 @@ pub fn handle_forge(args: &[String]) -> Result<String, String> {
         .map_err(|e| format!("Failed to create '{name}/tests': {e}"))?;
 
     let mut pack = DogPack {
-        name: name.clone(),
+        name: pkg_name.clone(),
         version: "0.1.0".to_string(),
         entry: "src/main.dg".to_string(),
-        description: format!("{name} built with DOG"),
+        description: match template {
+            "bot" => format!("{pkg_name} Discord bot built with DOG"),
+            "web" => format!("{pkg_name} local web server built with DOG"),
+            _ => format!("{pkg_name} built with DOG"),
+        },
         ..DogPack::default()
     };
-    pack.scripts.insert("start".to_string(), "dog run src/main.dg".to_string());
-    pack.scripts.insert("test".to_string(), "dog test tests".to_string());
+    pack.scripts
+        .insert("start".to_string(), "dog run src/main.dg".to_string());
+    pack.scripts
+        .insert("test".to_string(), "dog test tests".to_string());
+
+    let (main_src, readme_src) = match template {
+        "bot" => (
+            include_str!("../../examples/discord_bot.dg").to_string(),
+            format!(
+                "# {pkg_name} (DOG Discord Bot)\n\n```bash\nexport DISCORD_WEBHOOK_URL=\"https://discord.com/api/webhooks/...\"\ndog run src/main.dg\n# Trigger locally:\ncurl -X POST http://127.0.0.1:8090/cmd -d '!ping'\n```\n"
+            ),
+        ),
+        "web" => (
+            include_str!("../../examples/web_server.dg").to_string(),
+            format!(
+                "# {pkg_name} (DOG Web Server)\n\n```bash\ndog run src/main.dg\n# Open http://127.0.0.1:8080\n```\n"
+            ),
+        ),
+        _ => (
+            format!("let app_name = \"{pkg_name}\"\nsay(\"Welcome to \" + app_name + \"!\")\n"),
+            format!("# {pkg_name}\n\n```bash\ndog run src/main.dg\ndog test tests\n```\n"),
+        ),
+    };
 
     fs::write(root.join("dog.pack"), pack.render())
         .map_err(|e| format!("Failed to write dog.pack: {e}"))?;
-    fs::write(
-        root.join("src/main.dg"),
-        format!("let app_name = \"{name}\"\nsay(\"Welcome to \" + app_name + \"!\")\n"),
-    )
-    .map_err(|e| format!("Failed to write src/main.dg: {e}"))?;
+    fs::write(root.join("src/main.dg"), main_src)
+        .map_err(|e| format!("Failed to write src/main.dg: {e}"))?;
     fs::write(
         root.join("tests/main_test.dg"),
         "fn add(a: number, b: number) -> number\n    return a + b\nend\n\nassert(add(2, 3) == 5, \"math works\")\n",
     )
     .map_err(|e| format!("Failed to write tests/main_test.dg: {e}"))?;
-    fs::write(
-        root.join("README.md"),
-        format!("# {name}\n\n```bash\ndog run src/main.dg\ndog test tests\n```\n"),
-    )
-    .map_err(|e| format!("Failed to write README.md: {e}"))?;
-    fs::write(root.join(".gitignore"), "*.dgb\n")
+    fs::write(root.join("README.md"), readme_src)
+        .map_err(|e| format!("Failed to write README.md: {e}"))?;
+    fs::write(root.join(".gitignore"), "*.dgb\n*.json\n")
         .map_err(|e| format!("Failed to write .gitignore: {e}"))?;
 
+    let prefix = if in_place { "." } else { name };
     Ok(format!(
-        "Forged new DOG project '{name}':\n  {name}/dog.pack\n  {name}/src/main.dg\n  {name}/tests/main_test.dg\n  {name}/README.md"
+        "Forged new DOG project '{pkg_name}' ({template} template):\n  {prefix}/dog.pack\n  {prefix}/src/main.dg\n  {prefix}/tests/main_test.dg\n  {prefix}/README.md"
     ))
 }
 
@@ -675,7 +734,11 @@ pub fn handle_update() -> String {
     let is_termux = env::var("PREFIX").is_ok_and(|p| p.contains("com.termux"));
     let mut msg = format!("Current DOG CLI version: {version}\n");
     if is_termux {
-        msg.push_str("Termux APT update : pkg update && pkg upgrade -y dog\n");
+        msg.push_str(
+            "Termux APT update : pkg update && pkg upgrade -y dog\n\
+             Direct DOG upgrade (bypasses syncing Termux mirrors):\n\
+               apt-get update -o Dir::Etc::sourcelist=\"sources.list.d/dog.list\" -o Dir::Etc::sourceparts=\"-\" -o APT::Get::List-Cleanup=\"0\" && apt-get install --only-upgrade -y dog\n",
+        );
     }
     if Path::new(".git").exists() {
         if let Ok(out) = Command::new("git").args(["status", "-sb"]).output() {

@@ -23,8 +23,9 @@ jobs:
       - name: Read Cargo version
         id: meta
         run: |
-          VERSION=$(grep '^version =' Cargo.toml | head -n1 | cut -d'"' -f2)
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          CARGO_VER=$(grep '^version =' Cargo.toml | head -n1 | cut -d'"' -f2)
+          DEB_VER="${CARGO_VER}-${{ github.run_number }}"
+          echo "version=${DEB_VER}" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust & Android targets
         uses: dtolnay/rust-toolchain@stable
