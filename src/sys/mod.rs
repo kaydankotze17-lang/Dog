@@ -1,12 +1,18 @@
+use crate::ast::{BinOp, Expr, InterpPart, Program, Stmt};
 use crate::checker::TypeChecker;
-use crate::config::DogConfig;
+use crate::config::{DogConfig, Personality};
+use crate::editor::BufferRunIo;
+use crate::formatter::format_source;
 use crate::hub::DogPack;
-use crate::interpreter::{resolve_program, run_source_with_io};
+use crate::interpreter::{resolve_program, run_source_with_io, Interpreter};
 use crate::lexer::Lexer;
 use crate::net::guess_mime_type;
 use crate::parser::Parser;
 use crate::sdu::{audit_log_path, detect_actual_root, session_path};
-use crate::stdlib::StdIo;
+use crate::stdlib::{InterpreterIo, StdIo};
+use crate::term::{DogMessenger, ProgressBar, ProgressUnit};
+use crate::types::DogType;
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
@@ -54,6 +60,7 @@ fn stmt_summary(stmt: &crate::ast::Stmt) -> String {
         Stmt::EnumDef { name, variants, .. } => format!("enum {name} ({} variants)", variants.len()),
         Stmt::Binding { kind, name, .. } => format!("{kind:?} {name}"),
         Stmt::Assign { name, .. } => format!("assign {name}"),
+        Stmt::CompoundAssign { name, .. } => format!("compound_assign {name}"),
         Stmt::FieldAssign { target, field, .. } => format!("assign {target}.{field}"),
         Stmt::IndexAssign { target, .. } => format!("assign {target}[...]"),
         Stmt::If { .. } => "if ... end".to_string(),
@@ -114,11 +121,12 @@ pub fn handle_docs(topic: Option<&str>) -> String {
             "DOG Syntax Reference\n\
              --------------------\n\
              let x = 10               immutable binding\n\
-             var y = 0                mutable binding\n\
+             var y = 0                mutable binding (`y += 5`, `-=`, `*=`, `/=`, `%=`)\n\
              const PI = 3.14          constant\n\
+             $\"Hi {name}, {x + 1}!\"   string interpolation (plain \"...\" stays literal)\n\
              struct Dog ... end       product type\n\
              enum Role ... end        sum/variant type\n\
-             if ... otherwise ... end conditional\n\
+             if ... otherwise if ... otherwise ... end   conditional chain\n\
              match x case 1 ... end   pattern match\n\
              try ... catch err ... end error handling\n\
              while / repeat / for     loops (break/continue supported)\n\
@@ -144,40 +152,65 @@ pub fn handle_docs(topic: Option<&str>) -> String {
                        cli_progress(), cli_spinner(), cli_theme(), cli_prefix(),\n\
                        cli_timestamps(), cli_supports_color(), cli_is_tty()\n\
              Text    : lower(), upper(), trim(), contains(), starts_with(), ends_with(),\n\
-                       replace(), slice(), split(), join(), len()\n\
+                       replace(), slice(), index_of(), last_index_of(), count_matches(),\n\
+                       char_at(), remove_prefix(), remove_suffix(), title_case(),\n\
+                       reverse_text(), lines(), str_repeat(), pad_left(), pad_right(),\n\
+                       split(), join(), glob_match(), html_escape(), len()\n\
              Cast    : text(), number(), decimal()\n\
-             Math    : abs(), min(), max(), round(), floor(), ceil(), sqrt(), pow(), rand_int()\n\
-             List    : push(), pop(), sort(), reverse(), list_contains(), range(), len()\n\
-             Map     : map_get(), map_set(), map_has(), map_keys(), map_remove()\n\
-             Files   : file_read(), file_write(), file_append(), file_exists(), file_delete(),\n\
-                       dir_list(), mkdir(), cwd()\n\
+             Math    : abs(), min(), max(), clamp(), round(), floor(), ceil(), sqrt(),\n\
+                       pow(), pow_int(), sin(), cos(), tan(), atan2(), exp(), log(),\n\
+                       log10(), sign(), gcd(), lcm(), math_pi(), math_e(), rand_int()\n\
+             List    : push(), pop(), insert_at(), remove_at(), clear(), sort(), reverse(),\n\
+                       list_contains(), list_index_of(), list_slice(), list_unique(),\n\
+                       list_take(), list_skip(), list_flatten(), list_sum(), list_avg(),\n\
+                       list_concat(), range(), len()\n\
+             Map     : map_get(), map_get_or(), map_set(), map_has(), map_keys(),\n\
+                       map_values(), map_remove(), map_clear(), map_merge(), map_from_lists()\n\
+             Files   : file_read(), file_write(), file_append(), file_copy(), file_move(),\n\
+                       file_exists(), file_delete(), file_size(), is_file(), is_dir(),\n\
+                       path_join(), path_dirname(), path_basename(), path_ext(),\n\
+                       dir_list(), mkdir(), rmdir(), temp_dir(), cwd()\n\
              KV DB   : kv_set(), kv_get(), kv_has(), kv_delete(), kv_keys()\n\
              System  : args(), env_get(), env_set(), exec_cmd(), os_name(), os_arch(),\n\
-                       time_now_ms(), sleep_ms(), uuid_v4()\n\
-             Interop : json_parse(), json_stringify(), csv_parse(), url_encode(), url_decode()\n\
+                       time_now_ms(), time_utc(), sleep_ms(), uuid_v4()\n\
+             Interop : json_parse(), json_stringify(), json_pretty(), json_has_key(),\n\
+                       csv_parse(), csv_stringify(), url_encode(), url_decode(),\n\
+                       url_parse(), query_parse(), query_stringify()\n\
              Crypto  : hex_encode(), hex_decode(), base64_encode(), base64_decode(),\n\
-                       sha256(), hmac_sha256()\n\
-             Network : http_listen(), http_port(), http_accept(), http_reply(), http_serve_file(),\n\
-                       http_close(), http_get(), http_post(), http_request(),\n\
-                       tcp_listen(), tcp_port(), tcp_accept(), tcp_connect(), tcp_send(),\n\
-                       tcp_recv(), tcp_close()\n\
+                       base64_url_encode(), base64_url_decode(), sha256(), sha512(),\n\
+                       hmac_sha256(), hmac_sha256_verify(), sha1(), rand_bytes_hex()\n\
+             Network : http_listen(), http_port(), http_accept(), http_try_accept(),\n\
+                       http_reply(), http_reply_headers(), http_redirect(), http_serve_file(),\n\
+                       http_route_match(), http_status_text(), http_close(), http_get(),\n\
+                       http_post(), http_put(), http_delete(), http_request(),\n\
+                       http_request_timeout(), ws_upgrade(), ws_connect(), ws_send(),\n\
+                       ws_recv(), ws_ping(), ws_close(), udp_bind(), udp_send_to(),\n\
+                       udp_recv_from(), udp_close(), tcp_listen(), tcp_port(),\n\
+                       tcp_accept(), tcp_connect(), tcp_send(), tcp_recv(),\n\
+                       tcp_set_timeout(), tcp_remote_addr(), tcp_close(), dns_lookup(),\n\
+                       port_is_open(), local_ip()\n\
              Errors  : assert(), fail()"
                 .to_string()
         }
         "network" | "net" | "web" | "bot" => {
-            "DOG Networking, Local Websites & Discord Bots\n\
-             -------------------------------------------\n\
+            "DOG Networking, WebSockets, UDP, Websites & Bots\n\
+             ----------------------------------------------\n\
              HTTP Server : let srv = http_listen(\"127.0.0.1:8080\")  (\"0.0.0.0:8080\" for LAN)\n\
-                           let req = http_accept(srv)   -> map {id, method, path, query, body, remote, ...}\n\
-                           http_reply(req, 200, \"text/html\", html)\n\
-                           http_serve_file(req, \"public/index.html\")\n\
-                           http_close(srv)\n\
-             HTTP Client : http_get(url), http_post(url, body, \"application/json\"),\n\
-                           http_request(\"POST\", url, headers_map, json_body) -> {status, body}\n\
-                           Supports http:// natively and https:// (Discord API/webhooks) via curl\n\
-             Raw TCP     : tcp_listen(addr), tcp_accept(id), tcp_connect(addr),\n\
-                           tcp_send(id, data), tcp_recv(id, max_bytes), tcp_close(id)\n\
-             Persistence : kv_set(db, k, v), kv_get(db, k), kv_has(db, k), kv_delete(db, k), kv_keys(db)\n\
+                           http_accept(srv) / http_try_accept(srv, timeout_ms)\n\
+                           Supports Content-Length and Transfer-Encoding: chunked request bodies\n\
+                           http_reply(req, 200, \"text/html\", html) | http_status_text(200)\n\
+                           http_reply_headers(req, 200, hdrs_map, body) | http_redirect(req, 302, loc)\n\
+                           http_serve_file(req, \"public/index.html\") | http_route_match(\"/u/:id\", p)\n\
+                           url_parse(u), query_parse(q), query_stringify(m), html_escape(s)\n\
+             HTTP Client : http_get(url), http_post(url, body, ctype), http_put(...), http_delete(url)\n\
+                           http_request(method, url, hdrs, body) / http_request_timeout(..., ms)\n\
+                           Follows redirects (301/302/303/307/308), returns status, body, headers, final_url, ok\n\
+             WebSockets  : ws_upgrade(req) -> ws_id, ws_connect(\"ws://...\") -> ws_id\n\
+                           ws_send(ws_id, msg), ws_recv(ws_id), ws_ping(ws_id, msg), ws_close(ws_id)\n\
+             UDP & DNS   : udp_bind(addr), udp_send_to(id, addr, data), udp_recv_from(id, max), udp_close(id)\n\
+                           dns_lookup(host), local_ip(), port_is_open(addr, ms),\n\
+                           tcp_set_timeout(id, ms), tcp_remote_addr(id)\n\
+             Raw TCP     : tcp_listen, tcp_accept, tcp_connect, tcp_send, tcp_recv, tcp_close\n\
              Static Host : dog server [dir] [port] [--host 0.0.0.0]"
                 .to_string()
         }
@@ -185,7 +218,7 @@ pub fn handle_docs(topic: Option<&str>) -> String {
             "DOG Error Codes\n\
              ---------------\n\
              E001-E005 : Lexer & Syntax errors (strings, numbers, missing 'end')\n\
-             E010-E014 : Name, Mutability (`let`/`const`), Function & Arity errors\n\
+             E010-E014 : Name (with 'Did you mean' hints), Mutability, Function & Arity errors\n\
              E021-E026 : Strict Type Mismatches, Condition bool errors, Return paths\n\
              E030-E035 : Runtime conversions, Division by zero, Bounds, assert(), fail()\n\
              E040-E041 : I/O, Network, Module loading & Circular import errors"
@@ -194,12 +227,15 @@ pub fn handle_docs(topic: Option<&str>) -> String {
         "editor" => {
             "DOG Editor & Studio Shortcuts\n\
              -----------------------------\n\
-             Ctrl+S Save   | Ctrl+O Open   | Ctrl+R Run\n\
-             Ctrl+L Format | Ctrl+F Find   | Ctrl+P Palette (:line, snippet)\n\
-             Ctrl+D Dup Ln | Ctrl+K Del Ln | Ctrl+U Toggle # Comment\n\
-             Tab    Accept Autocomplete / 4-Space Indent\n\
-             Ctrl+Z/Y Undo/Redo | Ctrl+T NewTab | Ctrl+N Next | Ctrl+G Help\n\
-             Ctrl+W Switch Pane (Studio)   | Ctrl+Q Quit / Ctrl+X Force Quit"
+             Alt+W / :wrap      : Toggle Soft Word-Wrap (auto-ON on phone screens < 72 cols)\n\
+             Ctrl+Space / Alt+/ : Open Live IntelliSense Suggestion Popup\n\
+             Tab / Right@EOL    : Accept Selected Suggestion / Snippet / Inline Ghost\n\
+             Up / Down (popup)  : Cycle Contextual Suggestions (Up/Down/PgUp/PgDn in Output)\n\
+             Ctrl+S Save        | Ctrl+O Open        | Ctrl+R Run\n\
+             Ctrl+L Format      | Ctrl+F Find        | Ctrl+P Palette (:line, wrap, snippet)\n\
+             Ctrl+D Dup Ln      | Ctrl+K Del Ln      | Ctrl+U Toggle # Comment\n\
+             Ctrl+Z/Y Undo/Redo | Ctrl+T NewTab      | Ctrl+N Next | Ctrl+G Help\n\
+             Studio Explorer    : `n` New .dg File   | `r` Refresh | `Ctrl+W` Switch Pane"
                 .to_string()
         }
         "prompt" => {
@@ -247,13 +283,441 @@ pub fn handle_docs(topic: Option<&str>) -> String {
                 .to_string()
         }
         _ => {
+            if let Some(raw_name) = topic.map(str::trim).filter(|s| !s.is_empty()) {
+                if let Some(sig) = crate::editor::builtin_signature_help(raw_name) {
+                    return format!(
+                        "DOG Built-in Function: {raw_name}\n\
+                         ----------------------------------\n\
+                         {sig}\n\n\
+                         Tip: Use `dog docs stdlib` for the full grouped library index."
+                    );
+                }
+            }
             "DOG Documentation Topics\n\
              ------------------------\n\
              Run `dog docs <topic>` with one of:\n\
-               syntax, types, stdlib, cli, network, errors, editor, prompt, hub, sdu"
+               syntax, types, stdlib, cli, network, errors, editor, prompt, hub, sdu\n\
+             Or pass any built-in function name (e.g. `dog docs ws_ping`, `dog docs sha512`)."
                 .to_string()
         }
     }
+}
+
+pub fn handle_eval_with_io(
+    snippet: &str,
+    personality: Personality,
+    io: &mut dyn InterpreterIo,
+) -> Result<(), String> {
+    let trimmed = snippet.trim();
+    if trimmed.is_empty() {
+        return Err("Provide a DOG expression or statement to evaluate.".to_string());
+    }
+    let tokens = Lexer::new("<eval>", trimmed)
+        .tokenize()
+        .map_err(|d| d.format_with(personality, Some(trimmed)))?;
+    let mut program = Parser::new(tokens)
+        .parse()
+        .map_err(|d| d.format_with(personality, Some(trimmed)))?;
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check(&program)
+        .map_err(|d| d.format_with(personality, Some(trimmed)))?;
+
+    if program.statements.len() == 1 {
+        if let Some(Stmt::ExprStmt { expr, span }) = program.statements.first().cloned() {
+            let is_say = matches!(&expr, Expr::Call { callee, .. } if callee == "say");
+            if !is_say {
+                let mut single_checker = TypeChecker::new();
+                if let Ok(ty) = single_checker.infer_single_expr(&expr) {
+                    if ty != DogType::Void {
+                        program = Program {
+                            statements: vec![Stmt::ExprStmt {
+                                expr: Expr::Call {
+                                    callee: "say".to_string(),
+                                    args: vec![expr],
+                                    span: span.clone(),
+                                },
+                                span,
+                            }],
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    let mut interp = Interpreter::new(io);
+    interp
+        .eval_program(&program)
+        .map_err(|d| d.format_with(personality, Some(trimmed)))
+}
+
+pub fn eval_snippet_captured(snippet: &str, personality: Personality) -> Result<String, String> {
+    let mut io = BufferRunIo {
+        output: String::new(),
+    };
+    handle_eval_with_io(snippet, personality, &mut io)?;
+    Ok(io.output)
+}
+
+pub fn handle_lint(path: &str, strict: bool) -> Result<(String, usize), String> {
+    let source = fs::read_to_string(path).map_err(|e| format!("Failed to read '{path}': {e}"))?;
+    let tokens = Lexer::new(path, &source)
+        .tokenize()
+        .map_err(|d| format!("{d}"))?;
+    let raw_program = Parser::new(tokens).parse().map_err(|d| format!("{d}"))?;
+    let resolved = resolve_program(path, &source).map_err(|d| format!("{d}"))?;
+    let mut checker = TypeChecker::new();
+    checker.check(&resolved).map_err(|d| format!("{d}"))?;
+
+    let mut warnings: Vec<String> = Vec::new();
+    for (idx, line) in source.lines().enumerate() {
+        let ln = idx + 1;
+        if line.starts_with('\t') {
+            warnings.push(format!(
+                "[L002] {path}:{ln}: Leading tab indentation detected; prefer 4 spaces."
+            ));
+        }
+        if line.ends_with(' ') || line.ends_with('\t') {
+            warnings.push(format!(
+                "[L003] {path}:{ln}: Trailing whitespace detected."
+            ));
+        }
+        if line.chars().count() > 100 {
+            warnings.push(format!(
+                "[L001] {path}:{ln}: Line exceeds 100 characters ({} chars).",
+                line.chars().count()
+            ));
+        }
+    }
+
+    if format_source(&source) != source {
+        warnings.push(format!(
+            "[L004] {path}:1: File formatting differs from canonical `dog fmt` output."
+        ));
+    }
+
+    collect_lint_ast_warnings(path, &raw_program.statements, &mut warnings);
+
+    let count = warnings.len();
+    let mut report = format!("DOG Lint: {path}\n-----------------\n");
+    if warnings.is_empty() {
+        report.push_str("0 warnings — clean code.");
+    } else {
+        for w in &warnings {
+            report.push_str(&format!("  {w}\n"));
+        }
+        report.push_str(&format!(
+            "Summary: {count} warning(s){}",
+            if strict { " (strict mode: failing)" } else { "" }
+        ));
+    }
+    Ok((report, count))
+}
+
+fn collect_lint_ast_warnings(path: &str, stmts: &[Stmt], warnings: &mut Vec<String>) {
+    let mut used = HashSet::new();
+    for s in stmts {
+        collect_stmt_reads(s, &mut used);
+    }
+
+    for s in stmts {
+        match s {
+            Stmt::Binding { name, span, .. } => {
+                if !name.starts_with('_') && !used.contains(name) {
+                    warnings.push(format!(
+                        "[L005] {path}:{}: Binding '{name}' appears unused (prefix with `_{name}` to silence).",
+                        span.line
+                    ));
+                }
+            }
+            Stmt::TryCatch {
+                try_body,
+                catch_body,
+                span,
+                ..
+            } => {
+                if catch_body.is_empty() {
+                    warnings.push(format!(
+                        "[L006] {path}:{}: Empty `catch` block silently swallows errors.",
+                        span.line
+                    ));
+                }
+                collect_lint_ast_warnings(path, try_body, warnings);
+                collect_lint_ast_warnings(path, catch_body, warnings);
+            }
+            Stmt::FnDef { params, body, .. } => {
+                let mut fn_used = HashSet::new();
+                for inner in body {
+                    collect_stmt_reads(inner, &mut fn_used);
+                }
+                for p in params {
+                    if !p.name.starts_with('_') && !fn_used.contains(&p.name) {
+                        warnings.push(format!(
+                            "[L005] {path}:{}: Parameter '{}' is never used in function body.",
+                            p.span.line, p.name
+                        ));
+                    }
+                }
+                collect_lint_ast_warnings(path, body, warnings);
+            }
+            Stmt::If {
+                then_branch,
+                otherwise_branch,
+                ..
+            } => {
+                collect_lint_ast_warnings(path, then_branch, warnings);
+                if let Some(el) = otherwise_branch {
+                    collect_lint_ast_warnings(path, el, warnings);
+                }
+            }
+            Stmt::Match {
+                cases,
+                otherwise_branch,
+                ..
+            } => {
+                for c in cases {
+                    collect_lint_ast_warnings(path, &c.body, warnings);
+                }
+                if let Some(el) = otherwise_branch {
+                    collect_lint_ast_warnings(path, el, warnings);
+                }
+            }
+            Stmt::While { body, .. } | Stmt::Repeat { body, .. } | Stmt::For { body, .. } => {
+                collect_lint_ast_warnings(path, body, warnings);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_stmt_reads(stmt: &Stmt, used: &mut HashSet<String>) {
+    match stmt {
+        Stmt::Binding { value, .. } | Stmt::Assign { value, .. } => collect_expr_reads(value, used),
+        Stmt::CompoundAssign { name, value, .. } => {
+            used.insert(name.clone());
+            collect_expr_reads(value, used);
+        }
+        Stmt::IndexAssign {
+            target,
+            index,
+            value,
+            ..
+        } => {
+            used.insert(target.clone());
+            collect_expr_reads(index, used);
+            collect_expr_reads(value, used);
+        }
+        Stmt::FieldAssign { target, value, .. } => {
+            used.insert(target.clone());
+            collect_expr_reads(value, used);
+        }
+        Stmt::If {
+            condition,
+            then_branch,
+            otherwise_branch,
+            ..
+        } => {
+            collect_expr_reads(condition, used);
+            for s in then_branch {
+                collect_stmt_reads(s, used);
+            }
+            if let Some(el) = otherwise_branch {
+                for s in el {
+                    collect_stmt_reads(s, used);
+                }
+            }
+        }
+        Stmt::Match {
+            subject,
+            cases,
+            otherwise_branch,
+            ..
+        } => {
+            collect_expr_reads(subject, used);
+            for c in cases {
+                collect_expr_reads(&c.pattern, used);
+                for s in &c.body {
+                    collect_stmt_reads(s, used);
+                }
+            }
+            if let Some(el) = otherwise_branch {
+                for s in el {
+                    collect_stmt_reads(s, used);
+                }
+            }
+        }
+        Stmt::TryCatch {
+            try_body,
+            catch_body,
+            ..
+        } => {
+            for s in try_body {
+                collect_stmt_reads(s, used);
+            }
+            for s in catch_body {
+                collect_stmt_reads(s, used);
+            }
+        }
+        Stmt::While {
+            condition, body, ..
+        } => {
+            collect_expr_reads(condition, used);
+            for s in body {
+                collect_stmt_reads(s, used);
+            }
+        }
+        Stmt::Repeat { count, body, .. } => {
+            collect_expr_reads(count, used);
+            for s in body {
+                collect_stmt_reads(s, used);
+            }
+        }
+        Stmt::For { iterable, body, .. } => {
+            collect_expr_reads(iterable, used);
+            for s in body {
+                collect_stmt_reads(s, used);
+            }
+        }
+        Stmt::FnDef { body, .. } => {
+            for s in body {
+                collect_stmt_reads(s, used);
+            }
+        }
+        Stmt::Return { value: Some(v), .. } | Stmt::ExprStmt { expr: v, .. } => {
+            collect_expr_reads(v, used);
+        }
+        Stmt::Use { .. }
+        | Stmt::StructDef { .. }
+        | Stmt::EnumDef { .. }
+        | Stmt::Return { value: None, .. }
+        | Stmt::Break { .. }
+        | Stmt::Continue { .. } => {}
+    }
+}
+
+fn collect_expr_reads(expr: &Expr, used: &mut HashSet<String>) {
+    match expr {
+        Expr::Identifier { name, .. } => {
+            used.insert(name.clone());
+        }
+        Expr::InterpString { parts, .. } => {
+            for p in parts {
+                if let InterpPart::Expr(e) = p {
+                    collect_expr_reads(e, used);
+                }
+            }
+        }
+        Expr::ListLit { elements, .. } => {
+            for e in elements {
+                collect_expr_reads(e, used);
+            }
+        }
+        Expr::MapLit { entries, .. } => {
+            for (k, v) in entries {
+                collect_expr_reads(k, used);
+                collect_expr_reads(v, used);
+            }
+        }
+        Expr::StructInit { fields, .. } => {
+            for (_, v) in fields {
+                collect_expr_reads(v, used);
+            }
+        }
+        Expr::FieldAccess { target, .. } => collect_expr_reads(target, used),
+        Expr::Index { target, index, .. } => {
+            collect_expr_reads(target, used);
+            collect_expr_reads(index, used);
+        }
+        Expr::Unary { expr: inner, .. } => collect_expr_reads(inner, used),
+        Expr::Binary { left, right, .. } => {
+            collect_expr_reads(left, used);
+            collect_expr_reads(right, used);
+        }
+        Expr::Call { args, .. } => {
+            for a in args {
+                collect_expr_reads(a, used);
+            }
+        }
+        Expr::StringLit { .. }
+        | Expr::NumberLit { .. }
+        | Expr::DecimalLit { .. }
+        | Expr::BoolLit { .. } => {}
+    }
+}
+
+struct SilentBenchIo;
+
+impl InterpreterIo for SilentBenchIo {
+    fn write_stdout(&mut self, _text: &str) {}
+    fn writeln_stdout(&mut self, _text: &str) {}
+    fn read_line(&mut self) -> Result<String, String> {
+        Ok(String::new())
+    }
+}
+
+pub fn handle_bench(
+    path: &str,
+    runs: usize,
+    messenger: &DogMessenger,
+    emit_progress: bool,
+) -> Result<String, String> {
+    let iters = runs.clamp(1, 5_000);
+    let source = fs::read_to_string(path).map_err(|e| format!("Failed to read '{path}': {e}"))?;
+    let program = resolve_program(path, &source).map_err(|d| format!("{d}"))?;
+    let mut checker = TypeChecker::new();
+    checker.check(&program).map_err(|d| format!("{d}"))?;
+
+    let mut samples_us = Vec::with_capacity(iters);
+    let mut bar = ProgressBar::new(
+        format!("Bench {path}"),
+        iters as u64,
+        ProgressUnit::Items,
+        messenger.clone(),
+    );
+
+    let total_start = Instant::now();
+    for i in 0..iters {
+        let mut silent_io = SilentBenchIo;
+        let mut interp = Interpreter::new(&mut silent_io);
+        let t0 = Instant::now();
+        interp.eval_program(&program).map_err(|d| format!("{d}"))?;
+        samples_us.push(t0.elapsed().as_micros());
+        if emit_progress && (i == 0 || (i + 1) % (iters / 10).max(1) == 0 || i + 1 == iters) {
+            bar.update_stdout((i + 1) as u64);
+        }
+    }
+    if emit_progress {
+        bar.finish_stdout(Some("Benchmark complete"));
+    }
+
+    let total_us = total_start.elapsed().as_micros();
+    samples_us.sort_unstable();
+    let min_us = samples_us[0];
+    let max_us = samples_us[samples_us.len() - 1];
+    let sum_us: u128 = samples_us.iter().sum();
+    let avg_us = sum_us as f64 / samples_us.len() as f64;
+    let p50_us = samples_us[samples_us.len() / 2];
+    let p95_idx = ((samples_us.len() * 95) / 100).min(samples_us.len() - 1);
+    let p95_us = samples_us[p95_idx];
+    let ops_sec = if total_us > 0 {
+        (iters as f64) * 1_000_000.0 / (total_us as f64)
+    } else {
+        iters as f64 * 1_000_000.0
+    };
+
+    Ok(format!(
+        "DOG Benchmark: {path} ({iters} runs)\n\
+         ------------------------------------\n\
+         Min     : {min_us} us\n\
+         Median  : {p50_us} us\n\
+         Avg     : {avg_us:.2} us\n\
+         P95     : {p95_us} us\n\
+         Max     : {max_us} us\n\
+         Total   : {total_us} us\n\
+         Rate    : {ops_sec:.1} runs/sec"
+    ))
 }
 
 pub fn handle_forge(args: &[String]) -> Result<String, String> {

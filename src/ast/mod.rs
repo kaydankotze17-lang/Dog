@@ -87,9 +87,19 @@ pub enum UnaryOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum InterpPart {
+    Literal(String),
+    Expr(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     StringLit {
         value: String,
+        span: Span,
+    },
+    InterpString {
+        parts: Vec<InterpPart>,
         span: Span,
     },
     NumberLit {
@@ -153,6 +163,7 @@ impl Expr {
     pub fn span(&self) -> &Span {
         match self {
             Expr::StringLit { span, .. }
+            | Expr::InterpString { span, .. }
             | Expr::NumberLit { span, .. }
             | Expr::DecimalLit { span, .. }
             | Expr::BoolLit { span, .. }
@@ -194,6 +205,12 @@ pub enum Stmt {
     },
     Assign {
         name: String,
+        value: Expr,
+        span: Span,
+    },
+    CompoundAssign {
+        name: String,
+        op: BinOp,
         value: Expr,
         span: Span,
     },

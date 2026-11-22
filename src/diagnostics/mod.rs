@@ -146,3 +146,53 @@ impl fmt::Display for DogDiagnostic {
         f.write_str(&self.format_with(Personality::Sarcastic, None))
     }
 }
+
+pub fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    if a_chars.is_empty() {
+        return b_chars.len();
+    }
+    if b_chars.is_empty() {
+        return a_chars.len();
+    }
+    let mut prev: Vec<usize> = (0..=b_chars.len()).collect();
+    let mut curr = vec![0usize; b_chars.len() + 1];
+    for (i, &ca) in a_chars.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, &cb) in b_chars.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            curr[j + 1] = (prev[j + 1] + 1)
+                .min(curr[j] + 1)
+                .min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b_chars.len()]
+}
+
+pub fn suggest_similar<'a>(
+    target: &str,
+    candidates: impl IntoIterator<Item = &'a str>,
+) -> Option<&'a str> {
+    if target.is_empty() {
+        return None;
+    }
+    let target_lower = target.to_ascii_lowercase();
+    let max_dist = (target_lower.chars().count() / 3).max(2).min(4);
+    let mut best: Option<(usize, &'a str)> = None;
+    for cand in candidates {
+        if cand.is_empty() || cand == target {
+            continue;
+        }
+        let cand_lower = cand.to_ascii_lowercase();
+        let dist = levenshtein_distance(&target_lower, &cand_lower);
+        if dist <= max_dist {
+            match best {
+                Some((best_dist, _)) if dist >= best_dist => {}
+                _ => best = Some((dist, cand)),
+            }
+        }
+    }
+    best.map(|(_, s)| s)
+}

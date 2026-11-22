@@ -118,3 +118,125 @@ let _color_ok: bool = cli_supports_color()
 let _tty_ok: bool = cli_is_tty()
 assert(_color_ok == true or _color_ok == false, "cli_supports_color returns bool")
 assert(_tty_ok == true or _tty_ok == false, "cli_is_tty returns bool")
+
+# Upgraded language ergonomics: $"..." interpolation, +=/-=/*=//=/%=, otherwise if
+let target = "DOG"
+var score = 10
+score += 5
+score -= 3
+score *= 2
+score /= 4
+score %= 4
+assert(score == 2, "compound numeric assignments work cleanly")
+
+var greeting = $"Hi {target}"
+greeting += $" v{1 + 1} {{literal}}"
+assert(greeting == "Hi DOG v2 {literal}", "interpolated strings evaluate expressions and escape {{ }}")
+
+var tier = ""
+if score > 10
+    tier = "high"
+otherwise if score == 2
+    tier = "mid"
+otherwise
+    tier = "low"
+end
+assert(tier == "mid", "otherwise if chain evaluates matching branch")
+
+# Upgraded stdlib built-ins: crypto, text, lists, maps, math, time, JSON, URL, router
+assert(sha1("abc") == "a9993e364706816aba3e25717850c26c9cd0d89d", "sha1 matches FIPS 180-1 test vector")
+assert(html_escape("<a href=\"x\">me & 'u'</a>") == "&lt;a href=&quot;x&quot;&gt;me &amp; &#39;u&#39;&lt;/a&gt;", "html_escape escapes HTML entities")
+assert(index_of("hello dog", "dog") == 6 and index_of("hello", "xyz") == -1, "index_of works")
+assert(glob_match("*.dg", "main.dg") and not glob_match("*.dg", "main.rs"), "glob_match matches wildcards")
+assert(str_repeat("ab", 3) == "ababab", "str_repeat repeats text")
+assert(pad_left("7", 3, "0") == "007" and pad_right("hi", 4, ".") == "hi..", "pad_left/pad_right pad strings")
+assert(clamp(15, 0, 10) == 10 and clamp(-3, 0, 10) == 0, "clamp bounds integers")
+assert(sin(0.0) == 0.0 and cos(0.0) == 1.0 and log(1.0) == 0.0, "sin/cos/log compute math functions")
+
+var dyn_list = [1, 3]
+insert_at(dyn_list, 1, 2)
+assert(len(dyn_list) == 3 and dyn_list[1] == 2, "insert_at inserts at index")
+assert(list_index_of(dyn_list, 3) == 2, "list_index_of finds item")
+let sub_list = list_slice(dyn_list, 1, 3)
+assert(len(sub_list) == 2 and sub_list[0] == 2 and sub_list[1] == 3, "list_slice returns sublist")
+assert(remove_at(dyn_list, 1) == 2 and len(dyn_list) == 2, "remove_at removes and returns item")
+clear(dyn_list)
+assert(len(dyn_list) == 0, "clear empties list")
+
+var m_a: map<text, text> = {}
+map_set(m_a, "k1", "v1")
+var m_b: map<text, text> = {}
+map_set(m_b, "k2", "v2")
+map_merge(m_a, m_b)
+let m_vals = map_values(m_a)
+assert(len(m_vals) == 2 and map_get(m_a, "k2") == "v2", "map_merge and map_values work")
+map_clear(m_a)
+assert(len(m_a) == 0, "map_clear empties map")
+
+assert(contains(time_utc(), "T") and ends_with(time_utc(), "Z"), "time_utc formats ISO-8601 UTC")
+assert(contains(json_pretty("{\"a\":1}"), "\n  \"a\": 1"), "json_pretty indents JSON")
+
+let u = url_parse("http://127.0.0.1:8080/users/42?role=admin&mode=dev")
+assert(map_get(u, "scheme") == "http" and map_get(u, "port") == "8080" and map_get(u, "path") == "/users/42", "url_parse extracts URL components")
+let q_map = query_parse(map_get(u, "query"))
+assert(map_get(q_map, "role") == "admin" and map_get(q_map, "mode") == "dev", "query_parse decodes query params")
+assert(contains(query_stringify(q_map), "role=admin"), "query_stringify encodes params")
+
+let route = http_route_match("/users/:id/files/*rest", "/users/42/files/docs/readme.md")
+assert(map_get(route, "_matched") == "true" and map_get(route, "id") == "42" and map_get(route, "rest") == "docs/readme.md", "http_route_match extracts named and wildcard params")
+
+# v0.2.x Literals & 43 Stdlib Upgrades
+let million = 1_000_000
+let hex_mask = 0xFF_00
+let bin_flags = 0b1010_0101
+let pi_approx = 3.14_15
+assert(million == 1000000 and hex_mask == 65280 and bin_flags == 165 and pi_approx > 3.14, "digit separators, hex, and binary literals work")
+
+let doc_block = """
+hello
+multiline
+"""
+assert(contains(doc_block, "hello\nmultiline"), "triple-quoted multi-line strings preserve newlines")
+
+assert(char_at("DOG", 1) == "O", "char_at returns single char")
+assert(last_index_of("banana", "na") == 4, "last_index_of finds last match")
+assert(count_matches("abababa", "aba") == 2, "count_matches counts non-overlapping matches")
+assert(remove_prefix("dog_cli", "dog_") == "cli", "remove_prefix strips prefix")
+assert(remove_suffix("main.dg", ".dg") == "main", "remove_suffix strips suffix")
+assert(title_case("hello dog-lang") == "Hello Dog-Lang", "title_case capitalizes words")
+assert(reverse_text("bark") == "krab", "reverse_text reverses chars")
+let text_lines = lines("a\nb\nc")
+assert(len(text_lines) == 3 and text_lines[2] == "c", "lines splits text by line")
+
+assert(tan(0.0) == 0.0 and atan2(0.0, 1.0) == 0.0 and exp(0.0) == 1.0, "tan/atan2/exp work")
+assert(log10(100.0) == 2.0 and pow_int(2, 10) == 1024, "log10 and pow_int work")
+assert(sign(-42) == -1 and sign(0) == 0 and sign(3.5) == 1, "sign works on numbers and decimals")
+assert(gcd(48, 18) == 6 and lcm(12, 15) == 60, "gcd and lcm work")
+assert(math_pi() > 3.14 and math_e() > 2.71, "math_pi and math_e return constants")
+
+let raw_dups = [1, 2, 1, 3, 2, 4]
+assert(len(list_unique(raw_dups)) == 4, "list_unique preserves unique order")
+assert(len(list_take(raw_dups, 2)) == 2 and list_skip(raw_dups, 4)[0] == 2, "list_take and list_skip work")
+let flat = list_flatten([[1, 2], [3, 4]])
+assert(len(flat) == 4 and list_sum(flat) == 10 and list_avg(flat) == 2.5, "list_flatten/sum/avg work")
+assert(len(list_concat([1, 2], [3])) == 3, "list_concat joins lists")
+
+let zipped = map_from_lists(["a", "b"], [10, 20])
+assert(map_get_or(zipped, "b", 0) == 20 and map_get_or(zipped, "z", 99) == 99, "map_from_lists and map_get_or work")
+
+let csv_out = csv_stringify([["name", "note"], ["Ada", "hi, dog"]])
+assert(contains(csv_out, "\"hi, dog\""), "csv_stringify quotes fields with commas")
+assert(json_has_key("{\"ok\":true}", "ok") and not json_has_key("{\"ok\":true}", "missing"), "json_has_key inspects keys")
+
+assert(path_dirname("dir/sub/file.dg") == "dir/sub" or path_dirname("dir/sub/file.dg") == "dir\\sub", "path_dirname works")
+assert(path_basename("dir/sub/file.dg") == "file.dg" and path_ext("dir/sub/file.dg") == "dg", "path_basename/path_ext work")
+assert(len(temp_dir()) > 0, "temp_dir returns path")
+
+assert(len(sha512("abc")) == 128, "sha512 produces 128 hex chars")
+let sig = hmac_sha256("sec", "payload")
+assert(hmac_sha256_verify("sec", "payload", sig) and not hmac_sha256_verify("sec", "payload", "0000"), "hmac_sha256_verify validates MAC")
+let b64u = base64_url_encode("hello?dog/1+2=")
+assert(not contains(b64u, "=") and base64_url_decode(b64u) == "hello?dog/1+2=", "base64_url round-trips")
+assert(len(rand_bytes_hex(16)) == 32, "rand_bytes_hex returns 2*N hex chars")
+assert(http_status_text(200) == "OK" and http_status_text(404) == "Not Found", "http_status_text maps status codes")
+assert(len(local_ip()) > 0, "local_ip returns an IPv4 string")

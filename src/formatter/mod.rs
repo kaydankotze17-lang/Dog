@@ -14,8 +14,17 @@ pub fn format_source(source: &str) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut stack: Vec<BlockKind> = Vec::new();
     let mut prev_blank = false;
+    let mut in_triple_str = false;
 
     for raw_line in source.lines() {
+        if in_triple_str {
+            out.push(raw_line.to_string());
+            if count_triple_quotes(raw_line) % 2 == 1 {
+                in_triple_str = false;
+            }
+            continue;
+        }
+
         let trimmed = raw_line.trim();
 
         if trimmed.is_empty() {
@@ -81,6 +90,10 @@ pub fn format_source(source: &str) -> String {
         let pad = "    ".repeat(indent);
         out.push(format!("{pad}{trimmed}"));
 
+        if count_triple_quotes(trimmed) % 2 == 1 {
+            in_triple_str = true;
+        }
+
         // Update block stack after printing the line
         match first_word {
             "if" => stack.push(BlockKind::If),
@@ -118,6 +131,25 @@ pub fn format_source(source: &str) -> String {
         joined.push('\n');
         joined
     }
+}
+
+fn count_triple_quotes(line: &str) -> usize {
+    let bytes = line.as_bytes();
+    let mut count = 0usize;
+    let mut i = 0usize;
+    while i + 2 < bytes.len() {
+        if bytes[i] == b'\\' {
+            i += 2;
+            continue;
+        }
+        if &bytes[i..i + 3] == b"\"\"\"" {
+            count += 1;
+            i += 3;
+            continue;
+        }
+        i += 1;
+    }
+    count
 }
 
 fn stack_indent(stack: &[BlockKind]) -> usize {

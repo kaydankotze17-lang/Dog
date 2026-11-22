@@ -1,4 +1,4 @@
-use crate::ast::{BinOp, BindingKind, Expr, Program, Stmt, TypeRef, UnaryOp};
+use crate::ast::{BinOp, BindingKind, Expr, InterpPart, Program, Stmt, TypeRef, UnaryOp};
 use crate::checker::TypeChecker;
 use crate::crypto::sha256_hex;
 use crate::diagnostics::DogDiagnostic;
@@ -330,7 +330,11 @@ fn transpile_program_to_rust(program: &Program) -> Result<String, String> {
     out.push_str("impl DogCast for f64 {\n");
     out.push_str("    fn dog_to_number(&self) -> i64 { *self as i64 }\n");
     out.push_str("    fn dog_to_decimal(&self) -> f64 { *self }\n");
-    out.push_str("}\n\n");
+    out.push_str("}\n");
+    out.push_str("trait DogAddAssign<R> { fn dog_add_assign(&mut self, rhs: R); }\n");
+    out.push_str("impl DogAddAssign<String> for String { fn dog_add_assign(&mut self, rhs: String) { self.push_str(&rhs); } }\n");
+    out.push_str("impl DogAddAssign<i64> for i64 { fn dog_add_assign(&mut self, rhs: i64) { *self = self.wrapping_add(rhs); } }\n");
+    out.push_str("impl DogAddAssign<f64> for f64 { fn dog_add_assign(&mut self, rhs: f64) { *self += rhs; } }\n\n");
     out.push_str("fn dog_answer(prompt: &str) -> String {\n");
     out.push_str("    if !prompt.is_empty() { print!(\"{prompt}\"); let _ = io::stdout().flush(); }\n");
     out.push_str("    let mut buf = String::new();\n");
@@ -432,6 +436,20 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String>
         }
         Stmt::Assign { name, value, .. } => {
             out.push_str(&format!("{pad}{name} = {};\n", emit_expr(value)?));
+            Ok(())
+        }
+        Stmt::CompoundAssign {
+            name, op, value, ..
+        } => {
+            let rhs = emit_expr(value)?;
+            match op {
+                BinOp::Add => out.push_str(&format!("{pad}{name}.dog_add_assign({rhs});\n")),
+                BinOp::Sub => out.push_str(&format!("{pad}{name} -= {rhs};\n")),
+                BinOp::Mul => out.push_str(&format!("{pad}{name} *= {rhs};\n")),
+                BinOp::Div => out.push_str(&format!("{pad}{name} /= {rhs};\n")),
+                BinOp::Mod => out.push_str(&format!("{pad}{name} %= {rhs};\n")),
+                _ => return Err("Unsupported compound assignment operator.".to_string()),
+            }
             Ok(())
         }
         Stmt::FieldAssign {
@@ -581,6 +599,27 @@ fn emit_expr(expr: &Expr) -> Result<String, String> {
                 .replace('\t', "\\t");
             Ok(format!("\"{escaped}\".to_string()"))
         }
+        Expr::InterpString { parts, .. } => {
+            let mut body = String::from("{ let mut __s = String::new(); ");
+            for p in parts {
+                match p {
+                    InterpPart::Literal(lit) => {
+                        let escaped = lit
+                            .replace('\\', "\\\\")
+                            .replace('"', "\\\"")
+                            .replace('\n', "\\n")
+                            .replace('\r', "\\r")
+                            .replace('\t', "\\t");
+                        body.push_str(&format!("__s.push_str(\"{escaped}\"); "));
+                    }
+                    InterpPart::Expr(e) => {
+                        body.push_str(&format!("__s.push_str(&({}).dog_print()); ", emit_expr(e)?));
+                    }
+                }
+            }
+            body.push_str("__s }");
+            Ok(body)
+        }
         Expr::NumberLit { value, .. } => Ok(format!("{value}i64")),
         Expr::DecimalLit { value, .. } => Ok(format!("{value:?}f64")),
         Expr::BoolLit { value, .. } => Ok(value.to_string()),
@@ -725,6 +764,20 @@ fn emit_expr(expr: &Expr) -> Result<String, String> {
             "floor" => Ok(format!("(({}) as f64).floor() as i64", emit_expr(&args[0])?)),
             "ceil" => Ok(format!("(({}) as f64).ceil() as i64", emit_expr(&args[0])?)),
             "sqrt" => Ok(format!("(({}) as f64).sqrt()", emit_expr(&args[0])?)),
+            "sin" => Ok(format!("(({}) as f64).sin()", emit_expr(&args[0])?)),
+            "cos" => Ok(format!("(({}) as f64).cos()", emit_expr(&args[0])?)),
+            "log" => Ok(format!("(({}) as f64).ln()", emit_expr(&args[0])?)),
+            "str_repeat" => Ok(format!(
+                "({}).repeat(({}).max(0) as usize)",
+                emit_expr(&args[0])?,
+                emit_expr(&args[1])?
+            )),
+            "clamp" => Ok(format!(
+                "({}).clamp({}, {})",
+                emit_expr(&args[0])?,
+                emit_expr(&args[1])?,
+                emit_expr(&args[2])?
+            )),
             "pow" => Ok(format!(
                 "(({}) as f64).powf(({}) as f64)",
                 emit_expr(&args[0])?,
@@ -743,6 +796,55 @@ fn emit_expr(expr: &Expr) -> Result<String, String> {
                 emit_expr(&args[0])?,
                 emit_expr(&args[1])?
             )),
+            "tan" => Ok(format!("(({}) as f64).tan()", emit_expr(&args[0])?)),
+            "atan2" => Ok(format!(
+                "(({}) as f64).atan2(({}) as f64)",
+                emit_expr(&args[0])?,
+                emit_expr(&args[1])?
+            )),
+            "exp" => Ok(format!("(({}) as f64).exp()", emit_expr(&args[0])?)),
+            "log10" => Ok(format!("(({}) as f64).log10()", emit_expr(&args[0])?)),
+            "pow_int" => Ok(format!(
+                "({}).saturating_pow(({}).max(0) as u32)",
+                emit_expr(&args[0])?,
+                emit_expr(&args[1])?
+            )),
+            "sign" => Ok(format!(
+                "{{ let __v = ({}) as f64; if __v > 0.0 {{ 1i64 }} else if __v < 0.0 {{ -1i64 }} else {{ 0i64 }} }}",
+                emit_expr(&args[0])?
+            )),
+            "math_pi" => Ok("std::f64::consts::PI".to_string()),
+            "math_e" => Ok("std::f64::consts::E".to_string()),
+            "gcd" => Ok(format!(
+                "{{ let (mut __a, mut __b) = (({}).abs(), ({}).abs()); while __b != 0 {{ let __t = __a % __b; __a = __b; __b = __t; }} __a }}",
+                emit_expr(&args[0])?,
+                emit_expr(&args[1])?
+            )),
+            "lcm" => Ok(format!(
+                "{{ let (__x, __y) = (({}).abs(), ({}).abs()); if __x == 0 || __y == 0 {{ 0i64 }} else {{ let (mut __a, mut __b) = (__x, __y); while __b != 0 {{ let __t = __a % __b; __a = __b; __b = __t; }} (__x / __a).saturating_mul(__y) }} }}",
+                emit_expr(&args[0])?,
+                emit_expr(&args[1])?
+            )),
+            "reverse_text" => Ok(format!(
+                "({}).chars().rev().collect::<String>()",
+                emit_expr(&args[0])?
+            )),
+            "count_matches" => Ok(format!(
+                "{{ let (__h, __n) = ({}, {}); if __n.is_empty() {{ 0i64 }} else {{ __h.matches(&__n).count() as i64 }} }}",
+                emit_expr(&args[0])?,
+                emit_expr(&args[1])?
+            )),
+            "remove_prefix" => Ok(format!(
+                "{{ let (__s, __p) = ({}, {}); __s.strip_prefix(&__p).map(|v| v.to_string()).unwrap_or(__s) }}",
+                emit_expr(&args[0])?,
+                emit_expr(&args[1])?
+            )),
+            "remove_suffix" => Ok(format!(
+                "{{ let (__s, __p) = ({}, {}); __s.strip_suffix(&__p).map(|v| v.to_string()).unwrap_or(__s) }}",
+                emit_expr(&args[0])?,
+                emit_expr(&args[1])?
+            )),
+            "temp_dir" => Ok("std::env::temp_dir().display().to_string()".to_string()),
             "sort" => {
                 if let Expr::Identifier { name, .. } = &args[0] {
                     Ok(format!("{name}.sort()"))

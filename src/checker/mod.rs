@@ -1,5 +1,5 @@
-use crate::ast::{BinOp, BindingKind, Expr, Program, Span, Stmt, TypeRef, UnaryOp};
-use crate::diagnostics::DogDiagnostic;
+use crate::ast::{BinOp, BindingKind, Expr, InterpPart, Program, Span, Stmt, TypeRef, UnaryOp};
+use crate::diagnostics::{suggest_similar, DogDiagnostic};
 use crate::types::DogType;
 use std::collections::{BTreeMap, HashMap};
 
@@ -21,16 +21,35 @@ const BUILTIN_NAMES: &[&str] = &[
     "map_set", "map_has", "map_keys", "map_remove", "file_read", "file_write", "file_append",
     "file_exists", "file_delete", "dir_list", "mkdir", "cwd", "args", "env_get", "env_set",
     "time_now_ms", "sleep_ms", "json_parse", "json_stringify", "hex_encode", "hex_decode",
-    "base64_encode", "base64_decode", "sha256", "hmac_sha256", "http_get", "http_post",
-    "http_request", "http_listen", "http_port", "http_accept", "http_reply", "http_serve_file",
-    "http_close", "tcp_listen", "tcp_port", "tcp_accept", "tcp_connect", "tcp_send", "tcp_recv",
-    "tcp_close", "url_encode", "url_decode", "csv_parse", "kv_set", "kv_get", "kv_has",
-    "kv_delete", "kv_keys", "exec_cmd", "os_name", "os_arch", "uuid_v4", "log_info",
-    "log_warn", "log_error", "cli_info", "cli_success", "cli_warn", "cli_error", "cli_debug",
-    "cli_progress", "cli_spinner", "cli_theme", "cli_prefix", "cli_timestamps",
-    "cli_supports_color", "cli_is_tty", "replace", "starts_with", "ends_with", "slice", "round",
-    "floor", "ceil", "sqrt", "pow", "rand_int", "range", "sort", "reverse", "list_contains",
+    "base64_encode", "base64_decode", "sha256", "hmac_sha256", "sha1", "http_get", "http_post",
+    "http_put", "http_delete", "http_request", "http_request_timeout", "http_listen", "http_port",
+    "http_accept", "http_try_accept", "http_reply", "http_reply_headers", "http_redirect",
+    "http_serve_file", "http_close", "tcp_listen", "tcp_port", "tcp_accept", "tcp_connect",
+    "tcp_send", "tcp_recv", "tcp_set_timeout", "tcp_remote_addr", "tcp_close", "url_encode",
+    "url_decode", "url_parse", "query_parse", "query_stringify", "html_escape",
+    "http_route_match", "ws_upgrade", "ws_connect", "ws_send", "ws_recv", "ws_close", "udp_bind",
+    "udp_send_to", "udp_recv_from", "udp_close", "dns_lookup", "port_is_open", "csv_parse",
+    "kv_set", "kv_get", "kv_has", "kv_delete", "kv_keys", "exec_cmd", "os_name", "os_arch",
+    "uuid_v4", "log_info", "log_warn", "log_error", "cli_info", "cli_success", "cli_warn",
+    "cli_error", "cli_debug", "cli_progress", "cli_spinner", "cli_theme", "cli_prefix",
+    "cli_timestamps", "cli_supports_color", "cli_is_tty", "replace", "starts_with", "ends_with",
+    "slice", "index_of", "str_repeat", "pad_left", "pad_right", "round", "floor", "ceil", "sqrt",
+    "pow", "clamp", "sin", "cos", "log", "rand_int", "range", "sort", "reverse", "list_contains",
+    "list_index_of", "list_slice", "insert_at", "remove_at", "clear", "map_clear", "map_merge",
+    "map_values", "glob_match", "time_utc", "json_pretty", "file_copy", "file_size", "is_file",
+    "is_dir", "path_join",
+    "char_at", "last_index_of", "count_matches", "remove_prefix", "remove_suffix", "title_case",
+    "reverse_text", "lines", "tan", "atan2", "exp", "log10", "pow_int", "sign", "gcd", "lcm",
+    "math_pi", "math_e", "list_unique", "list_take", "list_skip", "list_flatten", "list_sum",
+    "list_avg", "list_concat", "map_from_lists", "map_get_or", "csv_stringify", "json_has_key",
+    "path_dirname", "path_basename", "path_ext", "file_move", "rmdir", "temp_dir", "sha512",
+    "hmac_sha256_verify", "base64_url_encode", "base64_url_decode", "rand_bytes_hex", "ws_ping",
+    "local_ip", "http_status_text",
 ];
+
+pub fn builtin_names() -> &'static [&'static str] {
+    BUILTIN_NAMES
+}
 
 pub struct TypeChecker {
     scopes: Vec<HashMap<String, BindingInfo>>,
@@ -71,6 +90,10 @@ impl TypeChecker {
         }
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
+    }
+
+    pub fn infer_single_expr(&mut self, expr: &Expr) -> Result<DogType, DogDiagnostic> {
+        self.check_expr(expr)
     }
 
     pub fn check(&mut self, program: &Program) -> Result<(), DogDiagnostic> {
@@ -208,12 +231,24 @@ impl TypeChecker {
             }
         })
         .map_err(|msg| {
+            let mut fix = "Define the struct/enum first or use text, number, decimal, bool, list<T>, map<K, V>.".to_string();
+            if let TypeRef::Named(raw) = tr {
+                let prims = ["text", "number", "decimal", "bool", "void"];
+                let candidates = prims
+                    .iter()
+                    .copied()
+                    .chain(self.structs.keys().map(String::as_str))
+                    .chain(self.enums.keys().map(String::as_str));
+                if let Some(hint) = suggest_similar(raw, candidates) {
+                    fix = format!("Did you mean '{hint}'? {fix}");
+                }
+            }
             DogDiagnostic::new(
                 "E004",
                 msg,
                 span.clone(),
                 "Referenced type name is not a built-in, struct, or enum.",
-                "Define the struct/enum first or use text, number, decimal, bool, list<T>, map<K, V>.",
+                fix,
                 "Type names are case-sensitive.",
                 "Never heard of that type.",
             )
@@ -292,12 +327,13 @@ impl TypeChecker {
             }
             Stmt::Assign { name, value, span } => {
                 let existing = self.lookup(name).cloned().ok_or_else(|| {
+                    let fix = self.suggest_var_fix(name, format!("Declare it first with `var {name} = ...`."));
                     DogDiagnostic::new(
                         "E010",
                         format!("Undefined variable '{name}'."),
                         span.clone(),
                         format!("No variable named '{name}' is in scope at this location."),
-                        format!("Declare it first with `var {name} = ...`."),
+                        fix,
                         "Variables must be declared before assignment.",
                         "Can't fetch a stick that was never thrown.",
                     )
@@ -335,6 +371,47 @@ impl TypeChecker {
                 }
                 Ok(())
             }
+            Stmt::CompoundAssign {
+                name,
+                op,
+                value,
+                span,
+            } => {
+                let existing = self.lookup(name).cloned().ok_or_else(|| {
+                    let fix = self.suggest_var_fix(name, format!("Declare it first with `var {name} = ...`."));
+                    DogDiagnostic::new(
+                        "E010",
+                        format!("Undefined variable '{name}'."),
+                        span.clone(),
+                        format!("No variable named '{name}' is in scope at this location."),
+                        fix,
+                        "Variables must be declared before compound assignment.",
+                        "Can't modify a variable that doesn't exist.",
+                    )
+                })?;
+                if existing.kind != BindingKind::Var {
+                    return Err(DogDiagnostic::new(
+                        "E012",
+                        format!("Cannot mutate immutable binding '{name}'."),
+                        span.clone(),
+                        format!("'{name}' was not declared with `var`."),
+                        format!("Declare `var {name} = ...` to allow compound assignment."),
+                        "Prefer `let` for constants and `var` for mutating accumulators.",
+                        "Immutable means immutable.",
+                    ));
+                }
+                let val_ty = self.check_expr_with_hint(value, Some(&existing.ty))?;
+                let res_ty = self.check_binary(existing.ty.clone(), *op, val_ty.clone(), span)?;
+                if res_ty != existing.ty {
+                    return Err(type_err(
+                        &existing.ty.label(),
+                        &res_ty.label(),
+                        span,
+                        "Compound assignment must preserve variable type.",
+                    ));
+                }
+                Ok(())
+            }
             Stmt::IndexAssign {
                 target,
                 index,
@@ -342,12 +419,13 @@ impl TypeChecker {
                 span,
             } => {
                 let existing = self.lookup(target).cloned().ok_or_else(|| {
+                    let fix = self.suggest_var_fix(target, format!("Declare it with `var {target} = [...]`."));
                     DogDiagnostic::new(
                         "E010",
                         format!("Undefined variable '{target}'."),
                         span.clone(),
                         format!("No list named '{target}' is in scope."),
-                        format!("Declare it with `var {target} = [...]`."),
+                        fix,
                         "Declare variables before indexing into them.",
                         "No list, no index.",
                     )
@@ -447,12 +525,16 @@ impl TypeChecker {
                 };
                 let fields = self.structs.get(&struct_name).cloned().unwrap_or_default();
                 let Some(field_ty) = fields.get(field) else {
+                    let mut fix = "Check the struct definition spelling.".to_string();
+                    if let Some(hint) = suggest_similar(field, fields.keys().map(String::as_str)) {
+                        fix = format!("Did you mean '.{hint}'? {fix}");
+                    }
                     return Err(DogDiagnostic::new(
                         "E010",
                         format!("Unknown field '{field}' on struct '{struct_name}'."),
                         span.clone(),
                         format!("Struct '{struct_name}' has no field named '{field}'."),
-                        "Check the struct definition spelling.",
+                        fix,
                         "Inspect struct fields carefully.",
                         "Sniffing for a field that isn't there.",
                     ));
@@ -814,6 +896,26 @@ impl TypeChecker {
     ) -> Result<DogType, DogDiagnostic> {
         match expr {
             Expr::StringLit { .. } => Ok(DogType::Text),
+            Expr::InterpString { parts, .. } => {
+                for part in parts {
+                    if let InterpPart::Expr(inner) = part {
+                        let ty = self.check_expr(inner)?;
+                        if ty == DogType::Void {
+                            return Err(DogDiagnostic::new(
+                                "E021",
+                                "Cannot interpolate a 'void' expression inside $\"...\".",
+                                inner.span().clone(),
+                                "Interpolated expressions must evaluate to a printable value.",
+                                "Pass a text, number, decimal, bool, list, map, struct, or enum expression inside `{...}`.",
+                                "Void-returning calls like `say()` produce no value.",
+                                "Can't stitch silence into a string.",
+                            )
+                            .with_types("value", "void"));
+                        }
+                    }
+                }
+                Ok(DogType::Text)
+            }
             Expr::NumberLit { .. } => Ok(DogType::Number),
             Expr::DecimalLit { .. } => Ok(DogType::Decimal),
             Expr::BoolLit { .. } => Ok(DogType::Bool),
@@ -907,12 +1009,16 @@ impl TypeChecker {
             }
             Expr::StructInit { name, fields, span } => {
                 let Some(def_fields) = self.structs.get(name) else {
+                    let mut fix = format!("Define `struct {name} ... end` before constructing it.");
+                    if let Some(hint) = suggest_similar(name, self.structs.keys().map(String::as_str)) {
+                        fix = format!("Did you mean struct '{hint}'? {fix}");
+                    }
                     return Err(DogDiagnostic::new(
                         "E010",
                         format!("Unknown struct '{name}'."),
                         span.clone(),
                         format!("No struct named '{name}' has been defined."),
-                        format!("Define `struct {name} ... end` before constructing it."),
+                        fix,
                         "Struct names are case-sensitive.",
                         "Never seen that blueprint.",
                     ));
@@ -920,12 +1026,16 @@ impl TypeChecker {
                 let mut seen = HashMap::new();
                 for (fname, fexpr) in fields {
                     let Some(expected_ty) = def_fields.get(fname) else {
+                        let mut fix = "Check field spelling against the struct definition.".to_string();
+                        if let Some(hint) = suggest_similar(fname, def_fields.keys().map(String::as_str)) {
+                            fix = format!("Did you mean field '{hint}'? {fix}");
+                        }
                         return Err(DogDiagnostic::new(
                             "E010",
                             format!("Unknown field '{fname}' on struct '{name}'."),
                             fexpr.span().clone(),
                             format!("Struct '{name}' does not have a field named '{fname}'."),
-                            "Check field spelling against the struct definition.",
+                            fix,
                             "Only declared fields can be initialized.",
                             "Inventing extra fields won't fly.",
                         ));
@@ -970,12 +1080,19 @@ impl TypeChecker {
                         if variants.contains(field) {
                             return Ok(DogType::Enum(name.clone()));
                         }
+                        let mut fix = format!(
+                            "Use a valid variant like `{name}.{}`.",
+                            variants.first().map(String::as_str).unwrap_or("Variant")
+                        );
+                        if let Some(hint) = suggest_similar(field, variants.iter().map(String::as_str)) {
+                            fix = format!("Did you mean `{name}.{hint}`? {fix}");
+                        }
                         return Err(DogDiagnostic::new(
                             "E010",
                             format!("Unknown variant '{field}' on enum '{name}'."),
                             span.clone(),
                             format!("Enum '{name}' has variants: {}.", variants.join(", ")),
-                            format!("Use a valid variant like `{name}.{}`.", variants.first().map(String::as_str).unwrap_or("Variant")),
+                            fix,
                             "Enum variants are case-sensitive.",
                             "That variant isn't in the pack.",
                         ));
@@ -986,12 +1103,16 @@ impl TypeChecker {
                     DogType::Struct(struct_name) => {
                         let fields = self.structs.get(&struct_name).expect("struct exists");
                         fields.get(field).cloned().ok_or_else(|| {
+                            let mut fix = "Check the struct definition.".to_string();
+                            if let Some(hint) = suggest_similar(field, fields.keys().map(String::as_str)) {
+                                fix = format!("Did you mean '.{hint}'? {fix}");
+                            }
                             DogDiagnostic::new(
                                 "E010",
                                 format!("Unknown field '{field}' on struct '{struct_name}'."),
                                 span.clone(),
                                 format!("Struct '{struct_name}' has no field named '{field}'."),
-                                "Check the struct definition.",
+                                fix,
                                 "Inspect available field names.",
                                 "No such field.",
                             )
@@ -1046,12 +1167,16 @@ impl TypeChecker {
                 .lookup(name)
                 .map(|b| b.ty.clone())
                 .ok_or_else(|| {
+                    let fix = self.suggest_var_fix(
+                        name,
+                        format!("Declare `{name}` with `let`, `var`, or `const` before reading it."),
+                    );
                     DogDiagnostic::new(
                         "E010",
                         format!("Undefined variable '{name}'."),
                         span.clone(),
                         format!("No variable named '{name}' exists in the current scope."),
-                        format!("Declare `{name}` with `let`, `var`, or `const` before reading it."),
+                        fix,
                         "Check spelling and scope boundaries.",
                         "I sniffed everywhere and couldn't find that variable.",
                     )
@@ -1337,6 +1462,127 @@ impl TypeChecker {
                 ));
             }
             return Ok(DogType::Bool);
+        }
+        if callee == "list_index_of" {
+            if args.len() != 2 {
+                return Err(arity_error(callee, 2, args.len(), span));
+            }
+            let list_ty = self.check_expr(&args[0])?;
+            let DogType::List(inner) = list_ty else {
+                return Err(type_err(
+                    "list<T>",
+                    &list_ty.label(),
+                    args[0].span(),
+                    "list_index_of() expects a list as first argument.",
+                ));
+            };
+            let item_ty = self.check_expr_with_hint(&args[1], Some(&inner))?;
+            if item_ty != *inner {
+                return Err(type_err(
+                    &inner.label(),
+                    &item_ty.label(),
+                    args[1].span(),
+                    "list_index_of() search item type must match the list element type.",
+                ));
+            }
+            return Ok(DogType::Number);
+        }
+        if callee == "list_slice" {
+            if args.len() != 3 {
+                return Err(arity_error(callee, 3, args.len(), span));
+            }
+            let list_ty = self.check_expr(&args[0])?;
+            let DogType::List(inner) = list_ty else {
+                return Err(type_err(
+                    "list<T>",
+                    &list_ty.label(),
+                    args[0].span(),
+                    "list_slice() expects a list as first argument.",
+                ));
+            };
+            let start_ty = self.check_expr(&args[1])?;
+            let end_ty = self.check_expr(&args[2])?;
+            if start_ty != DogType::Number || end_ty != DogType::Number {
+                return Err(type_err(
+                    "number, number",
+                    &format!("{start_ty}, {end_ty}"),
+                    span,
+                    "list_slice() start and end indices must be 'number'.",
+                ));
+            }
+            return Ok(DogType::List(inner));
+        }
+        if callee == "insert_at" {
+            if args.len() != 3 {
+                return Err(arity_error(callee, 3, args.len(), span));
+            }
+            let inner_ty = self.require_mutable_list_arg(&args[0], callee)?;
+            let idx_ty = self.check_expr(&args[1])?;
+            if idx_ty != DogType::Number {
+                return Err(type_err(
+                    "number",
+                    &idx_ty.label(),
+                    args[1].span(),
+                    "insert_at() index must be 'number'.",
+                ));
+            }
+            let item_ty = self.check_expr_with_hint(&args[2], Some(&inner_ty))?;
+            if item_ty != inner_ty {
+                return Err(type_err(
+                    &inner_ty.label(),
+                    &item_ty.label(),
+                    args[2].span(),
+                    "insert_at() value type must match the list element type.",
+                ));
+            }
+            return Ok(DogType::Void);
+        }
+        if callee == "remove_at" {
+            if args.len() != 2 {
+                return Err(arity_error(callee, 2, args.len(), span));
+            }
+            let inner_ty = self.require_mutable_list_arg(&args[0], callee)?;
+            let idx_ty = self.check_expr(&args[1])?;
+            if idx_ty != DogType::Number {
+                return Err(type_err(
+                    "number",
+                    &idx_ty.label(),
+                    args[1].span(),
+                    "remove_at() index must be 'number'.",
+                ));
+            }
+            return Ok(inner_ty);
+        }
+        if callee == "clear" {
+            if args.len() != 1 {
+                return Err(arity_error(callee, 1, args.len(), span));
+            }
+            self.require_mutable_list_arg(&args[0], callee)?;
+            return Ok(DogType::Void);
+        }
+        if callee == "map_clear" {
+            if args.len() != 1 {
+                return Err(arity_error(callee, 1, args.len(), span));
+            }
+            self.require_mutable_map_arg(&args[0], callee)?;
+            return Ok(DogType::Void);
+        }
+        if callee == "map_merge" {
+            if args.len() != 2 {
+                return Err(arity_error(callee, 2, args.len(), span));
+            }
+            let (k_ty, v_ty) = self.require_mutable_map_arg(&args[0], callee)?;
+            let expected_map = DogType::Map(Box::new(k_ty), Box::new(v_ty));
+            let src_ty = self.check_expr_with_hint(&args[1], Some(&expected_map))?;
+            if src_ty != expected_map {
+                return Err(type_err(
+                    &expected_map.label(),
+                    &src_ty.label(),
+                    args[1].span(),
+                    "map_merge() source map must have matching key and value types.",
+                ));
+            }
+            return Ok(DogType::Void);
         }
 
         let mut arg_types = Vec::with_capacity(args.len());
@@ -2032,14 +2278,916 @@ impl TypeChecker {
                 }
                 Ok(DogType::Bool)
             }
+            "sha1" | "html_escape" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects 'text'."),
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "index_of" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "index_of() expects (haystack: text, needle: text).",
+                    ));
+                }
+                Ok(DogType::Number)
+            }
+            "glob_match" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "glob_match() expects (pattern: text, text_val: text).",
+                    ));
+                }
+                Ok(DogType::Bool)
+            }
+            "str_repeat" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Number {
+                    return Err(type_err(
+                        "text, number",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "str_repeat() expects (s: text, count: number).",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "pad_left" | "pad_right" => {
+                if arg_types.len() != 3 {
+                    return Err(arity_error(callee, 3, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text
+                    || arg_types[1] != DogType::Number
+                    || arg_types[2] != DogType::Text
+                {
+                    return Err(type_err(
+                        "text, number, text",
+                        &format!("{}, {}, {}", arg_types[0], arg_types[1], arg_types[2]),
+                        span,
+                        &format!("{callee}() expects (s: text, width: number, fill: text)."),
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "clamp" => {
+                if arg_types.len() != 3 {
+                    return Err(arity_error(callee, 3, arg_types.len(), span));
+                }
+                if arg_types[0] == arg_types[1]
+                    && arg_types[1] == arg_types[2]
+                    && (arg_types[0] == DogType::Number || arg_types[0] == DogType::Decimal)
+                {
+                    Ok(arg_types[0].clone())
+                } else {
+                    Err(type_err(
+                        "T, T, T (number | decimal)",
+                        &format!("{}, {}, {}", arg_types[0], arg_types[1], arg_types[2]),
+                        span,
+                        "clamp() expects matching numeric (val, min, max) arguments.",
+                    ))
+                }
+            }
+            "sin" | "cos" | "log" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Decimal && arg_types[0] != DogType::Number {
+                    return Err(type_err(
+                        "decimal | number",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects 'decimal' or 'number'."),
+                    ));
+                }
+                Ok(DogType::Decimal)
+            }
+            "map_values" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                let DogType::Map(_, v) = &arg_types[0] else {
+                    return Err(type_err(
+                        "map<K, V>",
+                        &arg_types[0].label(),
+                        span,
+                        "map_values() expects a map.",
+                    ));
+                };
+                Ok(DogType::List(v.clone()))
+            }
+            "time_utc" => {
+                if !arg_types.is_empty() {
+                    return Err(arity_error(callee, 0, arg_types.len(), span));
+                }
+                Ok(DogType::Text)
+            }
+            "json_pretty" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] == DogType::Void {
+                    return Err(type_err(
+                        "non-void",
+                        "void",
+                        span,
+                        "Cannot format 'void' as JSON.",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "file_copy" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "file_copy() expects (src: text, dst: text).",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "file_size" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        "file_size() expects file path 'text'.",
+                    ));
+                }
+                Ok(DogType::Number)
+            }
+            "is_file" | "is_dir" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects path 'text'."),
+                    ));
+                }
+                Ok(DogType::Bool)
+            }
+            "path_join" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "path_join() expects (base: text, child: text).",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "url_parse" | "query_parse" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects 'text'."),
+                    ));
+                }
+                Ok(DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text)))
+            }
+            "query_stringify" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                let expected = DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text));
+                if arg_types[0] != expected {
+                    return Err(type_err(
+                        "map<text, text>",
+                        &arg_types[0].label(),
+                        span,
+                        "query_stringify() expects map<text, text>.",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "http_route_match" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "http_route_match() expects (pattern: text, path: text).",
+                    ));
+                }
+                Ok(DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text)))
+            }
+            "http_try_accept" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number || arg_types[1] != DogType::Number {
+                    return Err(type_err(
+                        "number, number",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "http_try_accept() expects (server_id: number, timeout_ms: number).",
+                    ));
+                }
+                Ok(DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text)))
+            }
+            "http_reply_headers" => {
+                if arg_types.len() != 4 {
+                    return Err(arity_error(callee, 4, arg_types.len(), span));
+                }
+                let text_map = DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text));
+                if arg_types[0] != text_map
+                    || arg_types[1] != DogType::Number
+                    || arg_types[2] != text_map
+                    || arg_types[3] != DogType::Text
+                {
+                    return Err(type_err(
+                        "map<text, text>, number, map<text, text>, text",
+                        &format!(
+                            "{}, {}, {}, {}",
+                            arg_types[0], arg_types[1], arg_types[2], arg_types[3]
+                        ),
+                        span,
+                        "http_reply_headers() expects (req, status, headers_map, body).",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "http_redirect" => {
+                if arg_types.len() != 3 {
+                    return Err(arity_error(callee, 3, arg_types.len(), span));
+                }
+                let req_map = DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text));
+                if arg_types[0] != req_map
+                    || arg_types[1] != DogType::Number
+                    || arg_types[2] != DogType::Text
+                {
+                    return Err(type_err(
+                        "map<text, text>, number, text",
+                        &format!("{}, {}, {}", arg_types[0], arg_types[1], arg_types[2]),
+                        span,
+                        "http_redirect() expects (req, status, location).",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "http_request_timeout" => {
+                if arg_types.len() != 5 {
+                    return Err(arity_error(callee, 5, arg_types.len(), span));
+                }
+                let hdr_map = DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text));
+                if arg_types[0] != DogType::Text
+                    || arg_types[1] != DogType::Text
+                    || arg_types[2] != hdr_map
+                    || arg_types[3] != DogType::Text
+                    || arg_types[4] != DogType::Number
+                {
+                    return Err(type_err(
+                        "text, text, map<text, text>, text, number",
+                        &format!(
+                            "{}, {}, {}, {}, {}",
+                            arg_types[0], arg_types[1], arg_types[2], arg_types[3], arg_types[4]
+                        ),
+                        span,
+                        "http_request_timeout() expects (method, url, headers, body, timeout_ms).",
+                    ));
+                }
+                Ok(DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text)))
+            }
+            "http_put" => {
+                if arg_types.len() != 3 {
+                    return Err(arity_error(callee, 3, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text
+                    || arg_types[1] != DogType::Text
+                    || arg_types[2] != DogType::Text
+                {
+                    return Err(type_err(
+                        "text, text, text",
+                        &format!("{}, {}, {}", arg_types[0], arg_types[1], arg_types[2]),
+                        span,
+                        "http_put() expects (url: text, body: text, content_type: text).",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "http_delete" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        "http_delete() expects url 'text'.",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "ws_upgrade" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                let req_map = DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text));
+                if arg_types[0] != req_map {
+                    return Err(type_err(
+                        "map<text, text>",
+                        &arg_types[0].label(),
+                        span,
+                        "ws_upgrade() expects request map<text, text>.",
+                    ));
+                }
+                Ok(DogType::Number)
+            }
+            "ws_connect" | "udp_bind" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects 'text'."),
+                    ));
+                }
+                Ok(DogType::Number)
+            }
+            "ws_send" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "number, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "ws_send() expects (ws_id: number, message: text).",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "ws_recv" | "tcp_remote_addr" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number {
+                    return Err(type_err(
+                        "number",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects handle 'number'."),
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "ws_close" | "udp_close" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number {
+                    return Err(type_err(
+                        "number",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects handle 'number'."),
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "udp_send_to" => {
+                if arg_types.len() != 3 {
+                    return Err(arity_error(callee, 3, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number
+                    || arg_types[1] != DogType::Text
+                    || arg_types[2] != DogType::Text
+                {
+                    return Err(type_err(
+                        "number, text, text",
+                        &format!("{}, {}, {}", arg_types[0], arg_types[1], arg_types[2]),
+                        span,
+                        "udp_send_to() expects (sock_id: number, addr: text, data: text).",
+                    ));
+                }
+                Ok(DogType::Number)
+            }
+            "udp_recv_from" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number || arg_types[1] != DogType::Number {
+                    return Err(type_err(
+                        "number, number",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "udp_recv_from() expects (sock_id: number, max_bytes: number).",
+                    ));
+                }
+                Ok(DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text)))
+            }
+            "dns_lookup" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        "dns_lookup() expects hostname 'text'.",
+                    ));
+                }
+                Ok(DogType::List(Box::new(DogType::Text)))
+            }
+            "tcp_set_timeout" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number || arg_types[1] != DogType::Number {
+                    return Err(type_err(
+                        "number, number",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "tcp_set_timeout() expects (conn_id: number, timeout_ms: number).",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "port_is_open" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Number {
+                    return Err(type_err(
+                        "text, number",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "port_is_open() expects (addr: text, timeout_ms: number).",
+                    ));
+                }
+                Ok(DogType::Bool)
+            }
+            "char_at" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Number {
+                    return Err(type_err(
+                        "text, number",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "char_at() expects (s: text, idx: number).",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "last_index_of" | "count_matches" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        &format!("{callee}() expects (haystack: text, needle: text)."),
+                    ));
+                }
+                Ok(DogType::Number)
+            }
+            "remove_prefix" | "remove_suffix" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        &format!("{callee}() expects (s: text, fix: text)."),
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "title_case" | "reverse_text" | "path_dirname" | "path_basename" | "path_ext"
+            | "sha512" | "base64_url_encode" | "base64_url_decode" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects 'text'."),
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "lines" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        "lines() expects 'text'.",
+                    ));
+                }
+                Ok(DogType::List(Box::new(DogType::Text)))
+            }
+            "tan" | "exp" | "log10" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Decimal && arg_types[0] != DogType::Number {
+                    return Err(type_err(
+                        "decimal | number",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects 'decimal' or 'number'."),
+                    ));
+                }
+                Ok(DogType::Decimal)
+            }
+            "atan2" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                let ok0 = arg_types[0] == DogType::Decimal || arg_types[0] == DogType::Number;
+                let ok1 = arg_types[1] == DogType::Decimal || arg_types[1] == DogType::Number;
+                if !ok0 || !ok1 {
+                    return Err(type_err(
+                        "decimal | number, decimal | number",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "atan2() expects two numeric arguments (y, x).",
+                    ));
+                }
+                Ok(DogType::Decimal)
+            }
+            "pow_int" | "gcd" | "lcm" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number || arg_types[1] != DogType::Number {
+                    return Err(type_err(
+                        "number, number",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        &format!("{callee}() expects two 'number' arguments."),
+                    ));
+                }
+                Ok(DogType::Number)
+            }
+            "sign" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number && arg_types[0] != DogType::Decimal {
+                    return Err(type_err(
+                        "number | decimal",
+                        &arg_types[0].label(),
+                        span,
+                        "sign() expects 'number' or 'decimal'.",
+                    ));
+                }
+                Ok(DogType::Number)
+            }
+            "math_pi" | "math_e" => {
+                if !arg_types.is_empty() {
+                    return Err(arity_error(callee, 0, arg_types.len(), span));
+                }
+                Ok(DogType::Decimal)
+            }
+            "temp_dir" | "local_ip" => {
+                if !arg_types.is_empty() {
+                    return Err(arity_error(callee, 0, arg_types.len(), span));
+                }
+                Ok(DogType::Text)
+            }
+            "list_unique" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                let DogType::List(_) = &arg_types[0] else {
+                    return Err(type_err(
+                        "list<T>",
+                        &arg_types[0].label(),
+                        span,
+                        "list_unique() expects a list.",
+                    ));
+                };
+                Ok(arg_types[0].clone())
+            }
+            "list_take" | "list_skip" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                let DogType::List(_) = &arg_types[0] else {
+                    return Err(type_err(
+                        "list<T>",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects (list: list<T>, n: number)."),
+                    ));
+                };
+                if arg_types[1] != DogType::Number {
+                    return Err(type_err(
+                        "number",
+                        &arg_types[1].label(),
+                        span,
+                        &format!("{callee}() count must be 'number'."),
+                    ));
+                }
+                Ok(arg_types[0].clone())
+            }
+            "list_flatten" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                let DogType::List(outer) = &arg_types[0] else {
+                    return Err(type_err(
+                        "list<list<T>>",
+                        &arg_types[0].label(),
+                        span,
+                        "list_flatten() expects list<list<T>>.",
+                    ));
+                };
+                let DogType::List(_) = outer.as_ref() else {
+                    return Err(type_err(
+                        "list<list<T>>",
+                        &arg_types[0].label(),
+                        span,
+                        "list_flatten() expects nested lists list<list<T>>.",
+                    ));
+                };
+                Ok((**outer).clone())
+            }
+            "list_sum" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                let DogType::List(inner) = &arg_types[0] else {
+                    return Err(type_err(
+                        "list<number | decimal>",
+                        &arg_types[0].label(),
+                        span,
+                        "list_sum() expects list<number> or list<decimal>.",
+                    ));
+                };
+                if **inner != DogType::Number && **inner != DogType::Decimal {
+                    return Err(type_err(
+                        "list<number | decimal>",
+                        &arg_types[0].label(),
+                        span,
+                        "list_sum() only supports numeric lists.",
+                    ));
+                }
+                Ok((**inner).clone())
+            }
+            "list_avg" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                let DogType::List(inner) = &arg_types[0] else {
+                    return Err(type_err(
+                        "list<number | decimal>",
+                        &arg_types[0].label(),
+                        span,
+                        "list_avg() expects list<number> or list<decimal>.",
+                    ));
+                };
+                if **inner != DogType::Number && **inner != DogType::Decimal {
+                    return Err(type_err(
+                        "list<number | decimal>",
+                        &arg_types[0].label(),
+                        span,
+                        "list_avg() only supports numeric lists.",
+                    ));
+                }
+                Ok(DogType::Decimal)
+            }
+            "list_concat" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                let DogType::List(_) = &arg_types[0] else {
+                    return Err(type_err(
+                        "list<T>, list<T>",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "list_concat() expects two lists of identical element type.",
+                    ));
+                };
+                if arg_types[0] != arg_types[1] {
+                    return Err(type_err(
+                        &arg_types[0].label(),
+                        &arg_types[1].label(),
+                        span,
+                        "list_concat() requires matching list element types.",
+                    ));
+                }
+                Ok(arg_types[0].clone())
+            }
+            "map_from_lists" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                let (DogType::List(k_ty), DogType::List(v_ty)) = (&arg_types[0], &arg_types[1])
+                else {
+                    return Err(type_err(
+                        "list<K>, list<V>",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "map_from_lists() expects (keys: list<K>, values: list<V>).",
+                    ));
+                };
+                Ok(DogType::Map(k_ty.clone(), v_ty.clone()))
+            }
+            "map_get_or" => {
+                if arg_types.len() != 3 {
+                    return Err(arity_error(callee, 3, arg_types.len(), span));
+                }
+                let DogType::Map(k_ty, v_ty) = &arg_types[0] else {
+                    return Err(type_err(
+                        "map<K, V>",
+                        &arg_types[0].label(),
+                        span,
+                        "map_get_or() expects a map as its first argument.",
+                    ));
+                };
+                if arg_types[1] != **k_ty || arg_types[2] != **v_ty {
+                    return Err(type_err(
+                        &format!("map<{}, {}>, {}, {}", k_ty, v_ty, k_ty, v_ty),
+                        &format!("{}, {}, {}", arg_types[0], arg_types[1], arg_types[2]),
+                        span,
+                        "map_get_or() expects (map, key, fallback) matching the map's types.",
+                    ));
+                }
+                Ok((**v_ty).clone())
+            }
+            "csv_stringify" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                let expected = DogType::List(Box::new(DogType::List(Box::new(DogType::Text))));
+                if arg_types[0] != expected {
+                    return Err(type_err(
+                        "list<list<text>>",
+                        &arg_types[0].label(),
+                        span,
+                        "csv_stringify() expects list<list<text>>.",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "json_has_key" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "json_has_key() expects (raw_json: text, key: text).",
+                    ));
+                }
+                Ok(DogType::Bool)
+            }
+            "file_move" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "file_move() expects (src: text, dst: text).",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "rmdir" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        "rmdir() expects directory path 'text'.",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "hmac_sha256_verify" => {
+                if arg_types.len() != 3 {
+                    return Err(arity_error(callee, 3, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text
+                    || arg_types[1] != DogType::Text
+                    || arg_types[2] != DogType::Text
+                {
+                    return Err(type_err(
+                        "text, text, text",
+                        &format!("{}, {}, {}", arg_types[0], arg_types[1], arg_types[2]),
+                        span,
+                        "hmac_sha256_verify() expects (key: text, msg: text, sig_hex: text).",
+                    ));
+                }
+                Ok(DogType::Bool)
+            }
+            "rand_bytes_hex" | "http_status_text" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number {
+                    return Err(type_err(
+                        "number",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects 'number'."),
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "ws_ping" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "number, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "ws_ping() expects (ws_id: number, msg: text).",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
             other => {
                 let Some(sig) = self.functions.get(other) else {
+                    let mut fix = "Check spelling or define the function with `fn`.".to_string();
+                    let all_fns = BUILTIN_NAMES
+                        .iter()
+                        .copied()
+                        .chain(self.functions.keys().map(String::as_str));
+                    if let Some(hint) = suggest_similar(callee, all_fns) {
+                        fix = format!("Did you mean '{hint}()'? {fix}");
+                    }
                     return Err(DogDiagnostic::new(
                         "E013",
                         format!("Unknown function '{callee}'."),
                         span.clone(),
                         format!("No built-in or declared function named '{callee}' exists."),
-                        "Check spelling or define the function with `fn`.",
+                        fix,
                         "Top-level functions are visible throughout the file.",
                         "I looked everywhere for that function. Nobody home.",
                     ));
@@ -2157,6 +3305,24 @@ impl TypeChecker {
             }
         }
         None
+    }
+
+    fn all_visible_var_names(&self) -> Vec<&str> {
+        let mut names = Vec::new();
+        for scope in &self.scopes {
+            for k in scope.keys() {
+                names.push(k.as_str());
+            }
+        }
+        names
+    }
+
+    fn suggest_var_fix(&self, name: &str, default_fix: String) -> String {
+        if let Some(hint) = suggest_similar(name, self.all_visible_var_names()) {
+            format!("Did you mean '{hint}'? {default_fix}")
+        } else {
+            default_fix
+        }
     }
 }
 

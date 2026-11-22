@@ -184,7 +184,7 @@ fn preview_output() -> String {
 }
 
 pub fn generate_completion_snippet(shell: ShellKind) -> String {
-    let cmds = "run build check format fmt test inspect profile repl edit studio forge new add remove search list info prompt completions docs server doctor system status env process permissions logs clean update upgrade config sdu version help";
+    let cmds = "run eval build check lint bench format fmt test inspect profile repl edit studio forge new add remove search list info prompt completions docs server doctor system status env process permissions logs clean update upgrade config sdu version help";
     match shell {
         ShellKind::Bash => format!(
             "_dog_complete() {{\n\

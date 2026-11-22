@@ -1,4 +1,4 @@
-use crate::ast::{BinOp, BindingKind, Expr, Param, Program, Span, Stmt, UnaryOp};
+use crate::ast::{BinOp, BindingKind, Expr, InterpPart, Param, Program, Span, Stmt, UnaryOp};
 use crate::checker::TypeChecker;
 use crate::diagnostics::DogDiagnostic;
 use crate::lexer::Lexer;
@@ -101,6 +101,37 @@ impl<'a> Interpreter<'a> {
                 self.env
                     .assign(name, val)
                     .map_err(|_| immutable_err(name, span))?;
+                Ok(ExecFlow::Next)
+            }
+            Stmt::CompoundAssign {
+                name,
+                op,
+                value,
+                span,
+            } => {
+                let rv = self.eval_expr(value)?;
+                let cur = self
+                    .env
+                    .get_mut_var(name)
+                    .map_err(|_| immutable_err(name, span))?;
+                match (op, cur, rv) {
+                    (BinOp::Add, Value::Text(a), Value::Text(b)) => a.push_str(&b),
+                    (BinOp::Add, Value::Number(a), Value::Number(b)) => *a = a.wrapping_add(b),
+                    (BinOp::Add, Value::Decimal(a), Value::Decimal(b)) => *a += b,
+                    (BinOp::Sub, Value::Number(a), Value::Number(b)) => *a = a.wrapping_sub(b),
+                    (BinOp::Sub, Value::Decimal(a), Value::Decimal(b)) => *a -= b,
+                    (BinOp::Mul, Value::Number(a), Value::Number(b)) => *a = a.wrapping_mul(b),
+                    (BinOp::Mul, Value::Decimal(a), Value::Decimal(b)) => *a *= b,
+                    (BinOp::Div, Value::Number(_), Value::Number(0)) => return Err(div_zero(span)),
+                    (BinOp::Div, Value::Number(a), Value::Number(b)) => *a /= b,
+                    (BinOp::Div, Value::Decimal(_), Value::Decimal(b)) if b == 0.0 => {
+                        return Err(div_zero(span));
+                    }
+                    (BinOp::Div, Value::Decimal(a), Value::Decimal(b)) => *a /= b,
+                    (BinOp::Mod, Value::Number(_), Value::Number(0)) => return Err(div_zero(span)),
+                    (BinOp::Mod, Value::Number(a), Value::Number(b)) => *a %= b,
+                    _ => unreachable!(),
+                }
                 Ok(ExecFlow::Next)
             }
             Stmt::IndexAssign {
@@ -307,6 +338,19 @@ impl<'a> Interpreter<'a> {
     fn eval_expr(&mut self, expr: &Expr) -> Result<Value, DogDiagnostic> {
         match expr {
             Expr::StringLit { value, .. } => Ok(Value::Text(value.clone())),
+            Expr::InterpString { parts, .. } => {
+                let mut out = String::new();
+                for part in parts {
+                    match part {
+                        InterpPart::Literal(s) => out.push_str(s),
+                        InterpPart::Expr(inner) => {
+                            let val = self.eval_expr(inner)?;
+                            out.push_str(&val.to_string());
+                        }
+                    }
+                }
+                Ok(Value::Text(out))
+            }
             Expr::NumberLit { value, .. } => Ok(Value::Number(*value)),
             Expr::DecimalLit { value, .. } => Ok(Value::Decimal(*value)),
             Expr::BoolLit { value, .. } => Ok(Value::Bool(*value)),
@@ -560,6 +604,97 @@ impl<'a> Interpreter<'a> {
                         unreachable!();
                     };
                     items.reverse();
+                    return Ok(Value::Void);
+                }
+                if callee == "insert_at" {
+                    let Expr::Identifier { name, .. } = &args[0] else {
+                        unreachable!();
+                    };
+                    let Value::Number(idx) = self.eval_expr(&args[1])? else {
+                        unreachable!();
+                    };
+                    let item = self.eval_expr(&args[2])?;
+                    let list_val = self
+                        .env
+                        .get_mut_var(name)
+                        .map_err(|_| immutable_err(name, span))?;
+                    let Value::List(items) = list_val else {
+                        unreachable!();
+                    };
+                    if idx < 0 || (idx as usize) > items.len() {
+                        return Err(index_bounds_err(idx, items.len() + 1, span));
+                    }
+                    items.insert(idx as usize, item);
+                    return Ok(Value::Void);
+                }
+                if callee == "remove_at" {
+                    let Expr::Identifier { name, .. } = &args[0] else {
+                        unreachable!();
+                    };
+                    let Value::Number(idx) = self.eval_expr(&args[1])? else {
+                        unreachable!();
+                    };
+                    let list_val = self
+                        .env
+                        .get_mut_var(name)
+                        .map_err(|_| immutable_err(name, span))?;
+                    let Value::List(items) = list_val else {
+                        unreachable!();
+                    };
+                    if idx < 0 || (idx as usize) >= items.len() {
+                        return Err(index_bounds_err(idx, items.len(), span));
+                    }
+                    return Ok(items.remove(idx as usize));
+                }
+                if callee == "clear" {
+                    let Expr::Identifier { name, .. } = &args[0] else {
+                        unreachable!();
+                    };
+                    let list_val = self
+                        .env
+                        .get_mut_var(name)
+                        .map_err(|_| immutable_err(name, span))?;
+                    let Value::List(items) = list_val else {
+                        unreachable!();
+                    };
+                    items.clear();
+                    return Ok(Value::Void);
+                }
+                if callee == "map_clear" {
+                    let Expr::Identifier { name, .. } = &args[0] else {
+                        unreachable!();
+                    };
+                    let map_val = self
+                        .env
+                        .get_mut_var(name)
+                        .map_err(|_| immutable_err(name, span))?;
+                    let Value::Map(entries) = map_val else {
+                        unreachable!();
+                    };
+                    entries.clear();
+                    return Ok(Value::Void);
+                }
+                if callee == "map_merge" {
+                    let Expr::Identifier { name, .. } = &args[0] else {
+                        unreachable!();
+                    };
+                    let Value::Map(src_entries) = self.eval_expr(&args[1])? else {
+                        unreachable!();
+                    };
+                    let map_val = self
+                        .env
+                        .get_mut_var(name)
+                        .map_err(|_| immutable_err(name, span))?;
+                    let Value::Map(entries) = map_val else {
+                        unreachable!();
+                    };
+                    for (k, v) in src_entries {
+                        if let Some((_, slot)) = entries.iter_mut().find(|(ek, _)| ek == &k) {
+                            *slot = v;
+                        } else {
+                            entries.push((k, v));
+                        }
+                    }
                     return Ok(Value::Void);
                 }
 

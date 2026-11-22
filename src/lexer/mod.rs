@@ -2,6 +2,12 @@ use crate::ast::Span;
 use crate::diagnostics::DogDiagnostic;
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum InterpLexPart {
+    Literal(String),
+    Expr { source: String, span: Span },
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // Keywords
     Let,
@@ -34,11 +40,17 @@ pub enum TokenKind {
     // Literals & Identifiers
     Identifier(String),
     StringLit(String),
+    InterpString(Vec<InterpLexPart>),
     NumberLit(i64),
     DecimalLit(f64),
 
     // Operators & Punctuation
     Assign,
+    PlusEq,
+    MinusEq,
+    StarEq,
+    SlashEq,
+    PercentEq,
     EqEq,
     BangEq,
     Gt,
@@ -122,8 +134,15 @@ impl Lexer {
                         self.advance();
                     }
                 }
+                '$' if self.peek_next() == Some('"') => {
+                    tokens.push(self.read_interp_string()?);
+                }
                 '"' => {
-                    tokens.push(self.read_string()?);
+                    if self.chars.get(self.pos..self.pos + 3) == Some(&['"', '"', '"']) {
+                        tokens.push(self.read_triple_string()?);
+                    } else {
+                        tokens.push(self.read_string()?);
+                    }
                 }
                 '0'..='9' => {
                     tokens.push(self.read_number()?);
@@ -191,7 +210,12 @@ impl Lexer {
                 '+' => {
                     let span = self.span();
                     self.advance();
-                    tokens.push(Token { kind: TokenKind::Plus, span });
+                    if self.peek() == Some('=') {
+                        self.advance();
+                        tokens.push(Token { kind: TokenKind::PlusEq, span });
+                    } else {
+                        tokens.push(Token { kind: TokenKind::Plus, span });
+                    }
                 }
                 '-' => {
                     let span = self.span();
@@ -199,6 +223,9 @@ impl Lexer {
                     if self.peek() == Some('>') {
                         self.advance();
                         tokens.push(Token { kind: TokenKind::Arrow, span });
+                    } else if self.peek() == Some('=') {
+                        self.advance();
+                        tokens.push(Token { kind: TokenKind::MinusEq, span });
                     } else {
                         tokens.push(Token { kind: TokenKind::Minus, span });
                     }
@@ -206,17 +233,32 @@ impl Lexer {
                 '*' => {
                     let span = self.span();
                     self.advance();
-                    tokens.push(Token { kind: TokenKind::Star, span });
+                    if self.peek() == Some('=') {
+                        self.advance();
+                        tokens.push(Token { kind: TokenKind::StarEq, span });
+                    } else {
+                        tokens.push(Token { kind: TokenKind::Star, span });
+                    }
                 }
                 '/' => {
                     let span = self.span();
                     self.advance();
-                    tokens.push(Token { kind: TokenKind::Slash, span });
+                    if self.peek() == Some('=') {
+                        self.advance();
+                        tokens.push(Token { kind: TokenKind::SlashEq, span });
+                    } else {
+                        tokens.push(Token { kind: TokenKind::Slash, span });
+                    }
                 }
                 '%' => {
                     let span = self.span();
                     self.advance();
-                    tokens.push(Token { kind: TokenKind::Percent, span });
+                    if self.peek() == Some('=') {
+                        self.advance();
+                        tokens.push(Token { kind: TokenKind::PercentEq, span });
+                    } else {
+                        tokens.push(Token { kind: TokenKind::Percent, span });
+                    }
                 }
                 ':' => {
                     let span = self.span();
@@ -371,13 +413,284 @@ impl Lexer {
         ))
     }
 
+    fn read_triple_string(&mut self) -> Result<Token, DogDiagnostic> {
+        let span = self.span();
+        self.advance();
+        self.advance();
+        self.advance();
+        if self.peek() == Some('\r') && self.peek_next() == Some('\n') {
+            self.advance();
+            self.advance();
+        } else if self.peek() == Some('\n') {
+            self.advance();
+        }
+
+        let mut out = String::new();
+        while self.pos < self.chars.len() {
+            if self.chars.get(self.pos..self.pos + 3) == Some(&['"', '"', '"']) {
+                self.advance();
+                self.advance();
+                self.advance();
+                return Ok(Token {
+                    kind: TokenKind::StringLit(out),
+                    span,
+                });
+            }
+            let ch = self.chars[self.pos];
+            if ch == '\\' {
+                self.advance();
+                match self.advance() {
+                    Some('n') => out.push('\n'),
+                    Some('t') => out.push('\t'),
+                    Some('r') => out.push('\r'),
+                    Some('"') => out.push('"'),
+                    Some('\\') => out.push('\\'),
+                    Some(esc) => out.push(esc),
+                    None => break,
+                }
+            } else {
+                out.push(ch);
+                self.advance();
+            }
+        }
+
+        Err(DogDiagnostic::new(
+            "E002",
+            "Unterminated triple-quoted string literal.",
+            span,
+            "Reached end of file before finding a closing '\"\"\"'.",
+            "Add closing '\"\"\"' to terminate the multi-line text literal.",
+            "Every opening '\"\"\"' block must end with '\"\"\"'.",
+            "Multi-line strings still need a closing triple quote.",
+        ))
+    }
+
+    fn read_interp_string(&mut self) -> Result<Token, DogDiagnostic> {
+        let span = self.span();
+        self.advance(); // $
+        self.advance(); // "
+
+        let mut parts: Vec<InterpLexPart> = Vec::new();
+        let mut lit = String::new();
+
+        while let Some(ch) = self.peek() {
+            if ch == '"' {
+                self.advance();
+                if !lit.is_empty() || parts.is_empty() {
+                    parts.push(InterpLexPart::Literal(lit));
+                }
+                return Ok(Token {
+                    kind: TokenKind::InterpString(parts),
+                    span,
+                });
+            }
+            if ch == '\\' {
+                self.advance();
+                match self.advance() {
+                    Some('n') => lit.push('\n'),
+                    Some('t') => lit.push('\t'),
+                    Some('r') => lit.push('\r'),
+                    Some('"') => lit.push('"'),
+                    Some('\\') => lit.push('\\'),
+                    Some('{') => lit.push('{'),
+                    Some('}') => lit.push('}'),
+                    Some(esc) => lit.push(esc),
+                    None => {
+                        return Err(DogDiagnostic::new(
+                            "E002",
+                            "Unterminated interpolated string literal.",
+                            span,
+                            "Reached end of file while reading an escape sequence inside $\"...\".",
+                            "Add a closing '\"' before the end of the line.",
+                            "Use `\\{` or `{{` for literal braces in $\"...\" strings.",
+                            "Strings can't stay open forever.",
+                        ));
+                    }
+                }
+                continue;
+            }
+            if ch == '\n' {
+                return Err(DogDiagnostic::new(
+                    "E002",
+                    "Unterminated interpolated string literal.",
+                    span,
+                    "An interpolated string opened with $\" was not closed before the end of the line.",
+                    "Close the string with '\"'.",
+                    "Every opening quote needs a matching closing quote.",
+                    "Started talking and forgot to stop.",
+                ));
+            }
+            if ch == '{' {
+                if self.peek_next() == Some('{') {
+                    self.advance();
+                    self.advance();
+                    lit.push('{');
+                    continue;
+                }
+                if !lit.is_empty() {
+                    parts.push(InterpLexPart::Literal(std::mem::take(&mut lit)));
+                }
+                self.advance(); // {
+                let expr_span = self.span();
+                let mut expr_src = String::new();
+                let mut depth = 1usize;
+                let mut in_inner_str = false;
+
+                while let Some(ech) = self.peek() {
+                    if in_inner_str {
+                        expr_src.push(ech);
+                        self.advance();
+                        if ech == '\\' {
+                            if let Some(esc) = self.peek() {
+                                expr_src.push(esc);
+                                self.advance();
+                            }
+                        } else if ech == '"' {
+                            in_inner_str = false;
+                        }
+                        continue;
+                    }
+                    if ech == '\n' {
+                        return Err(DogDiagnostic::new(
+                            "E002",
+                            "Unclosed '{' inside interpolated string.",
+                            expr_span,
+                            "Interpolation placeholder `{...}` was not closed with '}' before end of line.",
+                            "Add '}' to close the interpolated expression.",
+                            "Use `{{` if you meant a literal '{'.",
+                            "Braces inside strings still need partners.",
+                        ));
+                    }
+                    if ech == '"' {
+                        in_inner_str = true;
+                        expr_src.push(ech);
+                        self.advance();
+                        continue;
+                    }
+                    if ech == '{' {
+                        depth += 1;
+                        expr_src.push(ech);
+                        self.advance();
+                        continue;
+                    }
+                    if ech == '}' {
+                        depth -= 1;
+                        self.advance();
+                        if depth == 0 {
+                            break;
+                        }
+                        expr_src.push('}');
+                        continue;
+                    }
+                    expr_src.push(ech);
+                    self.advance();
+                }
+
+                if depth != 0 {
+                    return Err(DogDiagnostic::new(
+                        "E002",
+                        "Unclosed '{' inside interpolated string.",
+                        expr_span,
+                        "Reached end of file before closing '}' in interpolated expression.",
+                        "Add '}' and close the string with '\"'.",
+                        "Match every '{' with '}' inside $\"...\" strings.",
+                        "Braces left hanging.",
+                    ));
+                }
+
+                let trimmed_expr = expr_src.trim().to_string();
+                if trimmed_expr.is_empty() {
+                    return Err(DogDiagnostic::new(
+                        "E004",
+                        "Empty interpolation expression '{}' in $\"...\".",
+                        expr_span,
+                        "An interpolation placeholder must contain an expression.",
+                        "Write an expression inside `{...}`, like `$\"Hi {name}\"`, or escape braces with `{{}}`.",
+                        "DOG interpolates values with `$\"Hello {expr}\"`.",
+                        "Empty braces have nothing to say.",
+                    ));
+                }
+
+                parts.push(InterpLexPart::Expr {
+                    source: trimmed_expr,
+                    span: expr_span,
+                });
+                continue;
+            }
+            if ch == '}' && self.peek_next() == Some('}') {
+                self.advance();
+                self.advance();
+                lit.push('}');
+                continue;
+            }
+
+            lit.push(ch);
+            self.advance();
+        }
+
+        Err(DogDiagnostic::new(
+            "E002",
+            "Unterminated interpolated string literal.",
+            span,
+            "Reached end of file before finding a closing '\"'.",
+            "Add a closing '\"' to finish the interpolated string.",
+            "Match every opening quote with a closing quote.",
+            "Left hanging at the end of the file.",
+        ))
+    }
+
     fn read_number(&mut self) -> Result<Token, DogDiagnostic> {
         let span = self.span();
+        if self.peek() == Some('0') && matches!(self.peek_next(), Some('x' | 'X' | 'b' | 'B')) {
+            self.advance(); // '0'
+            let base_ch = self.advance().unwrap_or('x');
+            let radix = if matches!(base_ch, 'x' | 'X') { 16 } else { 2 };
+            let mut raw = String::new();
+            while let Some(ch) = self.peek() {
+                if ch == '_'
+                    || (radix == 16 && ch.is_ascii_hexdigit())
+                    || (radix == 2 && matches!(ch, '0' | '1'))
+                {
+                    raw.push(ch);
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            let clean: String = raw.chars().filter(|c| *c != '_').collect();
+            if clean.is_empty() || raw.starts_with('_') || raw.ends_with('_') {
+                return Err(DogDiagnostic::new(
+                    "E003",
+                    format!("Invalid base-{radix} integer literal '0{base_ch}{raw}'."),
+                    span,
+                    "Hex (0x) and binary (0b) literals require at least one valid digit and cannot start or end with '_'.",
+                    "Write e.g. `0xFF_00` or `0b1010_0101`.",
+                    "Check prefix digits for 0x or 0b.",
+                    "Even hex bowls need real digits.",
+                ));
+            }
+            let value = i64::from_str_radix(&clean, radix).map_err(|_| {
+                DogDiagnostic::new(
+                    "E003",
+                    format!("Integer literal '0{base_ch}{raw}' out of 64-bit signed range."),
+                    span.clone(),
+                    "The integer literal exceeds signed 64-bit limits.",
+                    "Keep hex/binary values within signed 64-bit bounds.",
+                    "Use smaller constants or split fields.",
+                    "Too big for one number bowl.",
+                )
+            })?;
+            return Ok(Token {
+                kind: TokenKind::NumberLit(value),
+                span,
+            });
+        }
+
         let mut raw = String::new();
         let mut is_decimal = false;
 
         while let Some(ch) = self.peek() {
-            if ch.is_ascii_digit() {
+            if ch.is_ascii_digit() || ch == '_' {
                 raw.push(ch);
                 self.advance();
             } else if ch == '.' && !is_decimal && self.peek_next().is_some_and(|c| c.is_ascii_digit()) {
@@ -389,8 +702,21 @@ impl Lexer {
             }
         }
 
+        if raw.ends_with('_') || raw.contains("_.") || raw.contains("._") {
+            return Err(DogDiagnostic::new(
+                "E003",
+                format!("Invalid numeric separator placement in '{raw}'."),
+                span,
+                "Underscores in number literals must appear strictly between digits.",
+                "Write e.g. `1_000_000` or `3.14_15`.",
+                "Remove trailing underscores or underscores next to '.'.",
+                "Keep underscores cozy between digits.",
+            ));
+        }
+
+        let clean: String = raw.chars().filter(|c| *c != '_').collect();
         if is_decimal {
-            let value = raw.parse::<f64>().map_err(|_| {
+            let value = clean.parse::<f64>().map_err(|_| {
                 DogDiagnostic::new(
                     "E003",
                     format!("Invalid decimal literal '{raw}'."),
@@ -406,7 +732,7 @@ impl Lexer {
                 span,
             })
         } else {
-            let value = raw.parse::<i64>().map_err(|_| {
+            let value = clean.parse::<i64>().map_err(|_| {
                 DogDiagnostic::new(
                     "E003",
                     format!("Invalid number literal '{raw}'."),

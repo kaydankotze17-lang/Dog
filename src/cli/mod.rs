@@ -1,7 +1,7 @@
 use crate::bytecode::{build_bundle, build_native, is_dgb_path, run_bundle_with_io};
 use crate::checker::TypeChecker;
 use crate::config::{parse_bool_flag, DogConfig, Personality};
-use crate::diagnostics::{achievement_for_runs, welcome_banner};
+use crate::diagnostics::{achievement_for_runs, suggest_similar, welcome_banner};
 use crate::doctor::run_doctor;
 use crate::editor::launch_editor;
 use crate::formatter::format_source;
@@ -16,9 +16,9 @@ use crate::sdu::handle_sdu;
 use crate::stdlib::{StdIo, StdIoWithArgs};
 use crate::studio::launch_studio;
 use crate::sys::{
-    handle_clean, handle_docs, handle_env, handle_forge, handle_inspect, handle_logs,
-    handle_permissions, handle_process, handle_profile, handle_server, handle_status,
-    handle_system, handle_update,
+    handle_bench, handle_clean, handle_docs, handle_env, handle_eval_with_io, handle_forge,
+    handle_inspect, handle_lint, handle_logs, handle_permissions, handle_process, handle_profile,
+    handle_server, handle_status, handle_system, handle_update,
 };
 use crate::term::{InstallStyle, TermTheme};
 use crate::tester::run_tests;
@@ -73,6 +73,19 @@ pub fn run() {
                     eprintln!("{}", diag.format_with(config.personality, Some(&source)));
                     process::exit(1);
                 }
+            }
+        }
+        "eval" | "e" => {
+            if args.len() < 2 {
+                eprintln!("Usage: dog eval \"<code-or-expression>\"");
+                process::exit(2);
+            }
+            let snippet = args[1..].join(" ");
+            config.record_run();
+            let mut stdio = StdIo;
+            if let Err(err) = handle_eval_with_io(&snippet, config.personality, &mut stdio) {
+                eprintln!("{err}");
+                process::exit(1);
             }
         }
         "build" => {
@@ -138,6 +151,58 @@ pub fn run() {
                 Ok(_) => messenger.success(&format!("{path} passed syntax and strict type checks.")),
                 Err(diag) => {
                     eprintln!("{}", diag.format_with(config.personality, Some(&source)));
+                    process::exit(1);
+                }
+            }
+        }
+        "lint" => {
+            let strict = args.iter().any(|a| a == "--strict");
+            let path = args
+                .iter()
+                .skip(1)
+                .find(|a| !a.starts_with('-'))
+                .map(String::as_str);
+            let Some(path) = path else {
+                eprintln!("Usage: dog lint [--strict] <file.dg>");
+                process::exit(2);
+            };
+            match handle_lint(path, strict) {
+                Ok((report, warnings)) => {
+                    println!("{report}");
+                    if strict && warnings > 0 {
+                        process::exit(1);
+                    }
+                }
+                Err(err) => {
+                    eprintln!("{err}");
+                    process::exit(1);
+                }
+            }
+        }
+        "bench" => {
+            let mut target: Option<&str> = None;
+            let mut runs: usize = 100;
+            for arg in &args[1..] {
+                if let Ok(n) = arg.parse::<usize>() {
+                    if target.is_some() {
+                        runs = n;
+                    }
+                } else if target.is_none() && !arg.starts_with('-') {
+                    target = Some(arg.as_str());
+                } else if let Some(val) = arg.strip_prefix("--runs=") {
+                    if let Ok(n) = val.parse::<usize>() {
+                        runs = n;
+                    }
+                }
+            }
+            let Some(path) = target else {
+                eprintln!("Usage: dog bench <file.dg> [runs]");
+                process::exit(2);
+            };
+            match handle_bench(path, runs, &messenger, true) {
+                Ok(report) => println!("{report}"),
+                Err(err) => {
+                    messenger.error(&err);
                     process::exit(1);
                 }
             }
@@ -340,7 +405,20 @@ pub fn run() {
             }
         },
         unknown => {
-            eprintln!("Unknown command '{unknown}'. Run `dog --help` to see working commands.");
+            const COMMANDS: &[&str] = &[
+                "run", "eval", "build", "check", "lint", "bench", "format", "fmt", "test",
+                "doctor", "edit", "editor", "studio", "config", "repl", "inspect", "profile",
+                "docs", "forge", "new", "init", "prompt", "completions", "server", "system",
+                "status", "env", "process", "permissions", "update", "upgrade", "clean", "logs",
+                "add", "remove", "search", "list", "info", "sdu", "version", "help",
+            ];
+            if let Some(hint) = suggest_similar(unknown, COMMANDS.iter().copied()) {
+                eprintln!(
+                    "Unknown command '{unknown}'. Did you mean `dog {hint}`?\nRun `dog --help` to see all commands."
+                );
+            } else {
+                eprintln!("Unknown command '{unknown}'. Run `dog --help` to see working commands.");
+            }
             process::exit(2);
         }
     }
@@ -604,8 +682,11 @@ fn print_help() {
 
 Core Language & Tooling:
   dog run <file.dg | file.dgb>      Execute a .dg program or compiled .dgb bundle
+  dog eval "<expr | stmt>"          Evaluate inline DOG code/expression immediately
   dog build <file.dg> [--native]    Compile to .dgb bundle (or native binary via rustc)
   dog check <file.dg>               Type-check a .dg program without running it
+  dog lint [--strict] <file.dg>     Static analysis (unused bindings, empty catch, style)
+  dog bench <file.dg> [runs]        Benchmark execution latency (min/p50/avg/p95/max)
   dog format [--check] <file.dg>    Format a .dg file with 4-space indentation (alias: fmt)
   dog test [path]                   Run *_test.dg test files
   dog inspect <file.dg>             Print tokens, AST outline, and checked symbols

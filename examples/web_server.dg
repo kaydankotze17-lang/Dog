@@ -1,4 +1,4 @@
-# Local Dynamic Website + JSON API Server in DOG
+# Local Dynamic Website + JSON API + Router Server in DOG
 # Run with: dog run examples/web_server.dg
 # Then open http://127.0.0.1:8080 in your browser (works on Termux & desktop!)
 
@@ -15,59 +15,69 @@ fn next_visits(db: text) -> number
     return updated
 end
 
-fn render_home(visits: number, port: number) -> text
+fn render_home(visits: number, port: number, greeting: text) -> text
+    let safe_greeting = html_escape(greeting)
     var html = "<!doctype html><html><head><meta charset='utf-8'>"
-    html = html + "<title>DOG Local Server</title>"
-    html = html + "<style>body{font-family:sans-serif;background:#0f172a;color:#e2e8f0;padding:2rem;max-width:720px;margin:auto}"
-    html = html + ".card{background:#1e293b;padding:1.5rem;border-radius:10px;border:1px solid #334155}"
-    html = html + "code{color:#38bdf8}</style></head><body>"
-    html = html + "<div class='card'><h1>DOG Web Server Running</h1>"
-    html = html + "<p>Listening locally on port <code>" + text(port) + "</code></p>"
-    html = html + "<p>Total persisted visits (KV DB): <strong>" + text(visits) + "</strong></p>"
-    html = html + "<p>Host OS: <code>" + os_name() + "/" + os_arch() + "</code></p>"
-    html = html + "<p>Try <a style='color:#38bdf8' href='/api/status'>/api/status</a></p>"
-    html = html + "</div></body></html>"
+    html += "<title>DOG Local Server</title>"
+    html += "<style>body{font-family:sans-serif;background:#0f172a;color:#e2e8f0;padding:2rem;max-width:720px;margin:auto}"
+    html += ".card{background:#1e293b;padding:1.5rem;border-radius:10px;border:1px solid #334155}"
+    html += "code{color:#38bdf8} a{color:#38bdf8}</style></head><body>"
+    html += "<div class='card'><h1>DOG Web Server Running</h1>"
+    html += $"<p>{safe_greeting}</p>"
+    html += $"<p>Listening locally on port <code>{port}</code></p>"
+    html += $"<p>Total persisted visits (KV DB): <strong>{visits}</strong></p>"
+    html += $"<p>Host OS: <code>{os_name()}/{os_arch()}</code> · UTC: <code>{time_utc()}</code></p>"
+    html += "<p>Try <a href='/api/status'>/api/status</a> or <a href='/hello/Termux'>/hello/Termux</a></p>"
+    html += "</div></body></html>"
     return html
 end
 
 let srv = http_listen(bind_addr)
 let port = http_port(srv)
-log_info("DOG web server listening on http://" + bind_addr)
+cli_info($"DOG web server listening on http://127.0.0.1:{port}")
 
 while true
     try
         let req = http_accept(srv)
         let path = map_get(req, "path")
         let method = map_get(req, "method")
-        log_info(method + " " + path + " from " + map_get(req, "remote"))
+        let q = query_parse(map_get(req, "query"))
+        log_info($"{method} {path} from {map_get(req, "remote")}")
+
+        let user_match = http_route_match("/hello/:name", path)
 
         if path == "/"
             let visits = next_visits(db_file)
-            http_reply(req, 200, "text/html; charset=utf-8", render_home(visits, port))
-        otherwise
-            if path == "/api/status"
-                var info: map<text, text> = {}
-                map_set(info, "status", "ok")
-                map_set(info, "os", os_name())
-                map_set(info, "arch", os_arch())
-                map_set(info, "uuid", uuid_v4())
-                if kv_has(db_file, "visits")
-                    map_set(info, "visits", kv_get(db_file, "visits"))
-                otherwise
-                    map_set(info, "visits", "0")
-                end
-                http_reply(req, 200, "application/json; charset=utf-8", json_stringify(info))
-            otherwise
-                if path == "/api/note" and method == "POST"
-                    let body = map_get(req, "body")
-                    kv_set(db_file, "last_note", body)
-                    http_reply(req, 201, "application/json; charset=utf-8", "{\"saved\":true}")
-                otherwise
-                    http_reply(req, 404, "text/plain; charset=utf-8", "404 Not Found\n")
-                end
+            var who = "Welcome to DOG!"
+            if map_has(q, "name")
+                who = $"Hello, {map_get(q, "name")}!"
             end
+            http_reply(req, 200, "text/html; charset=utf-8", render_home(visits, port, who))
+        otherwise if map_get(user_match, "_matched") == "true"
+            let visits = next_visits(db_file)
+            let name = map_get(user_match, "name")
+            http_reply(req, 200, "text/html; charset=utf-8", render_home(visits, port, $"Hello, {name}!"))
+        otherwise if path == "/api/status"
+            var info: map<text, text> = {}
+            map_set(info, "status", "ok")
+            map_set(info, "os", os_name())
+            map_set(info, "arch", os_arch())
+            map_set(info, "utc", time_utc())
+            map_set(info, "uuid", uuid_v4())
+            if kv_has(db_file, "visits")
+                map_set(info, "visits", kv_get(db_file, "visits"))
+            otherwise
+                map_set(info, "visits", "0")
+            end
+            http_reply(req, 200, "application/json; charset=utf-8", json_pretty(json_stringify(info)))
+        otherwise if path == "/api/note" and method == "POST"
+            let body = map_get(req, "body")
+            kv_set(db_file, "last_note", body)
+            http_reply(req, 201, "application/json; charset=utf-8", "{\"saved\":true}")
+        otherwise
+            http_reply(req, 404, "text/plain; charset=utf-8", "404 Not Found\n")
         end
     catch err
-        log_warn("Request error: " + err)
+        log_warn($"Request error: {err}")
     end
 end

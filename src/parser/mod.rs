@@ -1,8 +1,9 @@
 use crate::ast::{
-    BinOp, BindingKind, Expr, MatchCase, Param, Program, Stmt, StructField, TypeRef, UnaryOp,
+    BinOp, BindingKind, Expr, InterpPart, MatchCase, Param, Program, Stmt, StructField, TypeRef,
+    UnaryOp,
 };
 use crate::diagnostics::DogDiagnostic;
-use crate::lexer::{Token, TokenKind};
+use crate::lexer::{InterpLexPart, Lexer, Token, TokenKind};
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -61,6 +62,39 @@ impl Parser {
                 let value = self.parse_expression()?;
                 self.expect_end_of_statement()?;
                 Ok(Stmt::Assign { name, value, span })
+            }
+            TokenKind::Identifier(name)
+                if matches!(
+                    self.peek_next_kind(),
+                    Some(
+                        TokenKind::PlusEq
+                            | TokenKind::MinusEq
+                            | TokenKind::StarEq
+                            | TokenKind::SlashEq
+                            | TokenKind::PercentEq
+                    )
+                ) =>
+            {
+                let name = name.clone();
+                let span = tok.span.clone();
+                self.advance(); // ident
+                let op_tok = self.advance().clone();
+                let op = match op_tok.kind {
+                    TokenKind::PlusEq => BinOp::Add,
+                    TokenKind::MinusEq => BinOp::Sub,
+                    TokenKind::StarEq => BinOp::Mul,
+                    TokenKind::SlashEq => BinOp::Div,
+                    TokenKind::PercentEq => BinOp::Mod,
+                    _ => unreachable!(),
+                };
+                let value = self.parse_expression()?;
+                self.expect_end_of_statement()?;
+                Ok(Stmt::CompoundAssign {
+                    name,
+                    op,
+                    value,
+                    span,
+                })
             }
             _ => {
                 let span = tok.span.clone();
@@ -461,6 +495,15 @@ impl Parser {
 
         let otherwise_branch = if self.peek().kind == TokenKind::Otherwise {
             self.advance(); // otherwise
+            if self.peek().kind == TokenKind::If {
+                let nested_if = self.parse_if()?;
+                return Ok(Stmt::If {
+                    condition,
+                    then_branch,
+                    otherwise_branch: Some(vec![nested_if]),
+                    span: if_tok.span,
+                });
+            }
             self.expect_end_of_statement()?;
             self.skip_newlines();
             let mut else_stmts = Vec::new();
@@ -1003,6 +1046,37 @@ impl Parser {
                 value,
                 span: tok.span,
             }),
+            TokenKind::InterpString(lex_parts) => {
+                let mut parts = Vec::with_capacity(lex_parts.len());
+                for part in lex_parts {
+                    match part {
+                        InterpLexPart::Literal(s) => parts.push(InterpPart::Literal(s)),
+                        InterpLexPart::Expr { source, span } => {
+                            let sub_tokens = Lexer::new(&span.file, &source).tokenize()?;
+                            let mut sub_parser = Parser::new(sub_tokens);
+                            sub_parser.skip_newlines();
+                            let expr = sub_parser.parse_expression()?;
+                            sub_parser.skip_newlines();
+                            if !sub_parser.is_at_end() {
+                                return Err(DogDiagnostic::new(
+                                    "E004",
+                                    "Unexpected trailing tokens inside interpolation expression.",
+                                    span,
+                                    "Each `{...}` inside an interpolated string must contain a single valid expression.",
+                                    "Write one expression per `{...}`, like `$\"{a} {b}\"`.",
+                                    "Avoid extra statements inside `{...}`.",
+                                    "Too much happening inside one pair of braces.",
+                                ));
+                            }
+                            parts.push(InterpPart::Expr(expr));
+                        }
+                    }
+                }
+                Ok(Expr::InterpString {
+                    parts,
+                    span: tok.span,
+                })
+            }
             TokenKind::NumberLit(value) => Ok(Expr::NumberLit {
                 value,
                 span: tok.span,

@@ -1,15 +1,22 @@
 use dog_lang::bytecode::{build_bundle, decode_bundle, run_bundle_with_io};
+use dog_lang::config::Personality;
 use dog_lang::crypto::{
-    base64_decode, base64_encode, hex_decode, hex_encode, hmac_sha256_hex, sha256_hex,
+    base64_decode, base64_encode, base64_url_decode, base64_url_encode, constant_time_eq,
+    hex_decode, hex_encode, hmac_sha256_hex, hmac_sha256_verify, rand_bytes_hex, sha256_hex,
+    sha512_hex,
 };
-use dog_lang::editor::EditorBuffer;
+use dog_lang::editor::{render_editor_frame_rows, visible_ansi_len, EditorBuffer};
 use dog_lang::formatter::format_source;
 use dog_lang::hub::DogPack;
 use dog_lang::interpreter::{check_source, run_source_with_io};
 use dog_lang::json::parse_json;
+use dog_lang::lexer::Lexer;
+use dog_lang::net::{http_status_text, local_ip};
 use dog_lang::prompt::{handle_completions, handle_prompt};
 use dog_lang::sdu::handle_sdu;
 use dog_lang::stdlib::InterpreterIo;
+use dog_lang::sys::{eval_snippet_captured, handle_bench, handle_docs, handle_lint};
+use dog_lang::term::{DogMessenger, TermCapabilities, TermStyleConfig};
 use std::collections::VecDeque;
 use std::env;
 use std::fs;
@@ -914,3 +921,514 @@ fn hub_remote_http_package_download_real_loopback() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn did_you_mean_levenshtein_diagnostics() {
+    let var_err = check_source("typo_var.dg", "let counter = 1\nsay(contre)\n")
+        .expect_err("unknown var must fail");
+    assert_eq!(var_err.code, "E010");
+
+    let var_err2 = check_source("typo_var2.dg", "let counter = 1\nsay(countr)\n")
+        .expect_err("1-edit typo must fail with hint");
+    assert_eq!(var_err2.code, "E010");
+    assert!(
+        var_err2.fix.contains("Did you mean 'counter'?"),
+        "expected Did you mean hint, got: {}",
+        var_err2.fix
+    );
+
+    let fn_err = check_source("typo_fn.dg", "http_listn(\"127.0.0.1:0\")\n")
+        .expect_err("typo builtin must emit E013 hint");
+    assert_eq!(fn_err.code, "E013");
+    assert!(
+        fn_err.fix.contains("http_listen"),
+        "expected http_listen suggestion, got: {}",
+        fn_err.fix
+    );
+
+    let ty_err = check_source("typo_ty.dg", "let x: numbr = 5\n")
+        .expect_err("typo type must emit E004 hint");
+    assert_eq!(ty_err.code, "E004");
+    assert!(
+        ty_err.fix.contains("number"),
+        "expected number suggestion, got: {}",
+        ty_err.fix
+    );
+}
+
+#[test]
+fn http_chunked_redirect_try_accept_and_headers_round_trip() {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let dir = env::temp_dir().join("dog_http_v2_test");
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::create_dir_all(&dir);
+    let port_file = dir.join("port.txt");
+
+    let srv_src = "\
+let port_path = args()[0]
+let srv = http_listen(\"127.0.0.1:0\")
+file_write(port_path, text(http_port(srv)))
+
+# Non-blocking poll returns _ok = \"false\" when idle
+let idle = http_try_accept(srv, 40)
+assert(map_get(idle, \"_ok\") == \"false\", \"idle try_accept times out cleanly\")
+
+# Req 1: chunked POST
+let r1 = http_accept(srv)
+assert(map_get(r1, \"body\") == \"HelloChunkedWorld\", \"server decodes Transfer-Encoding: chunked body\")
+http_reply(r1, 200, \"text/plain\", \"chunk-ok\")
+
+# Req 2: 302 Redirect -> Req 3: Final target with custom header
+let r2 = http_accept(srv)
+assert(map_get(r2, \"path\") == \"/go\", \"redirect entry hit\")
+http_redirect(r2, 302, \"/dest\")
+
+let r3 = http_accept(srv)
+assert(map_get(r3, \"path\") == \"/dest\", \"redirect followed to /dest\")
+var hdrs: map<text, text> = {}
+map_set(hdrs, \"X-Dog-Version\", \"0.2.0\")
+map_set(hdrs, \"Content-Type\", \"text/plain\")
+http_reply_headers(r3, 200, hdrs, \"arrived\")
+http_close(srv)
+";
+    let p_arg = port_file.display().to_string();
+    let srv_handle = std::thread::spawn(move || {
+        let mut io = ArgsMockIo {
+            args: vec![p_arg],
+            output: String::new(),
+        };
+        run_source_with_io("http_v2_srv.dg", srv_src, &mut io)
+            .expect("http v2 server script must pass");
+    });
+
+    let mut bound_port = String::new();
+    for _ in 0..80 {
+        if let Ok(s) = fs::read_to_string(&port_file) {
+            let trimmed = s.trim().to_string();
+            if !trimmed.is_empty() {
+                bound_port = trimmed;
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(!bound_port.is_empty());
+
+    // Wait briefly so idle http_try_accept finishes before Req 1 arrives
+    std::thread::sleep(std::time::Duration::from_millis(70));
+
+    // Send raw Transfer-Encoding: chunked request
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{bound_port}")).unwrap();
+    let raw_chunked = concat!(
+        "POST /chunk HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "Connection: close\r\n\r\n",
+        "5\r\nHello\r\n",
+        "7\r\nChunked\r\n",
+        "5\r\nWorld\r\n",
+        "0\r\n\r\n"
+    );
+    stream.write_all(raw_chunked.as_bytes()).unwrap();
+    let mut raw_resp = String::new();
+    stream.read_to_string(&mut raw_resp).unwrap();
+    assert!(raw_resp.contains("chunk-ok"));
+
+    // Now test DOG client following 302 redirect + exposing response headers & final_url
+    let client_src = "\
+let base = $\"http://127.0.0.1:{args()[0]}\"
+var hdrs: map<text, text> = {}
+let res = http_request_timeout(\"GET\", $\"{base}/go\", hdrs, \"\", 5000)
+assert(map_get(res, \"status\") == \"200\", \"redirect followed to 200\")
+assert(map_get(res, \"ok\") == \"true\", \"ok field reflects 2xx status\")
+assert(map_get(res, \"body\") == \"arrived\", \"final body matches\")
+assert(contains(map_get(res, \"final_url\"), \"/dest\"), \"final_url records redirected URL\")
+let resp_hdrs = json_parse(map_get(res, \"headers\"))
+assert(map_get(resp_hdrs, \"x-dog-version\") == \"0.2.0\", \"custom response headers captured\")
+";
+    let mut client_io = ArgsMockIo {
+        args: vec![bound_port],
+        output: String::new(),
+    };
+    run_source_with_io("http_v2_client.dg", client_src, &mut client_io)
+        .expect("http v2 client script must pass");
+    srv_handle.join().unwrap();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn websocket_rfc6455_loopback_round_trip() {
+    let dir = env::temp_dir().join("dog_ws_loopback_test");
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::create_dir_all(&dir);
+    let port_file = dir.join("ws_port.txt");
+
+    let srv_src = "\
+let srv = http_listen(\"127.0.0.1:0\")
+file_write(args()[0], text(http_port(srv)))
+let req = http_accept(srv)
+let ws = ws_upgrade(req)
+let msg = ws_recv(ws)
+ws_send(ws, $\"ws-echo:{msg}\")
+ws_close(ws)
+http_close(srv)
+";
+    let p_arg = port_file.display().to_string();
+    let srv_handle = std::thread::spawn(move || {
+        let mut io = ArgsMockIo {
+            args: vec![p_arg],
+            output: String::new(),
+        };
+        run_source_with_io("ws_srv.dg", srv_src, &mut io).expect("ws server must pass");
+    });
+
+    let mut bound_port = String::new();
+    for _ in 0..80 {
+        if let Ok(s) = fs::read_to_string(&port_file) {
+            let trimmed = s.trim().to_string();
+            if !trimmed.is_empty() {
+                bound_port = trimmed;
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(!bound_port.is_empty());
+
+    let client_src = "\
+let ws = ws_connect($\"ws://127.0.0.1:{args()[0]}/chat\")
+ws_send(ws, \"bark-socket\")
+let reply = ws_recv(ws)
+assert(reply == \"ws-echo:bark-socket\", \"RFC 6455 WebSocket loopback round-trip\")
+ws_close(ws)
+";
+    let mut client_io = ArgsMockIo {
+        args: vec![bound_port],
+        output: String::new(),
+    };
+    run_source_with_io("ws_client.dg", client_src, &mut client_io)
+        .expect("ws client must pass");
+    srv_handle.join().unwrap();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn udp_dns_port_probe_and_file_helpers_work() {
+    let dir = env::temp_dir().join("dog_udp_fs_test");
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::create_dir_all(&dir);
+
+    let src = "\
+let base = args()[0]
+let f1 = path_join(base, \"alpha.txt\")
+let f2 = path_join(base, \"beta.txt\")
+file_write(f1, \"hello-fs\")
+file_copy(f1, f2)
+assert(is_file(f2) and is_dir(base) and file_size(f2) == 8, \"file helpers work\")
+
+let addrs = dns_lookup(\"127.0.0.1\")
+assert(len(addrs) >= 1 and list_contains(addrs, \"127.0.0.1\"), \"dns_lookup works\")
+assert(not port_is_open(\"127.0.0.1:9\", 100), \"closed port probe returns false fast\")
+
+let s1 = udp_bind(\"127.0.0.1:0\")
+let p1 = tcp_port(s1)
+let s2 = udp_bind(\"127.0.0.1:0\")
+udp_send_to(s2, $\"127.0.0.1:{p1}\", \"udp-bark\")
+let pkt = udp_recv_from(s1, 512)
+assert(map_get(pkt, \"data\") == \"udp-bark\", \"UDP loopback round-trip matches\")
+assert(contains(map_get(pkt, \"remote\"), \"127.0.0.1:\"), \"UDP packet reports sender addr\")
+udp_close(s2)
+udp_close(s1)
+";
+    let mut io = ArgsMockIo {
+        args: vec![dir.display().to_string()],
+        output: String::new(),
+    };
+    run_source_with_io("udp_fs.dg", src, &mut io).expect("udp + fs helpers must pass");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn editor_buffer_live_intellisense_dot_fuzzy_ghost_and_dedent() {
+    let mut buf = EditorBuffer::empty("bot.dg");
+    buf.lines = vec![
+        "enum Mode".to_string(),
+        "    Fast".to_string(),
+        "    Safe".to_string(),
+        "end".to_string(),
+        "struct Config".to_string(),
+        "    port: number".to_string(),
+        "    host: text".to_string(),
+        "end".to_string(),
+        "let cfg: Config = Config { port: 8080, host: \"127.0.0.1\" }".to_string(),
+        "cfg.p".to_string(),
+    ];
+    buf.cursor_row = 9;
+    buf.cursor_col = 5;
+
+    let field_sugs = buf.ranked_suggestions(false);
+    assert!(
+        field_sugs.iter().any(|s| s.label == "port" && s.kind == "fld"),
+        "expected struct field suggestion for cfg.p, got: {:?}",
+        field_sugs
+    );
+    let ghost = buf.ghost_completion_for(&field_sugs[0]).unwrap();
+    assert_eq!(ghost, "ort");
+    assert!(buf.accept_suggestion_item(&field_sugs[0]));
+    assert_eq!(buf.lines[9], "cfg.port");
+
+    // Enum dot completion with empty partial after '.'
+    buf.lines.push("Mode.".to_string());
+    buf.cursor_row = 10;
+    buf.cursor_col = 5;
+    let enum_sugs = buf.ranked_suggestions(false);
+    assert!(enum_sugs.iter().any(|s| s.label == "Fast" && s.kind == "enum"));
+    assert!(enum_sugs.iter().any(|s| s.label == "Safe" && s.kind == "enum"));
+
+    // Fuzzy subsequence completion ("hl" -> "http_listen(")
+    buf.lines.push("htl".to_string());
+    buf.cursor_row = 11;
+    buf.cursor_col = 3;
+    let fuzzy = buf.ranked_suggestions(false);
+    assert!(
+        fuzzy.iter().any(|s| s.insert == "http_listen("),
+        "fuzzy htl should surface http_listen(, got: {:?}",
+        fuzzy
+    );
+
+    // Smart auto-dedent on closing 'end' inside indented block
+    buf.lines = vec!["if true".to_string(), "    ".to_string()];
+    buf.cursor_row = 1;
+    buf.cursor_col = 4;
+    for ch in "end".chars() {
+        buf.insert_char_smart(ch);
+    }
+    assert_eq!(buf.lines[1], "end");
+}
+
+#[test]
+fn mobile_editor_36col_soft_wrap_never_overflows_screen() {
+    let mut buf = EditorBuffer::empty("very_long_mobile_discord_bot_handler_name.dg");
+    buf.lines = vec![
+        "\tlet message = \"This is a very long line designed to exceed 36 terminal columns on Android Termux screens\"".to_string(),
+        "let extra: number = \"bad_type\"".to_string(),
+        "say(message)".to_string(),
+    ];
+    buf.cursor_row = 0;
+    buf.cursor_col = 45;
+    buf.last_match_line = Some(0);
+
+    let tabs = vec![buf];
+    let diag = check_source(
+        "mobile.dg",
+        "let extra: number = \"bad_type\"\n",
+    )
+    .err();
+
+    let sugs = tabs[0].ranked_suggestions(true);
+    let cols = 36usize;
+    let rows = 18usize;
+
+    // Code mode with soft-wrap ON and error diagnostic banner
+    let (frame, cr, cc) = render_editor_frame_rows(
+        &tabs,
+        0,
+        diag.as_ref(),
+        Some("main*"),
+        "Soft-wrapped long line status message that should safely truncate",
+        false,
+        None,
+        0,
+        true,
+        &sugs,
+        0,
+        rows,
+        cols,
+    );
+    assert_eq!(frame.len(), rows);
+    for (idx, line) in frame.iter().enumerate() {
+        let vis = visible_ansi_len(line);
+        assert!(
+            vis <= cols,
+            "row {idx} overflowed {cols} cols (got {vis}): {line:?}"
+        );
+    }
+    assert!((1..=rows).contains(&cr), "cursor row {cr} out of bounds");
+    assert!((1..=cols).contains(&cc), "cursor col {cc} out of bounds");
+
+    // Help screen mode at 36 cols
+    let (help_frame, _, _) = render_editor_frame_rows(
+        &tabs,
+        0,
+        None,
+        None,
+        "Help",
+        true,
+        None,
+        0,
+        true,
+        &[],
+        0,
+        rows,
+        cols,
+    );
+    for (idx, line) in help_frame.iter().enumerate() {
+        let vis = visible_ansi_len(line);
+        assert!(
+            vis <= cols,
+            "help row {idx} overflowed {cols} cols (got {vis})"
+        );
+    }
+
+    // Long run output overlay scrolled at 36 cols
+    let long_out = "Line 1: started local bot listener on 127.0.0.1:8080\nLine 2: connected gateway heartbeat ok\nLine 3: dispatched command payload successfully\n";
+    let (out_frame, _, _) = render_editor_frame_rows(
+        &tabs,
+        0,
+        None,
+        None,
+        "Output",
+        false,
+        Some(long_out),
+        1,
+        true,
+        &[],
+        0,
+        rows,
+        cols,
+    );
+    for (idx, line) in out_frame.iter().enumerate() {
+        let vis = visible_ansi_len(line);
+        assert!(
+            vis <= cols,
+            "output row {idx} overflowed {cols} cols (got {vis})"
+        );
+    }
+}
+
+#[test]
+fn lexer_triple_strings_hex_bin_underscores_and_formatter_preservation() {
+    let src = "\
+let n = 1_000_000
+let h = 0xFF_00
+let b = 0b1010_0101
+let d = 3.14_15
+let txt = \"\"\"
+line one
+  indented raw line
+\"\"\"
+assert(n == 1000000 and h == 65280 and b == 165)
+assert(d > 3.14 and contains(txt, \"  indented raw line\"))
+";
+    let tokens = Lexer::new("lit.dg", src).tokenize().expect("tokenize ok");
+    assert!(!tokens.is_empty());
+
+    let mut io = MockIo::new(vec![]);
+    run_source_with_io("lit.dg", src, &mut io).expect("run triple string & numeric literals");
+
+    let formatted = format_source(src);
+    assert!(
+        formatted.contains("  indented raw line"),
+        "formatter must preserve interior indentation inside triple-quoted strings:\n{formatted}"
+    );
+}
+
+#[test]
+fn crypto_and_network_upgrades_behave_accurately() {
+    // NIST SHA-512("abc")
+    assert_eq!(
+        sha512_hex(b"abc"),
+        "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+    );
+
+    let sig = hmac_sha256_hex(b"key", b"message");
+    assert!(hmac_sha256_verify(b"key", b"message", &sig));
+    assert!(!hmac_sha256_verify(b"key", b"message", "deadbeef"));
+    assert!(constant_time_eq(b"dog123", b"dog123"));
+    assert!(!constant_time_eq(b"dog123", b"dog124"));
+
+    let encoded = base64_url_encode(b"dog?lang=rust+std/1");
+    assert!(!encoded.contains('=') && !encoded.contains('+') && !encoded.contains('/'));
+    assert_eq!(base64_url_decode(&encoded).unwrap(), b"dog?lang=rust+std/1");
+
+    let rnd = rand_bytes_hex(16);
+    assert_eq!(rnd.len(), 32);
+    assert!(rnd.chars().all(|c| c.is_ascii_hexdigit()));
+
+    assert_eq!(http_status_text(200), "OK");
+    assert_eq!(http_status_text(404), "Not Found");
+    assert_eq!(http_status_text(418), "I'm a teapot");
+    assert!(!local_ip().is_empty());
+}
+
+#[test]
+fn cli_eval_lint_bench_and_docs_builtin_lookup_work() {
+    let eval_out = eval_snippet_captured("0x10 + 0b0100 + 1_000", Personality::Normal)
+        .expect("eval should print numeric result");
+    assert_eq!(eval_out.trim(), "1020");
+
+    let dir = env::temp_dir().join("dog_eval_lint_bench_test");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let script = dir.join("sample.dg");
+    fs::write(
+        &script,
+        "let unused_x = 123\nfn greet(unused_p: text) -> text\n    return \"hi\"\nend\ntry\n    let y = greet(\"dog\")\n    say(y)\ncatch _e\nend\n",
+    )
+    .unwrap();
+
+    let (lint_report, warn_count) =
+        handle_lint(&script.display().to_string(), false).expect("lint succeeds");
+    assert!(warn_count >= 2, "expected lint warnings:\n{lint_report}");
+    assert!(lint_report.contains("[L005]") && lint_report.contains("[L006]"));
+
+    let clean_script = dir.join("clean.dg");
+    fs::write(&clean_script, "let x = 2 + 3\nassert(x == 5)\n").unwrap();
+    let (clean_report, clean_warns) =
+        handle_lint(&clean_script.display().to_string(), true).expect("clean lint ok");
+    assert_eq!(clean_warns, 0, "clean script had warnings:\n{clean_report}");
+
+    let messenger = DogMessenger::new(TermStyleConfig::default(), TermCapabilities::plain());
+    let bench_report = handle_bench(&clean_script.display().to_string(), 5, &messenger, false)
+        .expect("bench succeeds");
+    assert!(bench_report.contains("5 runs") && bench_report.contains("Median"));
+
+    let docs_ws = handle_docs(Some("ws_ping"));
+    assert!(docs_ws.contains("ws_ping("));
+    let docs_sha = handle_docs(Some("sha512"));
+    assert!(docs_sha.contains("sha512("));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn stdlib_file_move_rmdir_and_collections_work() {
+    let dir = env::temp_dir().join("dog_file_move_rmdir_test");
+    let _ = fs::remove_dir_all(&dir);
+    let sub = dir.join("nested");
+    fs::create_dir_all(&sub).unwrap();
+
+    let src_dg = format!(
+        "\
+let dir = args()[0]
+let sub = args()[1]
+let a = path_join(dir, \"a.txt\")
+let b = path_join(sub, \"b.txt\")
+file_write(a, \"moved payload\")
+file_move(a, b)
+assert(not file_exists(a) and file_read(b) == \"moved payload\")
+rmdir(sub)
+assert(not is_dir(sub))
+"
+    );
+    let mut io = ArgsMockIo {
+        args: vec![dir.display().to_string(), sub.display().to_string()],
+        output: String::new(),
+    };
+    run_source_with_io("fs_move.dg", &src_dg, &mut io).expect("file_move and rmdir pass");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+
