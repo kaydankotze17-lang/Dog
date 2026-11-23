@@ -6,12 +6,12 @@
     <title>DOG Programming Language — Official Website</title>
     <meta
       name="description"
-      content="DOG (dog-lang) is a strictly typed, English-readable programming language built in zero-unsafe Rust with 10 std modules, built-in networking, and native Android Termux support."
+      content="DOG (dog-lang) is a strictly typed, English-readable programming language built in zero-unsafe Rust with 12 std modules, DOG Web & DOG CSS (.dgss), built-in networking, and native Android Termux support."
     />
     <meta property="og:title" content="DOG Programming Language — Official Website" />
     <meta
       property="og:description"
-      content="Code that reads like English. Safety that compiles cleanly. Zero external crates, 208 built-ins, and native Termux support."
+      content="Code that reads like English. Build CLI tools, servers, and interactive websites with DOG CSS (.dgss). Zero external crates, 237 built-ins, and native Termux support."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -35,9 +35,9 @@
         <nav class="nav-links" aria-label="Primary navigation">
           <a href="#syntax" class="nav-link">Syntax</a>
           <a href="#playground" class="nav-link">Playground</a>
-          <a href="#stdlib" class="nav-link">Standard Library</a>
+          <a href="#web-studio" class="nav-link">Web Studio</a>
+          <a href="#stdlib" class="nav-link">Stdlib</a>
           <a href="#install" class="nav-link">Install</a>
-          <a href="#docs" class="nav-link">Docs</a>
         </nav>
 
         <div class="header-actions">
@@ -60,6 +60,7 @@
       <nav id="mobile-drawer" class="mobile-drawer" aria-label="Mobile navigation">
         <a href="#syntax">Syntax</a>
         <a href="#playground">Playground</a>
+        <a href="#web-studio">Web Studio</a>
         <a href="#stdlib">Standard Library</a>
         <a href="#install">Install</a>
         <a href="#docs">Docs</a>
@@ -76,11 +77,12 @@
               </p>
               <h1 class="hero-title">Code that reads like English. Safety that compiles cleanly.</h1>
               <p class="hero-subtitle">
-                Write clear, English-readable programs backed by a strict static type checker, 10 modular
-                standard library namespaces, built-in HTTP and WebSocket networking, and an on-device mobile IDE.
+                Write clear, English-readable programs and interactive websites backed by a strict static
+                type checker, DOG CSS (<code>.dgss</code>) stylesheets, 12 modular standard library
+                namespaces, built-in HTTP and WebSocket networking, and an on-device mobile IDE.
               </p>
               <div class="hero-actions">
-                <a href="#install" class="btn btn-accent">Install DOG</a>
+                <a href="#web-studio" class="btn btn-accent">Build a DOG Website</a>
                 <a href="#playground" class="text-link-action">Try Live Sandbox</a>
               </div>
             </div>
@@ -115,11 +117,11 @@
               <p class="proof-label">Unsafe memory blocks in core</p>
             </div>
             <div class="proof-item">
-              <p class="proof-value">10</p>
+              <p class="proof-value">12</p>
               <p class="proof-label">Discoverable std.* modules</p>
             </div>
             <div class="proof-item">
-              <p class="proof-value">208</p>
+              <p class="proof-value">237</p>
               <p class="proof-label">Strictly typed built-in functions</p>
             </div>
           </div>
@@ -248,13 +250,107 @@
         </div>
       </section>
 
+      <section id="web-studio" class="section">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">03. DOG Web &amp; CSS Studio</h2>
+              <p class="section-lead">
+                Write interactive browser logic in <code>.dg</code> (DOM events, state, localStorage) and style it with DOG CSS (<code>.dgss</code>) using clean shorthands like <code>bg:</code>, <code>ink:</code>, <code>pad:</code>, and <code>on hover</code>.
+              </p>
+            </div>
+          </div>
+
+          <div class="playground-toolbar">
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <label for="web-studio-preset" style="font-size: 0.875rem; font-weight: 600; color: var(--ink-muted);">
+                Website Template
+              </label>
+              <select
+                id="web-studio-preset"
+                class="search-field"
+                style="min-width: 220px;"
+                aria-label="Choose a DOG Web & CSS preset"
+              ></select>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <button type="button" id="web-studio-reset-btn" class="btn btn-secondary">Reset</button>
+              <button type="button" id="web-studio-download-btn" class="btn btn-secondary">Export index.html</button>
+              <button type="button" id="web-studio-build-btn" class="btn btn-accent">Build &amp; Preview</button>
+            </div>
+          </div>
+
+          <div class="playground-grid">
+            <div class="code-panel">
+              <div class="code-panel-bar">
+                <div class="segmented-bar" role="tablist" aria-label="Web Studio source files" style="padding: 2px; background: #262A34; border-color: #3A404D;">
+                  <button type="button" class="tab-btn is-active" data-web-file="dg" role="tab" aria-selected="true" title="DOG client DOM + logic script">
+                    app.dg
+                  </button>
+                  <button type="button" class="tab-btn" data-web-file="dgss" role="tab" aria-selected="false" title="DOG CSS stylesheet">
+                    style.dgss
+                  </button>
+                </div>
+                <span id="web-studio-file-hint" style="white-space: nowrap;">std.web + std.css</span>
+              </div>
+              <textarea
+                id="web-studio-dg-editor"
+                class="editor-textarea web-studio-textarea"
+                spellcheck="false"
+                aria-label="DOG Web script editor"
+              ></textarea>
+              <textarea
+                id="web-studio-dgss-editor"
+                class="editor-textarea web-studio-textarea"
+                style="display: none;"
+                spellcheck="false"
+                aria-label="DOG CSS stylesheet editor"
+              ></textarea>
+            </div>
+
+            <div class="output-panel">
+              <div class="output-bar">
+                <div class="segmented-bar" role="tablist" aria-label="Web Studio output views" style="padding: 2px;">
+                  <button type="button" class="tab-btn is-active" data-web-view="preview" role="tab" aria-selected="true" title="Interactive compiled website preview">
+                    Preview
+                  </button>
+                  <button type="button" class="tab-btn" data-web-view="css" role="tab" aria-selected="false" title="Compiled browser CSS">
+                    CSS
+                  </button>
+                  <button type="button" class="tab-btn" data-web-view="js" role="tab" aria-selected="false" title="Compiled client JavaScript">
+                    JS
+                  </button>
+                  <button type="button" class="tab-btn" data-web-view="html" role="tab" aria-selected="false" title="Standalone index.html bundle">
+                    HTML
+                  </button>
+                </div>
+                <span id="web-studio-status" class="output-status">Ready</span>
+              </div>
+
+              <div id="web-studio-preview-wrap" class="web-preview-wrap">
+                <iframe
+                  id="web-studio-iframe"
+                  class="web-preview-iframe"
+                  title="Compiled DOG Website Live Preview"
+                  sandbox="allow-scripts"
+                ></iframe>
+                <div id="web-studio-log-line" class="web-studio-log" aria-live="polite">
+                  Preview Console: ready (interact with the compiled site above).
+                </div>
+              </div>
+              <div id="web-studio-code-output" class="output-body" style="display: none;"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="stdlib" class="section">
         <div class="container">
           <div class="section-header">
             <div>
-              <h2 class="section-title">03. Modular Standard Library</h2>
+              <h2 class="section-title">04. Modular Standard Library</h2>
               <p class="section-lead">
-                10 clean namespaces covering interactive terminal UI, HTTP/WebSockets, JSON/TOML/CSV, SHA-256 cryptography, and local KV persistence.
+                12 clean namespaces covering interactive browser DOM &amp; DOG CSS, terminal UI, HTTP/WebSockets, JSON/TOML/CSV, SHA-256 cryptography, and local KV persistence.
               </p>
             </div>
           </div>
@@ -313,7 +409,7 @@
         <div class="container">
           <div class="section-header">
             <div>
-              <h2 class="section-title">04. Install &amp; CLI Toolchain</h2>
+              <h2 class="section-title">05. Install &amp; CLI Toolchain</h2>
               <p class="section-lead">
                 Install prebuilt Termux APT packages in seconds or compile from source on desktop and mobile hosts.
               </p>
@@ -346,7 +442,7 @@
         <div class="container">
           <div class="section-header">
             <div>
-              <h2 class="section-title">05. Official Documentation &amp; Examples</h2>
+              <h2 class="section-title">06. Official Documentation &amp; Examples</h2>
               <p class="section-lead">
                 Browse the live specification, error code reference, capability catalog, and real `.dg` examples straight from the repository.
               </p>

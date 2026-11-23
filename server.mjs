@@ -67,9 +67,10 @@ function sendFile(res, filePath) {
 
 function listDirSafe(dir, extFilter) {
   if (!fs.existsSync(dir)) return [];
+  const exts = Array.isArray(extFilter) ? extFilter : extFilter ? [extFilter] : null;
   return fs
     .readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isFile() && !e.name.startsWith(".") && (!extFilter || e.name.endsWith(extFilter)))
+    .filter((e) => e.isFile() && !e.name.startsWith(".") && (!exts || exts.some((ext) => e.name.endsWith(ext))))
     .map((e) => e.name)
     .sort();
 }
@@ -91,7 +92,7 @@ const server = http.createServer((req, res) => {
     return sendJson(res, 200, {
       version: "0.3.0",
       docs: listDirSafe(DOCS_DIR, ".md"),
-      examples: listDirSafe(EXAMPLES_DIR, ".dg"),
+      examples: listDirSafe(EXAMPLES_DIR, [".dg", ".dgss"]),
     });
   }
 

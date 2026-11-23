@@ -1,4 +1,6 @@
 use crate::bytecode::{build_bundle, build_native, is_dgb_path, run_bundle_with_io};
+use crate::web::build_web_bundle_to_disk;
+use crate::web::build_web_bundle_to_disk;
 use crate::checker::TypeChecker;
 use crate::config::{parse_bool_flag, DogConfig, Personality};
 use crate::diagnostics::{achievement_for_runs, suggest_similar, welcome_banner};
@@ -19,7 +21,7 @@ use crate::sys::{
     handle_bench, handle_clean, handle_debug, handle_docs, handle_env, handle_eval_with_io,
     handle_explain, handle_forge, handle_graph, handle_inspect, handle_learn, handle_lint,
     handle_logs, handle_permissions, handle_process, handle_profile, handle_server,
-    handle_status, handle_system, handle_update, handle_watch,
+    handle_status, handle_system, handle_update, handle_watch, handle_web,
 };
 use crate::term::{InstallStyle, TermTheme};
 use crate::tester::{run_coverage, run_tests};
@@ -91,12 +93,13 @@ pub fn run() {
         }
         "build" => {
             let native = args.iter().any(|a| a == "--native");
+            let web = args.iter().any(|a| a == "--web");
             let mut input_path: Option<&str> = None;
             let mut out_path: Option<&str> = None;
             let mut i = 1usize;
             while i < args.len() {
                 match args[i].as_str() {
-                    "--native" => {}
+                    "--native" | "--web" => {}
                     "--out" | "-o" => {
                         if let Some(v) = args.get(i + 1) {
                             out_path = Some(v.as_str());
@@ -117,10 +120,27 @@ pub fn run() {
                 i += 1;
             }
             let Some(input) = input_path else {
-                eprintln!("Usage: dog build <file.dg> [--out <path>] [--native]");
+                eprintln!("Usage: dog build <file.dg> [--out <path>] [--native | --web]");
                 process::exit(2);
             };
-            if native {
+            if native && web {
+                messenger.error("Choose either `--native` or `--web` for `dog build`.");
+                process::exit(2);
+            }
+            if web {
+                match build_web_bundle_to_disk(input, out_path) {
+                    Ok(art) => messenger.success(&format!(
+                        "Built DOG web bundle: {} (+ {}, {})",
+                        art.index_html_path.display(),
+                        art.css_path.display(),
+                        art.js_path.display()
+                    )),
+                    Err(e) => {
+                        messenger.error(&e);
+                        process::exit(1);
+                    }
+                }
+            } else if native {
                 match build_native(input, out_path) {
                     Ok(out) => messenger.success(&format!("Built native binary: {}", out.display())),
                     Err(e) => {
@@ -473,6 +493,17 @@ pub fn run() {
                 process::exit(1);
             }
         },
+        "web" => match handle_web(&args[1..]) {
+            Ok(out) => {
+                if !out.is_empty() {
+                    println!("{out}");
+                }
+            }
+            Err(e) => {
+                messenger.error(&e);
+                process::exit(1);
+            }
+        },
         "server" => {
             if let Err(e) = handle_server(&args[1..]) {
                 eprintln!("{e}");
@@ -542,7 +573,7 @@ pub fn run() {
                 "run", "eval", "build", "check", "lint", "bench", "benchmark", "format", "fmt",
                 "test", "coverage", "debug", "watch", "graph", "explain", "package", "playground",
                 "doctor", "edit", "editor", "studio", "config", "repl", "inspect", "profile",
-                "docs", "learn", "forge", "new", "init", "prompt", "completions", "server",
+                "docs", "learn", "forge", "new", "init", "prompt", "completions", "web", "server",
                 "system", "status", "env", "process", "permissions", "update", "upgrade",
                 "clean", "logs", "add", "remove", "search", "list", "info", "sdu", "version",
                 "help",
@@ -829,7 +860,7 @@ fn print_help() {
 Core Language & Tooling:
   dog run <file.dg | file.dgb>      Execute a .dg program or compiled .dgb bundle
   dog eval "<expr | stmt>"          Evaluate inline DOG code/expression immediately
-  dog build <file.dg> [--native]    Compile to .dgb bundle (or native binary via rustc)
+  dog build <file.dg> [--native|--web] Compile to .dgb, native binary, or web site bundle
   dog package [file.dg] [out.dgb]   Package entry or dog.pack project into .dgb archive
   dog check <file.dg>               Type-check a .dg program without running it
   dog lint [--strict] <file.dg>     Static analysis (unused bindings, empty catch, style)
@@ -861,7 +892,8 @@ Packages (DOG Hub & dog.pack):
 
 System, Server, CLI Themes, Docs & SDU:
   dog learn [lesson] [--run]        Interactive beginner lessons & English syntax guide
-  dog docs [std | topic | fn]       Offline std.*, syntax, english, network, CLI & SDU docs
+  dog docs [std | topic | fn]       Offline std.*, web, css, english, CLI & SDU docs
+  dog web <build|css|serve> ...     Compile .dg + DOG CSS (.dgss) into standalone websites
   dog server [dir] [port] [--host]  Multi-threaded static HTTP file server
   dog doctor                        Inspect environment, Termux, rustc, capabilities & config
   dog system | status | env         Inspect host, project state, and masked env

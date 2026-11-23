@@ -8,6 +8,7 @@ use crate::crypto::{
 use crate::diagnostics::DogDiagnostic;
 use crate::json::{parse_json, JsonValue};
 use crate::runtime::Value;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, IsTerminal, Read, Write};
@@ -16,6 +17,30 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 static RNG_COUNTER: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
+
+thread_local! {
+    static HEADLESS_WEB: RefCell<crate::web::HeadlessWebState> = RefCell::new({
+        let mut s = crate::web::HeadlessWebState::default();
+        s.route = "/".to_string();
+        s
+    });
+}
+
+pub fn reset_headless_web() {
+    HEADLESS_WEB.with(|cell| {
+        let mut s = crate::web::HeadlessWebState::default();
+        s.route = "/".to_string();
+        *cell.borrow_mut() = s;
+    });
+}
+
+pub fn reset_headless_web() {
+    HEADLESS_WEB.with(|cell| {
+        let mut s = crate::web::HeadlessWebState::default();
+        s.route = "/".to_string();
+        *cell.borrow_mut() = s;
+    });
+}
 
 pub trait InterpreterIo {
     fn write_stdout(&mut self, text: &str);
@@ -2579,6 +2604,345 @@ pub fn call_builtin(
                 unreachable!();
             };
             Ok(Value::Map(parse_cookie_header(&header)))
+        }
+        "dog_css" => {
+            let Some(Value::Text(dsl)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let compiled = crate::web::compile_dog_css(&dsl).map_err(|msg| {
+                DogDiagnostic::new(
+                    "E030",
+                    "DOG CSS compilation failed.",
+                    span.clone(),
+                    msg,
+                    "Check DOG CSS blocks (`vars ... end`, `rule .card ... end`, `on mobile ... end`).",
+                    "End every DOG CSS block cleanly with `end`.",
+                    "That stylesheet tangled its leash.",
+                )
+            })?;
+            Ok(Value::Text(compiled))
+        }
+        "css_vars" => {
+            let Some(Value::Map(entries)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let pairs = entries
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<Vec<_>>();
+            Ok(Value::Text(crate::web::render_css_vars(&pairs)))
+        }
+        "css_rule" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(sel)), Some(Value::Map(entries))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            let pairs = entries
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<Vec<_>>();
+            Ok(Value::Text(crate::web::render_css_rule(&sel, &pairs)))
+        }
+        "css_media" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(query)), Some(Value::Text(inner))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            Ok(Value::Text(crate::web::render_css_media(&query, &inner)))
+        }
+        "css_keyframes" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(name)), Some(Value::Map(entries))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            let pairs = entries
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<Vec<_>>();
+            Ok(Value::Text(crate::web::render_css_keyframes(&name, &pairs)))
+        }
+        "css_theme" => {
+            let mut it = args.into_iter();
+            let (
+                Some(Value::Text(bg)),
+                Some(Value::Text(surface)),
+                Some(Value::Text(ink)),
+                Some(Value::Text(accent)),
+                Some(Value::Text(font)),
+            ) = (it.next(), it.next(), it.next(), it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            Ok(Value::Text(crate::web::render_css_theme(
+                &bg, &surface, &ink, &accent, &font,
+            )))
+        }
+        "css_bundle" => {
+            let Some(Value::List(parts)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let rendered = parts
+                .into_iter()
+                .map(|v| v.to_string())
+                .filter(|s| !s.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            Ok(Value::Text(rendered))
+        }
+        "html_el" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(tag)), Some(Value::Map(attrs)), Some(Value::Text(content))) =
+                (it.next(), it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            let pairs = attrs
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<Vec<_>>();
+            Ok(Value::Text(crate::web::render_html_el(
+                &tag, &pairs, &content,
+            )))
+        }
+        "html_page" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(title)), Some(Value::Text(css)), Some(Value::Text(body))) =
+                (it.next(), it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            Ok(Value::Text(crate::web::render_html_page(
+                &title, &css, &body,
+            )))
+        }
+        "web_nav" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(brand)), Some(Value::Map(links))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            let pairs = links
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<Vec<_>>();
+            Ok(Value::Text(crate::web::render_web_nav(&brand, &pairs)))
+        }
+        "web_card" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(title)), Some(Value::Text(body))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            Ok(Value::Text(crate::web::render_web_card(&title, &body)))
+        }
+        "web_grid" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Number(cols)), Some(Value::List(items))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            let rendered = items.into_iter().map(|v| v.to_string()).collect::<Vec<_>>();
+            Ok(Value::Text(crate::web::render_web_grid(cols, &rendered)))
+        }
+        "web_button" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(id)), Some(Value::Text(label))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            Ok(Value::Text(crate::web::render_web_button(&id, &label)))
+        }
+        "web_input" => {
+            let mut it = args.into_iter();
+            let (
+                Some(Value::Text(id)),
+                Some(Value::Text(placeholder)),
+                Some(Value::Text(val)),
+            ) = (it.next(), it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            Ok(Value::Text(crate::web::render_web_input(
+                &id,
+                &placeholder,
+                &val,
+            )))
+        }
+        "dom_mount" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(sel)), Some(Value::Text(html))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            HEADLESS_WEB.with(|cell| {
+                cell.borrow_mut().mounted_html.insert(sel, html);
+            });
+            Ok(Value::Void)
+        }
+        "dom_set_text" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(sel)), Some(Value::Text(val))) = (it.next(), it.next()) else {
+                unreachable!();
+            };
+            HEADLESS_WEB.with(|cell| {
+                cell.borrow_mut().text_nodes.insert(sel, val);
+            });
+            Ok(Value::Void)
+        }
+        "dom_set_html" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(sel)), Some(Value::Text(html))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            HEADLESS_WEB.with(|cell| {
+                cell.borrow_mut().html_nodes.insert(sel, html);
+            });
+            Ok(Value::Void)
+        }
+        "dom_get_value" => {
+            let Some(Value::Text(sel)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let val = HEADLESS_WEB.with(|cell| {
+                cell.borrow()
+                    .values
+                    .get(&sel)
+                    .cloned()
+                    .unwrap_or_default()
+            });
+            Ok(Value::Text(val))
+        }
+        "dom_set_value" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(sel)), Some(Value::Text(val))) = (it.next(), it.next()) else {
+                unreachable!();
+            };
+            HEADLESS_WEB.with(|cell| {
+                cell.borrow_mut().values.insert(sel, val);
+            });
+            Ok(Value::Void)
+        }
+        "dom_add_class" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(sel)), Some(Value::Text(cls))) = (it.next(), it.next()) else {
+                unreachable!();
+            };
+            HEADLESS_WEB.with(|cell| {
+                let mut state = cell.borrow_mut();
+                let list = state.classes.entry(sel).or_default();
+                if !list.contains(&cls) {
+                    list.push(cls);
+                }
+            });
+            Ok(Value::Void)
+        }
+        "dom_remove_class" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(sel)), Some(Value::Text(cls))) = (it.next(), it.next()) else {
+                unreachable!();
+            };
+            HEADLESS_WEB.with(|cell| {
+                let mut state = cell.borrow_mut();
+                if let Some(list) = state.classes.get_mut(&sel) {
+                    list.retain(|c| c != &cls);
+                }
+            });
+            Ok(Value::Void)
+        }
+        "dom_toggle_class" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(sel)), Some(Value::Text(cls))) = (it.next(), it.next()) else {
+                unreachable!();
+            };
+            let active = HEADLESS_WEB.with(|cell| {
+                let mut state = cell.borrow_mut();
+                let list = state.classes.entry(sel).or_default();
+                if let Some(pos) = list.iter().position(|c| c == &cls) {
+                    list.remove(pos);
+                    false
+                } else {
+                    list.push(cls);
+                    true
+                }
+            });
+            Ok(Value::Bool(active))
+        }
+        "dom_set_style" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(sel)), Some(Value::Text(prop)), Some(Value::Text(val))) =
+                (it.next(), it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            HEADLESS_WEB.with(|cell| {
+                let mut state = cell.borrow_mut();
+                let map = state.styles.entry(sel).or_default();
+                for (ek, ev) in crate::web::expand_css_property_and_value(&prop, &val) {
+                    map.insert(ek, ev);
+                }
+            });
+            Ok(Value::Void)
+        }
+        "dom_on" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(sel)), Some(Value::Text(ev)), Some(Value::Text(handler))) =
+                (it.next(), it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            HEADLESS_WEB.with(|cell| {
+                cell.borrow_mut().listeners.push((sel, ev, handler));
+            });
+            Ok(Value::Void)
+        }
+        "web_title" => {
+            let Some(Value::Text(title)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            HEADLESS_WEB.with(|cell| {
+                cell.borrow_mut().title = title;
+            });
+            Ok(Value::Void)
+        }
+        "web_storage_set" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(k)), Some(Value::Text(v))) = (it.next(), it.next()) else {
+                unreachable!();
+            };
+            HEADLESS_WEB.with(|cell| {
+                cell.borrow_mut().storage.insert(k, v);
+            });
+            Ok(Value::Void)
+        }
+        "web_storage_get" => {
+            let Some(Value::Text(k)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let v = HEADLESS_WEB.with(|cell| {
+                cell.borrow()
+                    .storage
+                    .get(&k)
+                    .cloned()
+                    .unwrap_or_default()
+            });
+            Ok(Value::Text(v))
+        }
+        "web_route" => {
+            let r = HEADLESS_WEB.with(|cell| cell.borrow().route.clone());
+            Ok(Value::Text(r))
+        }
+        "web_navigate" => {
+            let Some(Value::Text(path)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            HEADLESS_WEB.with(|cell| {
+                cell.borrow_mut().route = path;
+            });
+            Ok(Value::Void)
         }
         _ => unreachable!("Type checker validates built-in function names"),
     }

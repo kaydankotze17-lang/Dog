@@ -1,7 +1,7 @@
 # DOG Standard Library (v0.3.0)
 
 ## Modular Standard Library (`std.*`)
-DOG organizes all standard functionality into 10 discoverable namespaces while preserving 100% compatibility with flat global built-ins:
+DOG organizes all standard functionality into 12 discoverable namespaces while preserving 100% compatibility with flat global built-ins:
 ```dog
 use "std.io"
 use "std.text"
@@ -19,8 +19,10 @@ std.io.say($"Hello, {std.text.upper(name)}")
 - `std.crypto` — Hashing, HMAC-SHA256, Hex, Base64/Base64URL, CSPRNG tokens (`hex_*`, `base64_*`, `base64_url_*`, `sha1`, `sha256`, `sha512`, `hmac_sha256`, `hmac_sha256_verify`, `rand_bytes_hex`)
 - `std.cli` — Themed CLI messaging, spinners, progress bars, capability detection (`info`, `success`, `warn`, `error`, `debug`, `progress`, `spinner`, `theme`, `prefix`, `timestamps`, `supports_color`, `is_tty`)
 - `std.collections` — Lists, deduplication, reductions, and maps (`push`, `pop`, `insert_at`, `remove_at`, `clear`, `sort`, `reverse`, `list_*`, `range`, `map_*`, `len`)
+- `std.css` — DOG Style Sheets (`.dgss` DSL with `vars`, `rule`, `on hover/mobile`, `animate`, shorthand tokens like `bg:`, `ink:`, `pad:`, `cols:`) and typed CSS builders (`dog_css`, `css_rule`, `css_vars`, `css_media`, `css_keyframes`, `css_theme`, `css_bundle`)
+- `std.web` — Client-side interactive DOM manipulation, events, localStorage, routing, and safe HTML builders (`html_el`, `html_page`, `web_nav`, `web_card`, `web_grid`, `web_button`, `web_input`, `dom_mount`, `dom_set_text`, `dom_set_html`, `dom_get_value`, `dom_set_value`, `dom_add_class`, `dom_remove_class`, `dom_toggle_class`, `dom_set_style`, `dom_on`, `web_title`, `web_storage_set`, `web_storage_get`, `web_route`, `web_navigate`)
 
-Run `dog docs std` or `dog docs std.<module>` from any terminal to browse live exports.
+Run `dog docs std`, `dog docs std.<module>`, or `dog web build app.dg` from any terminal to browse live exports or compile websites.
 
 ## Language Ergonomics & English-Style Syntax
 - **Natural English Control Flow & Operators**: Write `if cond then ... elif ... else ... end`, `unless cond then ... end`, `until cond ... end`, `repeat N times`, `for each item in items`, `for i from 1 to 5`, `define f(x: number) returns number`, `set x to value`, `increase x by 1`, `decrease x by 1`, and comparisons `is`, `is not`, `equals`, `is equal to`, `is not equal to`, `is greater than`, `is less than`, `is at least`, `is at most`, `is over`, `is under` — all fully compatible with standard `fn`, `otherwise`, `==`, `!=` syntax.
@@ -141,3 +143,22 @@ Run `dog docs std` or `dog docs std.<module>` from any terminal to browse live e
   - `udp_bind(addr: text) -> number`, `udp_send_to(id: number, addr: text, data: text) -> void`, `udp_recv_from(id: number, max_bytes: number) -> map<text, text>`, `udp_close(id: number) -> void`
   - `dns_lookup(host: text) -> list<text>`, `local_ip() -> text`, `port_is_open(addr: text, timeout_ms: number) -> bool`
 
+## Web Development (`std.web`) & DOG CSS (`std.css` / `.dgss` / `style`)
+- **Inline DOG Style Blocks** (`Stmt::StyleDef`, compiles to browser CSS & CLI `dog build --web`):
+  - `style theme ... end` (CSS custom properties `--token: "value"`)
+  - `style ".card" ... end` with shorthands (`bg`, `ink`, `pad`, `px`, `py`, `m`, `mx`, `my`, `radius`, `cols`, `rows`, `gap`, `size`, `weight`, `shadow`, `center`, `grid`, `flex`, `$token`) and nested variant blocks (`on hover ... end`, `on focus ... end`, `on active ... end`, `on mobile ... end`, `on tablet ... end`, `on desktop ... end`, `on dark ... end`, `media "..." ... end`)
+- **Browser DOM & Event Bindings (`std.web`)**:
+  - `dom_mount(selector: text, html: text) -> void`, `dom_set_text(selector: text, text_val: text) -> void`, `dom_set_html(selector: text, html: text) -> void`
+  - `dom_get_value(selector: text) -> text`, `dom_set_value(selector: text, val: text) -> void`
+  - `dom_add_class(selector: text, class_name: text) -> void`, `dom_remove_class(selector: text, class_name: text) -> void`, `dom_toggle_class(selector: text, class_name: text) -> bool`
+  - `dom_set_style(selector: text, prop: text, val: text) -> void`, `dom_on(selector: text, event: text, handler_fn: text) -> void`
+  - `web_title(title: text) -> void`, `web_route() -> text`, `web_navigate(path: text) -> void`
+  - `web_storage_set(key: text, val: text) -> void`, `web_storage_get(key: text) -> text`
+- **HTML UI Builders (`std.web`)**:
+  - `html_el(tag: text, attrs: map<text, text>, inner: text) -> text`, `html_page(title: text, css: text, body: text) -> text`
+  - `web_nav(brand: text, links: list<text>) -> text`, `web_card(title: text, body: text, footer: text) -> text`
+  - `web_grid(cols: number, gap: text, items: list<text>) -> text`, `web_button(id: text, label: text, variant: text = "primary") -> text`, `web_input(id: text, placeholder: text, value: text = "") -> text`
+- **DOG CSS Functions (`std.css`)**:
+  - `dog_css(dsl: text) -> text`, `css_rule(selector: text, props: map<text, text>) -> text`, `css_vars(vars: map<text, text>) -> text`
+  - `css_media(query: text, selector: text, props: map<text, text>) -> text`, `css_keyframes(name: text, frames: map<text, text>) -> text`
+  - `css_theme(bg: text, ink: text, accent: text) -> text`, `css_bundle() -> text`

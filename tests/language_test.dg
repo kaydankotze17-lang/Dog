@@ -364,3 +364,27 @@ assert(from + to + times + then is 10, "contextual English words remain usable a
 print("language_test English checks passed")
 std.io.print("std.io.print works")
 
+# Inline DOG CSS + Web DOM runtime checks
+style theme
+    --brand: "#2F6BFF"
+end
+
+style ".hero-card"
+    bg: "#FFFFFF"
+    pad: "18px"
+    radius: "12px"
+    on hover
+        bg: "#F8FAFC"
+    end
+    on mobile
+        pad: "12px"
+    end
+end
+
+let card_css = css_bundle()
+assert(contains(card_css, "--brand: #2F6BFF;"), "inline style theme registers CSS variables")
+assert(contains(card_css, ".hero-card:hover {"), "inline style hover variant compiles cleanly")
+assert(contains(card_css, "@media (max-width: 640px)"), "inline style mobile variant compiles cleanly")
+dom_mount("#app", web_card("Hero", "Built in DOG", web_button("hi-btn", "Say Hi")))
+dom_add_class("#hi-btn", "active")
+assert(not dom_toggle_class("#hi-btn", "active"), "dom_toggle_class returns false when toggled off")

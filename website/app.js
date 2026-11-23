@@ -4,8 +4,10 @@ import {
   PLAYGROUND_PRESETS,
   STD_MODULES,
   SYNTAX_SHOWCASE,
+  WEB_STUDIO_PRESETS,
 } from "./data.js";
 import { runDogSandbox } from "./sandbox.js";
+import { compileDogWebsite } from "./dog_web.js";
 
 const KEYWORDS = new Set([
   "let", "var", "const", "set", "to", "increase", "decrease", "by",
@@ -281,6 +283,150 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("playground")?.scrollIntoView({ behavior: "smooth" });
   });
 
+  // 2.5 Web & CSS Studio
+  const webPresetSelect = document.getElementById("web-studio-preset");
+  const webDgEditor = document.getElementById("web-studio-dg-editor");
+  const webDgssEditor = document.getElementById("web-studio-dgss-editor");
+  const webBuildBtn = document.getElementById("web-studio-build-btn");
+  const webResetBtn = document.getElementById("web-studio-reset-btn");
+  const webDownloadBtn = document.getElementById("web-studio-download-btn");
+  const webStatusEl = document.getElementById("web-studio-status");
+  const webPreviewWrap = document.getElementById("web-studio-preview-wrap");
+  const webIframeEl = document.getElementById("web-studio-iframe");
+  const webCodeOutEl = document.getElementById("web-studio-code-output");
+  const webLogLineEl = document.getElementById("web-studio-log-line");
+  const webFileTabs = document.querySelectorAll("[data-web-file]");
+  const webViewTabs = document.querySelectorAll("[data-web-view]");
+
+  let activeWebFile = "dg";
+  let activeWebView = "preview";
+  let lastWebBuild = null;
+
+  if (webPresetSelect) {
+    WEB_STUDIO_PRESETS.forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.label;
+      webPresetSelect.appendChild(opt);
+    });
+  }
+
+  function renderWebFileEditor() {
+    webFileTabs.forEach((btn) => {
+      const match = btn.dataset.webFile === activeWebFile;
+      btn.classList.toggle("is-active", match);
+      btn.setAttribute("aria-selected", String(match));
+    });
+    if (webDgEditor && webDgssEditor) {
+      webDgEditor.style.display = activeWebFile === "dg" ? "block" : "none";
+      webDgssEditor.style.display = activeWebFile === "dgss" ? "block" : "none";
+    }
+  }
+
+  function renderWebStudioOutput() {
+    webViewTabs.forEach((btn) => {
+      const match = btn.dataset.webView === activeWebView;
+      btn.classList.toggle("is-active", match);
+      btn.setAttribute("aria-selected", String(match));
+    });
+    if (!lastWebBuild || !webStatusEl || !webPreviewWrap || !webCodeOutEl) return;
+
+    if (!lastWebBuild.ok) {
+      webStatusEl.className = "output-status is-err";
+      webStatusEl.textContent = `Diagnostic ${lastWebBuild.errorCode || "E004"}`;
+      webPreviewWrap.style.display = "none";
+      webCodeOutEl.style.display = "block";
+      webCodeOutEl.textContent = "";
+      const box = document.createElement("div");
+      box.className = "output-error-box";
+      box.textContent = lastWebBuild.error;
+      webCodeOutEl.appendChild(box);
+      return;
+    }
+
+    webStatusEl.className = "output-status is-ok";
+    webStatusEl.textContent = "Built (.dg + .dgss)";
+
+    if (activeWebView === "preview") {
+      webPreviewWrap.style.display = "flex";
+      webCodeOutEl.style.display = "none";
+    } else {
+      webPreviewWrap.style.display = "none";
+      webCodeOutEl.style.display = "block";
+      if (activeWebView === "css") {
+        webCodeOutEl.textContent = lastWebBuild.css || "/* Empty stylesheet */";
+      } else if (activeWebView === "js") {
+        webCodeOutEl.textContent = lastWebBuild.js || "// Empty script";
+      } else {
+        webCodeOutEl.textContent = lastWebBuild.indexHtml;
+      }
+    }
+  }
+
+  function buildWebStudio() {
+    if (!webDgEditor || !webDgssEditor || !webPresetSelect) return;
+    const preset = WEB_STUDIO_PRESETS.find((p) => p.id === webPresetSelect.value) || WEB_STUDIO_PRESETS[0];
+    const result = compileDogWebsite({
+      code: webDgEditor.value,
+      css: webDgssEditor.value,
+      title: preset.title || "DOG Web App",
+    });
+    lastWebBuild = result;
+    if (result.ok && webIframeEl) {
+      webIframeEl.srcdoc = result.indexHtml;
+      if (webLogLineEl) {
+        webLogLineEl.textContent = "Preview Console: build succeeded — interact with the compiled DOG website above.";
+      }
+    }
+    renderWebStudioOutput();
+  }
+
+  function loadWebPreset(id) {
+    const preset = WEB_STUDIO_PRESETS.find((p) => p.id === id) || WEB_STUDIO_PRESETS[0];
+    if (webPresetSelect) webPresetSelect.value = preset.id;
+    if (webDgEditor) webDgEditor.value = preset.code;
+    if (webDgssEditor) webDgssEditor.value = preset.css;
+    buildWebStudio();
+  }
+
+  webFileTabs.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      activeWebFile = btn.dataset.webFile;
+      renderWebFileEditor();
+    });
+  });
+
+  webViewTabs.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      activeWebView = btn.dataset.webView;
+      renderWebStudioOutput();
+    });
+  });
+
+  webPresetSelect?.addEventListener("change", () => loadWebPreset(webPresetSelect.value));
+  webBuildBtn?.addEventListener("click", buildWebStudio);
+  webResetBtn?.addEventListener("click", () => loadWebPreset(webPresetSelect?.value || WEB_STUDIO_PRESETS[0].id));
+
+  webDownloadBtn?.addEventListener("click", () => {
+    buildWebStudio();
+    if (!lastWebBuild?.ok) return;
+    const blob = new Blob([lastWebBuild.indexHtml], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "index.html";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  window.addEventListener("message", (event) => {
+    if (event.data?.source === "dog-web-preview" && event.data?.type === "log" && webLogLineEl) {
+      webLogLineEl.textContent = `Preview Console > ${event.data.line}`;
+    }
+  });
+
   // 3. Standard Library Explorer
   let activeModuleId = STD_MODULES[0].id;
   let stdQuery = "";
@@ -327,7 +473,7 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         });
       });
-      stdSummaryEl.textContent = `${rows.length} matching exports across 10 std.* modules for "${stdQuery.trim()}"`;
+      stdSummaryEl.textContent = `${rows.length} matching exports across 12 std.* modules for "${stdQuery.trim()}"`;
     } else {
       rows = activeMod.functions.map((fn) => ({ ...fn, mod: activeMod.title }));
       stdSummaryEl.textContent = `${activeMod.title} — ${activeMod.summary}`;
@@ -509,6 +655,8 @@ document.addEventListener("DOMContentLoaded", () => {
   // Initialize all sections
   renderSyntaxShowcase();
   loadPreset("english_tour");
+  renderWebFileEditor();
+  loadWebPreset(WEB_STUDIO_PRESETS[0].id);
   renderStdlib();
   renderInstall();
   initWorkspaceBrowser();

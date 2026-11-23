@@ -1,6 +1,6 @@
 use crate::ast::{
-    BinOp, BindingKind, Expr, InterpPart, MatchCase, Param, Program, Stmt, StructField, TypeRef,
-    UnaryOp,
+    BinOp, BindingKind, Expr, InterpPart, MatchCase, Param, Program, Stmt, StructField,
+    StyleRuleDecl, StyleVariantBlock, TypeRef, UnaryOp,
 };
 use crate::diagnostics::DogDiagnostic;
 use crate::lexer::{InterpLexPart, Lexer, Token, TokenKind};
@@ -55,6 +55,32 @@ impl Parser {
                 let span = self.advance().span.clone();
                 self.expect_end_of_statement()?;
                 Ok(Stmt::Continue { span })
+            }
+            TokenKind::Identifier(kw)
+                if kw == "style"
+                    && matches!(
+                        self.peek_next_kind(),
+                        Some(
+                            TokenKind::StringLit(_)
+                                | TokenKind::InterpString(_)
+                                | TokenKind::Identifier(_)
+                        )
+                    ) =>
+            {
+                self.parse_style()
+            }
+            TokenKind::Identifier(kw)
+                if kw == "style"
+                    && matches!(
+                        self.peek_next_kind(),
+                        Some(
+                            TokenKind::StringLit(_)
+                                | TokenKind::InterpString(_)
+                                | TokenKind::Identifier(_)
+                        )
+                    ) =>
+            {
+                self.parse_style()
             }
             TokenKind::Identifier(kw)
                 if kw == "set" && matches!(self.peek_next_kind(), Some(TokenKind::Identifier(_))) =>
@@ -1097,6 +1123,328 @@ impl Parser {
         Ok(Stmt::Return {
             value,
             span: kw_tok.span,
+        })
+    }
+
+    fn parse_style(&mut self) -> Result<Stmt, DogDiagnostic> {
+        let kw_tok = self.advance().clone(); // style
+        let selector = match &self.peek().kind {
+            TokenKind::Identifier(id) if matches!(id.as_str(), "theme" | "root" | "vars") => {
+                let s = self.advance().span.clone();
+                Expr::StringLit {
+                    value: ":root".to_string(),
+                    span: s,
+                }
+            }
+            _ => self.parse_expression()?,
+        };
+        self.expect_end_of_statement()?;
+        self.skip_newlines();
+
+        let mut rules = Vec::new();
+        let mut variants = Vec::new();
+        while !self.is_at_end() && self.peek().kind != TokenKind::End {
+            let line_span = self.peek().span.clone();
+            if let Some(condition) = self.try_parse_style_variant_header()? {
+                self.expect_end_of_statement()?;
+                self.skip_newlines();
+                let mut v_rules = Vec::new();
+                while !self.is_at_end() && self.peek().kind != TokenKind::End {
+                    v_rules.push(self.parse_style_prop_rule()?);
+                    self.skip_newlines();
+                }
+                if self.peek().kind != TokenKind::End {
+                    return Err(DogDiagnostic::new(
+                        "E005",
+                        "Missing 'end' for style variant block.",
+                        line_span,
+                        "Variant blocks inside `style ... end` (such as `hover` or `on mobile`) must close with `end`.",
+                        "Add `end` on its own line.",
+                        "Close inner blocks before closing the outer `style` block.",
+                        "An unclosed style variant wanders off.",
+                    ));
+                }
+                self.advance();
+                self.expect_end_of_statement()?;
+                self.skip_newlines();
+                variants.push(StyleVariantBlock {
+                    condition,
+                    rules: v_rules,
+                    span: line_span,
+                });
+            } else {
+                rules.push(self.parse_style_prop_rule()?);
+                self.skip_newlines();
+            }
+        }
+
+        if self.peek().kind != TokenKind::End {
+            return Err(DogDiagnostic::new(
+                "E005",
+                "Missing 'end' for 'style' block.",
+                kw_tok.span,
+                "Every `style \"<selector>\" ... end` block must be closed with `end`.",
+                "Add `end` on its own line after the style rules.",
+                "Example:\nstyle \".card\"\n    bg: \"#FFFFFF\"\n    pad: \"18px\"\nend",
+                "Left the stylesheet rule unfinished.",
+            ));
+        }
+        self.advance();
+        self.expect_end_of_statement()?;
+
+        Ok(Stmt::StyleDef {
+            selector,
+            rules,
+            variants,
+            span: kw_tok.span,
+        })
+    }
+
+    fn try_parse_style_variant_header(&mut self) -> Result<Option<String>, DogDiagnostic> {
+        let is_on_prefix = self.peek_ident_at(0) == Some("on");
+        let target_offset = if is_on_prefix { 1 } else { 0 };
+        let Some(kw) = self.peek_ident_at(target_offset).map(str::to_string) else {
+            return Ok(None);
+        };
+        let cond = match kw.as_str() {
+            "hover" => ":hover".to_string(),
+            "focus" => ":focus".to_string(),
+            "active" => ":active".to_string(),
+            "mobile" => "@media (max-width: 640px)".to_string(),
+            "tablet" => "@media (max-width: 960px)".to_string(),
+            "desktop" => "@media (min-width: 1024px)".to_string(),
+            "dark" => "@media (prefers-color-scheme: dark)".to_string(),
+            "media" if !is_on_prefix => {
+                let after = self.peek_kind_at(1).cloned();
+                if matches!(after, Some(TokenKind::StringLit(_))) {
+                    self.advance(); // media
+                    if let TokenKind::StringLit(q) = self.advance().kind.clone() {
+                        return Ok(Some(format!("@media {q}")));
+                    }
+                }
+                return Ok(None);
+            }
+            _ => return Ok(None),
+        };
+        if matches!(self.peek_kind_at(target_offset + 1), Some(TokenKind::Colon)) {
+            return Ok(None);
+        }
+        if is_on_prefix {
+            self.advance();
+        }
+        self.advance();
+        Ok(Some(cond))
+    }
+
+    fn parse_style_prop_rule(&mut self) -> Result<StyleRuleDecl, DogDiagnostic> {
+        let start_span = self.peek().span.clone();
+        let mut prop = String::new();
+        while !self.is_at_end()
+            && !matches!(
+                self.peek().kind,
+                TokenKind::Colon | TokenKind::Newline | TokenKind::Eof
+            )
+        {
+            let tok = self.advance().clone();
+            match tok.kind {
+                TokenKind::Identifier(s) => prop.push_str(&s),
+                TokenKind::Minus => prop.push('-'),
+                TokenKind::NumberLit(n) => prop.push_str(&n.to_string()),
+                _ => {
+                    return Err(DogDiagnostic::new(
+                        "E004",
+                        "Invalid CSS property name inside 'style' block.",
+                        tok.span,
+                        "Style properties must use `property: \"value\"` syntax.",
+                        "Write e.g. `bg: \"#F7F6F2\"` or `pad: \"16px\"`.",
+                        "Valid shorthands include bg, ink, pad, px, py, radius, gap, cols, shadow.",
+                        "Unexpected token before ':'.",
+                    ));
+                }
+            }
+        }
+        if prop.is_empty() || self.peek().kind != TokenKind::Colon {
+            return Err(DogDiagnostic::new(
+                "E004",
+                "Expected `property: value` inside 'style' block.",
+                start_span,
+                "Each declaration inside `style ... end` requires a CSS property name followed by ':'.",
+                "Write e.g. `bg: \"#FFFFFF\"` or `--accent: \"#2F6BFF\"`.",
+                "Use `on hover ... end` or `on mobile ... end` for interactive/responsive variants.",
+                "Style property is missing ':'.",
+            ));
+        }
+        self.advance(); // :
+        let value = self.parse_expression()?;
+        if self.peek().kind == TokenKind::Comma {
+            self.advance();
+        }
+        self.expect_end_of_statement()?;
+        Ok(StyleRuleDecl {
+            prop,
+            value,
+            span: start_span,
+        })
+    }
+
+    fn parse_style(&mut self) -> Result<Stmt, DogDiagnostic> {
+        let kw_tok = self.advance().clone(); // style
+        let selector = match &self.peek().kind {
+            TokenKind::Identifier(id) if matches!(id.as_str(), "theme" | "root" | "vars") => {
+                let s = self.advance().span.clone();
+                Expr::StringLit {
+                    value: ":root".to_string(),
+                    span: s,
+                }
+            }
+            _ => self.parse_expression()?,
+        };
+        self.expect_end_of_statement()?;
+        self.skip_newlines();
+
+        let mut rules = Vec::new();
+        let mut variants = Vec::new();
+        while !self.is_at_end() && self.peek().kind != TokenKind::End {
+            let line_span = self.peek().span.clone();
+            if let Some(condition) = self.try_parse_style_variant_header()? {
+                self.expect_end_of_statement()?;
+                self.skip_newlines();
+                let mut v_rules = Vec::new();
+                while !self.is_at_end() && self.peek().kind != TokenKind::End {
+                    v_rules.push(self.parse_style_prop_rule()?);
+                    self.skip_newlines();
+                }
+                if self.peek().kind != TokenKind::End {
+                    return Err(DogDiagnostic::new(
+                        "E005",
+                        "Missing 'end' for style variant block.",
+                        line_span,
+                        "Variant blocks inside `style ... end` (such as `hover` or `on mobile`) must close with `end`.",
+                        "Add `end` on its own line.",
+                        "Close inner blocks before closing the outer `style` block.",
+                        "An unclosed style variant wanders off.",
+                    ));
+                }
+                self.advance();
+                self.expect_end_of_statement()?;
+                self.skip_newlines();
+                variants.push(StyleVariantBlock {
+                    condition,
+                    rules: v_rules,
+                    span: line_span,
+                });
+            } else {
+                rules.push(self.parse_style_prop_rule()?);
+                self.skip_newlines();
+            }
+        }
+
+        if self.peek().kind != TokenKind::End {
+            return Err(DogDiagnostic::new(
+                "E005",
+                "Missing 'end' for 'style' block.",
+                kw_tok.span,
+                "Every `style \"<selector>\" ... end` block must be closed with `end`.",
+                "Add `end` on its own line after the style rules.",
+                "Example:\nstyle \".card\"\n    bg: \"#FFFFFF\"\n    pad: \"18px\"\nend",
+                "Left the stylesheet rule unfinished.",
+            ));
+        }
+        self.advance();
+        self.expect_end_of_statement()?;
+
+        Ok(Stmt::StyleDef {
+            selector,
+            rules,
+            variants,
+            span: kw_tok.span,
+        })
+    }
+
+    fn try_parse_style_variant_header(&mut self) -> Result<Option<String>, DogDiagnostic> {
+        let is_on_prefix = self.peek_ident_at(0) == Some("on");
+        let target_offset = if is_on_prefix { 1 } else { 0 };
+        let Some(kw) = self.peek_ident_at(target_offset).map(str::to_string) else {
+            return Ok(None);
+        };
+        let cond = match kw.as_str() {
+            "hover" => ":hover".to_string(),
+            "focus" => ":focus".to_string(),
+            "active" => ":active".to_string(),
+            "mobile" => "@media (max-width: 640px)".to_string(),
+            "tablet" => "@media (max-width: 960px)".to_string(),
+            "desktop" => "@media (min-width: 1024px)".to_string(),
+            "dark" => "@media (prefers-color-scheme: dark)".to_string(),
+            "media" if !is_on_prefix => {
+                let after = self.peek_kind_at(1).cloned();
+                if matches!(after, Some(TokenKind::StringLit(_))) {
+                    self.advance(); // media
+                    if let TokenKind::StringLit(q) = self.advance().kind.clone() {
+                        return Ok(Some(format!("@media {q}")));
+                    }
+                }
+                return Ok(None);
+            }
+            _ => return Ok(None),
+        };
+        if matches!(self.peek_kind_at(target_offset + 1), Some(TokenKind::Colon)) {
+            return Ok(None);
+        }
+        if is_on_prefix {
+            self.advance();
+        }
+        self.advance();
+        Ok(Some(cond))
+    }
+
+    fn parse_style_prop_rule(&mut self) -> Result<StyleRuleDecl, DogDiagnostic> {
+        let start_span = self.peek().span.clone();
+        let mut prop = String::new();
+        while !self.is_at_end()
+            && !matches!(
+                self.peek().kind,
+                TokenKind::Colon | TokenKind::Newline | TokenKind::Eof
+            )
+        {
+            let tok = self.advance().clone();
+            match tok.kind {
+                TokenKind::Identifier(s) => prop.push_str(&s),
+                TokenKind::Minus => prop.push('-'),
+                TokenKind::NumberLit(n) => prop.push_str(&n.to_string()),
+                _ => {
+                    return Err(DogDiagnostic::new(
+                        "E004",
+                        "Invalid CSS property name inside 'style' block.",
+                        tok.span,
+                        "Style properties must use `property: \"value\"` syntax.",
+                        "Write e.g. `bg: \"#F7F6F2\"` or `pad: \"16px\"`.",
+                        "Valid shorthands include bg, ink, pad, px, py, radius, gap, cols, shadow.",
+                        "Unexpected token before ':'.",
+                    ));
+                }
+            }
+        }
+        if prop.is_empty() || self.peek().kind != TokenKind::Colon {
+            return Err(DogDiagnostic::new(
+                "E004",
+                "Expected `property: value` inside 'style' block.",
+                start_span,
+                "Each declaration inside `style ... end` requires a CSS property name followed by ':'.",
+                "Write e.g. `bg: \"#FFFFFF\"` or `--accent: \"#2F6BFF\"`.",
+                "Use `on hover ... end` or `on mobile ... end` for interactive/responsive variants.",
+                "Style property is missing ':'.",
+            ));
+        }
+        self.advance(); // :
+        let value = self.parse_expression()?;
+        if self.peek().kind == TokenKind::Comma {
+            self.advance();
+        }
+        self.expect_end_of_statement()?;
+        Ok(StyleRuleDecl {
+            prop,
+            value,
+            span: start_span,
         })
     }
 

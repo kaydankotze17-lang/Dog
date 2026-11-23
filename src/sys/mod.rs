@@ -74,6 +74,9 @@ fn stmt_summary(stmt: &crate::ast::Stmt) -> String {
         Stmt::Repeat { .. } => "repeat ... end".to_string(),
         Stmt::For { var_name, .. } => format!("for {var_name} in ..."),
         Stmt::FnDef { name, params, .. } => format!("fn {name}({} params)", params.len()),
+        Stmt::StyleDef { rules, variants, .. } => {
+            format!("style ({} rules, {} variants)", rules.len(), variants.len())
+        }
         Stmt::Return { .. } => "return".to_string(),
         Stmt::Break { .. } => "break".to_string(),
         Stmt::Continue { .. } => "continue".to_string(),
@@ -228,28 +231,44 @@ pub fn handle_docs(topic: Option<&str>) -> String {
                        tcp_accept(), tcp_connect(), tcp_send(), tcp_recv(),\n\
                        tcp_set_timeout(), tcp_remote_addr(), tcp_close(), dns_lookup(),\n\
                        port_is_open(), local_ip()\n\
+             Web/CSS : dog_css(), css_rule(), css_vars(), css_media(), css_keyframes(),\n\
+                       css_theme(), css_bundle(), html_el(), html_page(), web_nav(), web_card(),\n\
+                       web_grid(), web_button(), web_input(), web_title(), web_route(),\n\
+                       web_navigate(), web_storage_get(), web_storage_set(), dom_mount(),\n\
+                       dom_set_text(), dom_set_html(), dom_get_value(), dom_set_value(),\n\
+                       dom_add_class(), dom_remove_class(), dom_toggle_class(), dom_set_style(),\n\
+                       dom_on()\n\
+             Web/CSS : dog_css(), css_rule(), css_vars(), css_media(), css_keyframes(),\n\
+                       css_theme(), css_bundle(), html_el(), html_page(), web_nav(), web_card(),\n\
+                       web_grid(), web_button(), web_input(), web_title(), web_route(),\n\
+                       web_navigate(), web_storage_get(), web_storage_set(), dom_mount(),\n\
+                       dom_set_text(), dom_set_html(), dom_get_value(), dom_set_value(),\n\
+                       dom_add_class(), dom_remove_class(), dom_toggle_class(), dom_set_style(),\n\
+                       dom_on()\n\
              Errors  : assert(), fail()"
                 .to_string()
         }
-        "network" | "net" | "web" | "bot" => {
-            "DOG Networking, WebSockets, UDP, Websites & Bots\n\
-             ----------------------------------------------\n\
+        "network" | "net" | "web" | "css" | "dgss" | "bot" => {
+            "DOG Web Development, DOG CSS (.dgss), HTTP & WebSockets\n\
+             --------------------------------------------------------\n\
+             Client Web  : dog web build app.dg [--css style.dgss] [--out dist_web]\n\
+                           dog web css style.dgss [--out style.css] | dog web serve app.dg [port]\n\
+                           std.web DOM APIs: dom_mount, dom_set_text, dom_set_html, dom_get_value,\n\
+                           dom_set_value, dom_add_class, dom_remove_class, dom_toggle_class,\n\
+                           dom_set_style, dom_on, web_title, web_storage_set/get, web_route/navigate\n\
+                           Components: html_el, html_page, web_nav, web_card, web_grid, web_button, web_input\n\
+             DOG CSS     : vars ... end | rule .card ... end | on hover ... end | on mobile ... end | animate\n\
+                           Shorthands: bg, ink, pad, px, py, m, mx, my, radius, cols, gap, size, shadow\n\
+                           Functions : dog_css, css_rule, css_vars, css_media, css_keyframes, css_theme, css_bundle\n\
              HTTP Server : let srv = http_listen(\"127.0.0.1:8080\")  (\"0.0.0.0:8080\" for LAN)\n\
                            http_accept(srv) / http_try_accept(srv, timeout_ms)\n\
-                           Supports Content-Length and Transfer-Encoding: chunked request bodies\n\
                            http_reply(req, 200, \"text/html\", html) | http_status_text(200)\n\
-                           http_reply_headers(req, 200, hdrs_map, body) | http_redirect(req, 302, loc)\n\
                            http_serve_file(req, \"public/index.html\") | http_route_match(\"/u/:id\", p)\n\
-                           url_parse(u), query_parse(q), query_stringify(m), html_escape(s)\n\
              HTTP Client : http_get(url), http_post(url, body, ctype), http_put(...), http_delete(url)\n\
                            http_request(method, url, hdrs, body) / http_request_timeout(..., ms)\n\
-                           Follows redirects (301/302/303/307/308), returns status, body, headers, final_url, ok\n\
              WebSockets  : ws_upgrade(req) -> ws_id, ws_connect(\"ws://...\") -> ws_id\n\
                            ws_send(ws_id, msg), ws_recv(ws_id), ws_ping(ws_id, msg), ws_close(ws_id)\n\
-             UDP & DNS   : udp_bind(addr), udp_send_to(id, addr, data), udp_recv_from(id, max), udp_close(id)\n\
-                           dns_lookup(host), local_ip(), port_is_open(addr, ms),\n\
-                           tcp_set_timeout(id, ms), tcp_remote_addr(id)\n\
-             Raw TCP     : tcp_listen, tcp_accept, tcp_connect, tcp_send, tcp_recv, tcp_close\n\
+             UDP & DNS   : udp_bind, udp_send_to, udp_recv_from, udp_close, dns_lookup, local_ip\n\
              Static Host : dog server [dir] [port] [--host 0.0.0.0]"
                 .to_string()
         }
@@ -361,7 +380,8 @@ pub fn handle_learn(
                3. dog learn input       -- ask(), confirm(), choose(), number()\n\
                4. dog learn functions   -- define / fn, defaults, and returns\n\
                5. dog learn data        -- lists, maps, structs, enums, and match\n\
-               6. dog learn errors      -- strict typing and try ... catch err ... end\n\n\
+               6. dog learn errors      -- strict typing and try ... catch err ... end\n\
+               7. dog learn web         -- build interactive websites & DOG CSS (.dgss)\n\n\
              Add `--run` to execute the lesson example live:\n\
                dog learn english --run\n\
              Quick cheat sheet: `dog docs english`"
@@ -453,9 +473,19 @@ pub fn handle_learn(
              end",
             "try\n    let parsed = number(\"not-a-number\")\n    print(parsed)\ncatch err\n    print(\"Handled safely!\")\nend",
         ),
+        "web" | "css" | "7" => (
+            "Lesson 7: Websites & DOG CSS (.dgss)",
+            "Build interactive browser websites in DOG (`std.web` + `dom_on`)\n\
+             and style them using DOG CSS (`dog_css` or `.dgss` files).",
+            "let css = dog_css(\"vars\\n  accent: #C85A11\\nend\\nrule .card\\n  bg: #FFF\\n  pad: 20px\\n  radius: 10px\\nend\")\n\
+             let card = web_card(\"Hello DOG Web\", web_button(\"go\", \"Click Me\"))\n\
+             dom_mount(\"#app\", card)\n\
+             print(html_page(\"My DOG Site\", css, card))",
+            "let css = dog_css(\"vars\\n  accent: #C85A11\\nend\\nrule .card\\n  bg: #FFF\\n  pad: 20px\\n  radius: 10px\\nend\")\nlet card = web_card(\"Hello DOG Web\", web_button(\"go\", \"Click Me\"))\ndom_mount(\"#app\", card)\nprint(css)",
+        ),
         other => {
             return Err(format!(
-                "Unknown lesson '{other}'. Run `dog learn` to see available lessons (basics, english, input, functions, data, errors)."
+                "Unknown lesson '{other}'. Run `dog learn` to see available lessons (basics, english, input, functions, data, errors, web)."
             ));
         }
     };
@@ -770,6 +800,38 @@ fn collect_stmt_reads(stmt: &Stmt, used: &mut HashSet<String>) {
             }
             for s in body {
                 collect_stmt_reads(s, used);
+            }
+        }
+        Stmt::StyleDef {
+            selector,
+            rules,
+            variants,
+            ..
+        } => {
+            collect_expr_reads(selector, used);
+            for r in rules {
+                collect_expr_reads(&r.value, used);
+            }
+            for v in variants {
+                for r in &v.rules {
+                    collect_expr_reads(&r.value, used);
+                }
+            }
+        }
+        Stmt::StyleDef {
+            selector,
+            rules,
+            variants,
+            ..
+        } => {
+            collect_expr_reads(selector, used);
+            for r in rules {
+                collect_expr_reads(&r.value, used);
+            }
+            for v in variants {
+                for r in &v.rules {
+                    collect_expr_reads(&r.value, used);
+                }
             }
         }
         Stmt::Return { value: Some(v), .. } | Stmt::ExprStmt { expr: v, .. } => {
@@ -1943,6 +2005,38 @@ fn collect_std_namespaces_in_stmt(stmt: &Stmt, out: &mut BTreeSet<String>) {
                 collect_std_namespaces_in_stmt(s, out);
             }
         }
+        Stmt::StyleDef {
+            selector,
+            rules,
+            variants,
+            ..
+        } => {
+            collect_std_namespaces_in_expr(selector, out);
+            for r in rules {
+                collect_std_namespaces_in_expr(&r.value, out);
+            }
+            for v in variants {
+                for r in &v.rules {
+                    collect_std_namespaces_in_expr(&r.value, out);
+                }
+            }
+        }
+        Stmt::StyleDef {
+            selector,
+            rules,
+            variants,
+            ..
+        } => {
+            collect_std_namespaces_in_expr(selector, out);
+            for r in rules {
+                collect_std_namespaces_in_expr(&r.value, out);
+            }
+            for v in variants {
+                for r in &v.rules {
+                    collect_std_namespaces_in_expr(&r.value, out);
+                }
+            }
+        }
         Stmt::Return { value: Some(e), .. } | Stmt::ExprStmt { expr: e, .. } => {
             collect_std_namespaces_in_expr(e, out);
         }
@@ -2084,6 +2178,12 @@ pub fn handle_explain(target: &str) -> Result<String, String> {
     }
     if source.contains("exec_cmd") {
         caps.push("Subprocess Execution");
+    }
+    if source.contains("dom_") || source.contains("html_") || source.contains("web_") || source.contains("style \"") || source.contains("css_") {
+        caps.push("DOG Web & CSS UI");
+    }
+    if source.contains("dom_") || source.contains("html_") || source.contains("web_") || source.contains("style \"") || source.contains("css_") {
+        caps.push("DOG Web & CSS UI");
     }
 
     let mut out = format!(
@@ -2291,3 +2391,167 @@ fn explain_error_code(code: &str) -> Option<String> {
          Fix    : {example_fix}"
     ))
 }
+
+pub fn handle_web(args: &[String]) -> Result<String, String> {
+    let sub = args.first().map(String::as_str).unwrap_or("");
+    match sub {
+        "css" => {
+            let Some(path) = args.get(1) else {
+                return Err("Usage: dog web css <style.dgss> [--out style.css]".to_string());
+            };
+            let mut out_path: Option<String> = None;
+            let mut i = 2usize;
+            while i < args.len() {
+                if args[i] == "--out" || args[i] == "-o" {
+                    i += 1;
+                    out_path = Some(
+                        args.get(i)
+                            .ok_or_else(|| "Expected file path after --out".to_string())?
+                            .clone(),
+                    );
+                } else {
+                    return Err(format!("Unexpected option '{}'", args[i]));
+                }
+                i += 1;
+            }
+            let raw = fs::read_to_string(path)
+                .map_err(|e| format!("Failed to read DOG CSS '{path}': {e}"))?;
+            let compiled = crate::web::compile_dog_css(&raw)?;
+            if let Some(dst) = out_path {
+                fs::write(&dst, format!("{compiled}\n"))
+                    .map_err(|e| format!("Failed to write '{dst}': {e}"))?;
+                Ok(format!("Compiled DOG CSS '{path}' -> '{dst}'"))
+            } else {
+                Ok(compiled)
+            }
+        }
+        "build" => {
+            let Some(entry) = args.get(1) else {
+                return Err(
+                    "Usage: dog web build <app.dg> [--css style.dgss] [--out dist_web] [--title Title]"
+                        .to_string(),
+                );
+            };
+            let mut css_path: Option<String> = None;
+            let mut out_dir = String::from("dist_web");
+            let mut title = String::from("DOG Web App");
+            let mut i = 2usize;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--css" | "-c" => {
+                        i += 1;
+                        css_path = Some(
+                            args.get(i)
+                                .ok_or_else(|| "Expected file path after --css".to_string())?
+                                .clone(),
+                        );
+                    }
+                    "--out" | "-o" => {
+                        i += 1;
+                        out_dir = args
+                            .get(i)
+                            .ok_or_else(|| "Expected directory path after --out".to_string())?
+                            .clone();
+                    }
+                    "--title" | "-t" => {
+                        i += 1;
+                        title = args
+                            .get(i)
+                            .ok_or_else(|| "Expected title string after --title".to_string())?
+                            .clone();
+                    }
+                    other => {
+                        return Err(format!("Unknown option '{other}' in `dog web build`."));
+                    }
+                }
+                i += 1;
+            }
+            let dg_src = fs::read_to_string(entry)
+                .map_err(|e| format!("Failed to read '{entry}': {e}"))?;
+            let auto_css = if css_path.is_none() {
+                let candidate = Path::new(entry).with_extension("dgss");
+                if candidate.is_file() {
+                    Some(candidate)
+                } else {
+                    None
+                }
+            } else {
+                css_path.map(PathBuf::from)
+            };
+            let dgss_src = match &auto_css {
+                Some(p) => Some(
+                    fs::read_to_string(p)
+                        .map_err(|e| format!("Failed to read '{}': {e}", p.display()))?,
+                ),
+                None => None,
+            };
+            let bundle =
+                crate::web::build_web_bundle(&dg_src, dgss_src.as_deref(), &title)?;
+            let out_root = Path::new(&out_dir);
+            fs::create_dir_all(out_root)
+                .map_err(|e| format!("Failed to create '{out_dir}': {e}"))?;
+            fs::write(out_root.join("index.html"), &bundle.index_html)
+                .map_err(|e| format!("Failed to write index.html: {e}"))?;
+            fs::write(out_root.join("styles.css"), format!("{}\n", bundle.css))
+                .map_err(|e| format!("Failed to write styles.css: {e}"))?;
+            fs::write(out_root.join("app.js"), format!("{}\n", bundle.js))
+                .map_err(|e| format!("Failed to write app.js: {e}"))?;
+            Ok(format!(
+                "Built DOG website bundle in '{out_dir}/' (index.html, styles.css, app.js)"
+            ))
+        }
+        "serve" => {
+            let Some(entry) = args.get(1) else {
+                return Err(
+                    "Usage: dog web serve <app.dg> [--css style.dgss] [--port 8080]"
+                        .to_string(),
+                );
+            };
+            let mut build_args = vec![
+                "build".to_string(),
+                entry.clone(),
+                "--out".to_string(),
+                ".dog_web_dist".to_string(),
+            ];
+            let mut port = String::from("8080");
+            let mut i = 2usize;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--port" | "-p" => {
+                        i += 1;
+                        port = args
+                            .get(i)
+                            .ok_or_else(|| "Expected port number after --port".to_string())?
+                            .clone();
+                    }
+                    "--css" | "-c" | "--title" | "-t" => {
+                        let flag = args[i].clone();
+                        i += 1;
+                        let val = args
+                            .get(i)
+                            .ok_or_else(|| format!("Expected value after {flag}"))?
+                            .clone();
+                        build_args.push(flag);
+                        build_args.push(val);
+                    }
+                    arg if arg.chars().all(|c| c.is_ascii_digit()) => {
+                        port = arg.to_string();
+                    }
+                    other => {
+                        return Err(format!("Unknown option '{other}' in `dog web serve`."));
+                    }
+                }
+                i += 1;
+            }
+            let summary = handle_web(&build_args)?;
+            println!("{summary}");
+            handle_server(&[".dog_web_dist".to_string(), port])?;
+            Ok(String::new())
+        }
+        _ => Err(
+            "DOG Web & CSS Toolchain:\n  dog web build <app.dg> [--css <style.dgss>] [--out dist_web]\n  dog web css <style.dgss> [--out style.css]\n  dog web serve <app.dg> [--port 8080]"
+                .to_string(),
+        ),
+    }
+}
+

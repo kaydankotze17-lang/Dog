@@ -47,6 +47,11 @@ const BUILTIN_NAMES: &[&str] = &[
     "map_get_or", "csv_stringify", "json_has_key", "path_dirname", "path_basename", "path_ext",
     "file_move", "rmdir", "temp_dir", "sha512", "hmac_sha256_verify", "base64_url_encode",
     "base64_url_decode", "rand_bytes_hex", "ws_ping", "local_ip", "http_status_text",
+    "dog_css", "css_rule", "css_vars", "css_media", "css_keyframes", "css_theme", "css_bundle",
+    "html_el", "html_page", "web_nav", "web_card", "web_grid", "web_button", "web_input",
+    "dom_mount", "dom_set_text", "dom_set_html", "dom_get_value", "dom_set_value",
+    "dom_add_class", "dom_remove_class", "dom_toggle_class", "dom_set_style", "dom_on",
+    "web_title", "web_storage_set", "web_storage_get", "web_route", "web_navigate",
 ];
 
 pub fn builtin_names() -> &'static [&'static str] {
@@ -824,6 +829,112 @@ impl TypeChecker {
                         "If using `if` without `otherwise`, add a fallback `return` at the end.",
                         "You promised a return value. Don't ghost the caller.",
                     ));
+                }
+                Ok(())
+            }
+            Stmt::StyleDef {
+                selector,
+                rules,
+                variants,
+                span,
+            } => {
+                let sel_ty = self.check_expr(selector)?;
+                if sel_ty != DogType::Text {
+                    return Err(DogDiagnostic::new(
+                        "E021",
+                        "CSS selector in 'style' block must be text.",
+                        span.clone(),
+                        format!("Expected 'text' selector, got '{sel_ty}'."),
+                        "Write e.g. `style \".card\" ... end` or `style \"#hero\" ... end`.",
+                        "Style selectors identify DOM targets using CSS selector strings.",
+                        "A CSS selector needs to be text.",
+                    )
+                    .with_types("text", sel_ty.label()));
+                }
+                for rule in rules {
+                    let val_ty = self.check_expr(&rule.value)?;
+                    if val_ty == DogType::Void {
+                        return Err(DogDiagnostic::new(
+                            "E021",
+                            format!("Style property '{}' cannot use a 'void' expression.", rule.prop),
+                            rule.span.clone(),
+                            "Every style rule value must produce a concrete printable value.",
+                            "Provide a text, number, decimal, or bool value.",
+                            "Example: `bg: \"#FFFFFF\"`.",
+                            "Cannot paint pixels with void.",
+                        )
+                        .with_types("value", "void"));
+                    }
+                }
+                for var in variants {
+                    for rule in &var.rules {
+                        let val_ty = self.check_expr(&rule.value)?;
+                        if val_ty == DogType::Void {
+                            return Err(DogDiagnostic::new(
+                                "E021",
+                                format!("Style property '{}' cannot use a 'void' expression.", rule.prop),
+                                rule.span.clone(),
+                                "Every style rule value must produce a concrete printable value.",
+                                "Provide a text, number, decimal, or bool value.",
+                                "Example: `bg: \"#F8FAFC\"`.",
+                                "Cannot paint pixels with void.",
+                            )
+                            .with_types("value", "void"));
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Stmt::StyleDef {
+                selector,
+                rules,
+                variants,
+                span,
+            } => {
+                let sel_ty = self.check_expr(selector)?;
+                if sel_ty != DogType::Text {
+                    return Err(DogDiagnostic::new(
+                        "E021",
+                        "CSS selector in 'style' block must be text.",
+                        span.clone(),
+                        format!("Expected 'text' selector, got '{sel_ty}'."),
+                        "Write e.g. `style \".card\" ... end` or `style \"#hero\" ... end`.",
+                        "Style selectors identify DOM targets using CSS selector strings.",
+                        "A CSS selector needs to be text.",
+                    )
+                    .with_types("text", sel_ty.label()));
+                }
+                for rule in rules {
+                    let val_ty = self.check_expr(&rule.value)?;
+                    if val_ty == DogType::Void {
+                        return Err(DogDiagnostic::new(
+                            "E021",
+                            format!("Style property '{}' cannot use a 'void' expression.", rule.prop),
+                            rule.span.clone(),
+                            "Every style rule value must produce a concrete printable value.",
+                            "Provide a text, number, decimal, or bool value.",
+                            "Example: `bg: \"#FFFFFF\"`.",
+                            "Cannot paint pixels with void.",
+                        )
+                        .with_types("value", "void"));
+                    }
+                }
+                for var in variants {
+                    for rule in &var.rules {
+                        let val_ty = self.check_expr(&rule.value)?;
+                        if val_ty == DogType::Void {
+                            return Err(DogDiagnostic::new(
+                                "E021",
+                                format!("Style property '{}' cannot use a 'void' expression.", rule.prop),
+                                rule.span.clone(),
+                                "Every style rule value must produce a concrete printable value.",
+                                "Provide a text, number, decimal, or bool value.",
+                                "Example: `bg: \"#F8FAFC\"`.",
+                                "Cannot paint pixels with void.",
+                            )
+                            .with_types("value", "void"));
+                        }
+                    }
                 }
                 Ok(())
             }
@@ -3341,6 +3452,211 @@ impl TypeChecker {
                     ));
                 }
                 Ok(DogType::Number)
+            }
+            "dog_css" | "dom_get_value" | "web_storage_get" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects 'text'."),
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "web_route" => {
+                if !arg_types.is_empty() {
+                    return Err(arity_error(callee, 0, arg_types.len(), span));
+                }
+                Ok(DogType::Text)
+            }
+            "web_title" | "web_navigate" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects 'text'."),
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "css_vars" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                let expected = DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text));
+                if arg_types[0] != expected {
+                    return Err(type_err(
+                        "map<text, text>",
+                        &arg_types[0].label(),
+                        span,
+                        "css_vars() expects map<text, text>.",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "css_rule" | "css_keyframes" | "web_nav" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                let expected_map = DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text));
+                if arg_types[0] != DogType::Text || arg_types[1] != expected_map {
+                    return Err(type_err(
+                        "text, map<text, text>",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        &format!("{callee}() expects (text, map<text, text>)."),
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "css_media" | "web_card" | "web_button" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        &format!("{callee}() expects (text, text)."),
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "css_bundle" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                let expected = DogType::List(Box::new(DogType::Text));
+                if arg_types[0] != expected {
+                    return Err(type_err(
+                        "list<text>",
+                        &arg_types[0].label(),
+                        span,
+                        "css_bundle() expects list<text>.",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "css_theme" => {
+                if arg_types.len() != 5 {
+                    return Err(arity_error(callee, 5, arg_types.len(), span));
+                }
+                for t in &arg_types {
+                    if *t != DogType::Text {
+                        return Err(type_err(
+                            "text",
+                            &t.label(),
+                            span,
+                            "css_theme() expects (bg, surface, ink, accent, font) all as 'text'.",
+                        ));
+                    }
+                }
+                Ok(DogType::Text)
+            }
+            "html_el" => {
+                if arg_types.len() != 3 {
+                    return Err(arity_error(callee, 3, arg_types.len(), span));
+                }
+                let expected_map = DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text));
+                if arg_types[0] != DogType::Text
+                    || arg_types[1] != expected_map
+                    || arg_types[2] != DogType::Text
+                {
+                    return Err(type_err(
+                        "text, map<text, text>, text",
+                        &format!("{}, {}, {}", arg_types[0], arg_types[1], arg_types[2]),
+                        span,
+                        "html_el() expects (tag: text, attrs: map<text, text>, content: text).",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "html_page" | "web_input" => {
+                if arg_types.len() != 3 {
+                    return Err(arity_error(callee, 3, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text
+                    || arg_types[1] != DogType::Text
+                    || arg_types[2] != DogType::Text
+                {
+                    return Err(type_err(
+                        "text, text, text",
+                        &format!("{}, {}, {}", arg_types[0], arg_types[1], arg_types[2]),
+                        span,
+                        &format!("{callee}() expects three 'text' arguments."),
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "web_grid" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                let expected_list = DogType::List(Box::new(DogType::Text));
+                if arg_types[0] != DogType::Number || arg_types[1] != expected_list {
+                    return Err(type_err(
+                        "number, list<text>",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "web_grid() expects (cols: number, items: list<text>).",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "dom_mount" | "dom_set_text" | "dom_set_html" | "dom_set_value" | "dom_add_class"
+            | "dom_remove_class" | "web_storage_set" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        &format!("{callee}() expects two 'text' arguments."),
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "dom_toggle_class" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "text, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "dom_toggle_class() expects (selector: text, cls: text).",
+                    ));
+                }
+                Ok(DogType::Bool)
+            }
+            "dom_set_style" | "dom_on" => {
+                if arg_types.len() != 3 {
+                    return Err(arity_error(callee, 3, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text
+                    || arg_types[1] != DogType::Text
+                    || arg_types[2] != DogType::Text
+                {
+                    return Err(type_err(
+                        "text, text, text",
+                        &format!("{}, {}, {}", arg_types[0], arg_types[1], arg_types[2]),
+                        span,
+                        &format!("{callee}() expects three 'text' arguments."),
+                    ));
+                }
+                Ok(DogType::Void)
             }
             other => {
                 let Some(sig) = self.functions.get(other) else {

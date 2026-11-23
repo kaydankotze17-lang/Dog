@@ -38,6 +38,7 @@ pub fn stmt_span(stmt: &Stmt) -> &Span {
         | Stmt::Repeat { span, .. }
         | Stmt::For { span, .. }
         | Stmt::FnDef { span, .. }
+        | Stmt::StyleDef { span, .. }
         | Stmt::Return { span, .. }
         | Stmt::Break { span }
         | Stmt::Continue { span }
@@ -71,6 +72,8 @@ pub struct Interpreter<'a> {
 impl<'a> Interpreter<'a> {
     pub fn new(io: &'a mut dyn InterpreterIo) -> Self {
         crate::term::reset_session_style_to(crate::config::DogConfig::load().term_style());
+        crate::web::reset_web_runtime();
+        crate::stdlib::reset_headless_web();
         Self {
             env: Environment::new(),
             functions: HashMap::new(),
@@ -87,6 +90,8 @@ impl<'a> Interpreter<'a> {
         observer: &'a mut dyn ExecObserver,
     ) -> Self {
         crate::term::reset_session_style_to(crate::config::DogConfig::load().term_style());
+        crate::web::reset_web_runtime();
+        crate::stdlib::reset_headless_web();
         Self {
             env: Environment::new(),
             functions: HashMap::new(),
@@ -377,6 +382,66 @@ impl<'a> Interpreter<'a> {
                         ExecFlow::Next | ExecFlow::Continue => continue,
                         ExecFlow::Break => break,
                         ret @ ExecFlow::Return(_) => return Ok(ret),
+                    }
+                }
+                Ok(ExecFlow::Next)
+            }
+            Stmt::StyleDef {
+                selector,
+                rules,
+                variants,
+                ..
+            } => {
+                let sel = self.eval_expr(selector)?.to_string();
+                let mut pairs = Vec::with_capacity(rules.len());
+                for r in rules {
+                    let v = self.eval_expr(&r.value)?.to_string();
+                    pairs.push((r.prop.clone(), v));
+                }
+                crate::web::register_style_rule(None, &sel, &pairs);
+                for var in variants {
+                    let mut v_pairs = Vec::with_capacity(var.rules.len());
+                    for r in &var.rules {
+                        let v = self.eval_expr(&r.value)?.to_string();
+                        v_pairs.push((r.prop.clone(), v));
+                    }
+                    if let Some(q) = var.condition.strip_prefix("@media ") {
+                        crate::web::register_style_rule(Some(q), &sel, &v_pairs);
+                    } else if var.condition.starts_with(':') {
+                        let target_sel = format!("{sel}{}", var.condition);
+                        crate::web::register_style_rule(None, &target_sel, &v_pairs);
+                    } else {
+                        crate::web::register_style_rule(None, &sel, &v_pairs);
+                    }
+                }
+                Ok(ExecFlow::Next)
+            }
+            Stmt::StyleDef {
+                selector,
+                rules,
+                variants,
+                ..
+            } => {
+                let sel = self.eval_expr(selector)?.to_string();
+                let mut pairs = Vec::with_capacity(rules.len());
+                for r in rules {
+                    let v = self.eval_expr(&r.value)?.to_string();
+                    pairs.push((r.prop.clone(), v));
+                }
+                crate::web::register_style_rule(None, &sel, &pairs);
+                for var in variants {
+                    let mut v_pairs = Vec::with_capacity(var.rules.len());
+                    for r in &var.rules {
+                        let v = self.eval_expr(&r.value)?.to_string();
+                        v_pairs.push((r.prop.clone(), v));
+                    }
+                    if let Some(q) = var.condition.strip_prefix("@media ") {
+                        crate::web::register_style_rule(Some(q), &sel, &v_pairs);
+                    } else if var.condition.starts_with(':') {
+                        let target_sel = format!("{sel}{}", var.condition);
+                        crate::web::register_style_rule(None, &target_sel, &v_pairs);
+                    } else {
+                        crate::web::register_style_rule(None, &sel, &v_pairs);
                     }
                 }
                 Ok(ExecFlow::Next)

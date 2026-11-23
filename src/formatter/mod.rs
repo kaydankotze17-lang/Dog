@@ -4,6 +4,8 @@ enum BlockKind {
     If,
     Match { in_arm: bool },
     Try,
+    Style,
+    StyleVariant,
     Brace,
 }
 
@@ -117,8 +119,19 @@ pub fn format_source(source: &str) -> String {
             | "enum" => {
                 stack.push(BlockKind::Simple);
             }
+            "style"
+                if trimmed.starts_with("style \"")
+                    || trimmed.starts_with("style $\"")
+                    || trimmed == "style theme"
+                    || trimmed == "style root"
+                    || trimmed == "style vars" =>
+            {
+                stack.push(BlockKind::Style);
+            }
             _ => {
-                if ends_lbrace && !starts_rbrace {
+                if stack.last() == Some(&BlockKind::Style) && is_style_variant_line(trimmed) {
+                    stack.push(BlockKind::StyleVariant);
+                } else if ends_lbrace && !starts_rbrace {
                     stack.push(BlockKind::Brace);
                 }
             }
@@ -183,4 +196,26 @@ fn leading_keyword(trimmed: &str) -> &str {
         .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
         .next()
         .unwrap_or("")
+}
+
+fn is_style_variant_line(trimmed: &str) -> bool {
+    if trimmed.contains(':') {
+        return false;
+    }
+    let clean = trimmed.strip_prefix("on ").unwrap_or(trimmed).trim();
+    matches!(
+        clean,
+        "hover" | "focus" | "active" | "mobile" | "tablet" | "desktop" | "dark"
+    ) || trimmed.starts_with("media ")
+}
+
+fn is_style_variant_line(trimmed: &str) -> bool {
+    if trimmed.contains(':') {
+        return false;
+    }
+    let clean = trimmed.strip_prefix("on ").unwrap_or(trimmed).trim();
+    matches!(
+        clean,
+        "hover" | "focus" | "active" | "mobile" | "tablet" | "desktop" | "dark"
+    ) || trimmed.starts_with("media ")
 }

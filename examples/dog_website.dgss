@@ -1,0 +1,115 @@
+# DOG Style Sheet (.dgss) companion for examples/dog_website.dg
+# Compile to standard CSS with: dog web css examples/dog_website.dgss
+
+vars
+    bg: #F7F6F2
+    surface: #FFFFFF
+    ink: #181A1F
+    accent: #C85A11
+    accent-hover: #A6480B
+    border: #E2DFD7
+    radius: 10px
+end
+
+rule *
+    box-sizing: border-box
+end
+
+rule body
+    margin: 0
+    bg: $bg
+    ink: $ink
+    font: system-ui, -apple-system, sans-serif
+    leading: 1.6
+end
+
+rule .dg-shell
+    max-w: 760px
+    mx: auto
+    pad: 24px
+    flex: col
+    gap: 18px
+end
+
+rule .dg-shell.is-accent
+    bg: #FDF2EA
+    border: 1px solid $accent
+    radius: $radius
+end
+
+rule .dg-nav
+    display: flex
+    justify: space-between
+    align: center
+    pad: 14px 18px
+    bg: $surface
+    border: 1px solid $border
+    radius: $radius
+end
+
+rule .dg-nav-links
+    display: flex
+    gap: 16px
+end
+
+rule .dg-nav a
+    ink: $ink
+    text-decoration: none
+    weight: 600
+end
+
+rule .dg-card
+    bg: $surface
+    border: 1px solid $border
+    radius: $radius
+    pad: 20px
+    shadow: sm
+end
+
+rule .dg-grid
+    gap: 12px
+end
+
+rule .dg-btn
+    bg: $accent
+    ink: #FFFFFF
+    border: none
+    radius: 6px
+    py: 10px
+    px: 16px
+    weight: 600
+    cursor: pointer
+    ease: background 160ms ease
+
+    on hover
+        bg: $accent-hover
+    end
+end
+
+rule .dg-input
+    w: 100%
+    py: 10px
+    px: 12px
+    radius: 6px
+    border: 1px solid $border
+    bg: $surface
+    ink: $ink
+end
+
+rule .dg-banner
+    pad: 12px 16px
+    bg: $surface
+    border: 1px solid $border
+    radius: 6px
+    weight: 500
+    margin: 0
+end
+
+on mobile
+    rule .dg-shell
+        pad: 14px
+    end
+    rule .dg-grid
+        cols: 1
+    end
+end

@@ -1,0 +1,57 @@
+# Interactive website written completely in DOG (.dg) + DOG CSS (.dgss)
+# Compile to HTML/CSS/JS with:
+#   dog web build examples/dog_website.dg --css examples/dog_website.dgss --out dist_web
+#   dog web serve examples/dog_website.dg --port 8080
+
+use "std.web"
+
+var clicks = 0
+var compact_view = false
+
+define render_app() returns void
+    let header_html = web_nav("DOG Web Studio", {"Home": "#top", "Counter": "#counter", "Notes": "#notes"})
+    let intro_card = web_card("Built with DOG + .dgss", $"Interactive DOM logic and styling without writing raw JavaScript. Button clicks: <strong id=\"count-val\">{clicks}</strong>.")
+    let controls_html = web_grid(2, [
+        web_button("inc-btn", "Add +1 Click"),
+        web_button("theme-btn", "Toggle Highlight")
+    ])
+    let input_row = web_grid(2, [
+        web_input("note-input", "Write a note for the page...", ""),
+        web_button("note-btn", "Update Banner")
+    ])
+    let banner = html_el("p", {"id": "live-banner", "class": "dg-banner"}, "Ready for user interaction.")
+    let shell = html_el("main", {"id": "shell", "class": "dg-shell"}, $"{header_html}{intro_card}{controls_html}{input_row}{banner}")
+    dom_mount("#app", shell)
+    dom_on("#inc-btn", "click", "on_increment")
+    dom_on("#theme-btn", "click", "on_toggle_highlight")
+    dom_on("#note-btn", "click", "on_update_banner")
+end
+
+define on_increment() returns void
+    increase clicks by 1
+    dom_set_text("#count-val", text(clicks))
+    dom_set_text("#live-banner", $"DOG handler fired! Total clicks = {clicks}")
+end
+
+define on_toggle_highlight() returns void
+    set compact_view to dom_toggle_class("#shell", "is-accent")
+    if compact_view then
+        dom_set_text("#live-banner", "Accent highlight mode active.")
+    else
+        dom_set_text("#live-banner", "Default studio palette active.")
+    end
+end
+
+define on_update_banner() returns void
+    let typed = trim(dom_get_value("#note-input"))
+    if typed is "" then
+        dom_set_text("#live-banner", "Type something in the input box first.")
+    else
+        dom_set_text("#live-banner", $"Saved note: {typed}")
+        web_storage_set("dog_last_note", typed)
+        dom_set_value("#note-input", "")
+    end
+end
+
+web_title("My DOG Website")
+render_app()

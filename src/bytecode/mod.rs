@@ -623,6 +623,10 @@ fn emit_stmt(
             out.push_str(&format!("{pad}{};\n", emit_expr(expr, fn_defaults)?));
             Ok(())
         }
+        Stmt::StyleDef { .. } => {
+            out.push_str(&format!("{pad}// inline DOG style block (use `dog build --web` for browser output)\n"));
+            Ok(())
+        }
         Stmt::TryCatch { .. } => Err(
             "Native `--native` compilation does not yet lower `try ... catch` blocks; build a `.dgb` bundle (`dog build <file.dg>`) instead.".to_string(),
         ),

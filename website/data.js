@@ -157,6 +157,37 @@ export const STD_MODULES = [
       { name: "cli_supports_color() / cli_is_tty()", sig: "() -> bool", desc: "Inspect live terminal ANSI and TTY capabilities." },
     ],
   },
+  {
+    id: "std.css",
+    title: "std.css",
+    summary: "DOG Style Sheets (.dgss DSL) with variables, shorthands (`bg`, `ink`, `pad`, `cols`), hover states, keyframes, and media queries.",
+    example: `use "std.css"\n\nlet css = std.css.compile("vars\\n  accent: #C85A11\\nend\\nrule .card\\n  bg: #FFFFFF\\n  pad: 20px\\n  radius: 10px\\nend")`,
+    functions: [
+      { name: "dog_css(dsl)", sig: "text -> text", desc: "Compile a `.dgss` DOG Style Sheet into standard browser CSS." },
+      { name: "css_rule(selector, props)", sig: "(text, map<text,text>) -> text", desc: "Emit a CSS rule block from typed DOG CSS shorthands." },
+      { name: "css_vars(vars)", sig: "map<text,text> -> text", desc: "Generate `:root` CSS custom properties from a map." },
+      { name: "css_media(query, css)", sig: "(text, text) -> text", desc: "Wrap rules inside `@media` (`mobile`, `tablet`, `desktop`, `dark`)." },
+      { name: "css_keyframes(name, steps)", sig: "(text, map<text,text>) -> text", desc: "Build named `@keyframes` animation stops." },
+      { name: "css_theme(bg, surface, ink, accent, font)", sig: "(text x5) -> text", desc: "Emit a clean responsive base theme for `.dg-*` components." },
+      { name: "css_bundle(parts)", sig: "list<text> -> text", desc: "Combine multiple compiled CSS blocks into one stylesheet." },
+    ],
+  },
+  {
+    id: "std.web",
+    title: "std.web",
+    summary: "Client-side interactive DOM APIs (`dom_on`, `dom_set_text`, `dom_toggle_class`), localStorage persistence, routing, and safe HTML builders.",
+    example: `use "std.web"\n\ndefine on_hit() returns void\n    dom_set_text("#status", "Clicked from DOG!")\nend\n\ndom_mount("#app", web_card("App", web_button("go", "Run")))\ndom_on("#go", "click", "on_hit")`,
+    functions: [
+      { name: "dom_mount(selector, html)", sig: "(text, text) -> void", desc: "Mount compiled HTML UI into `#app` or any DOM selector." },
+      { name: "dom_on(selector, event, fn_name)", sig: "(text, text, text) -> void", desc: "Attach a live browser event listener (`click`, `input`, etc.) to a DOG function." },
+      { name: "dom_set_text(sel, val) / dom_set_html(sel, html)", sig: "(text, text) -> void", desc: "Update element textContent or innerHTML interactively." },
+      { name: "dom_get_value(sel) / dom_set_value(sel, val)", sig: "(text, ...) -> text | void", desc: "Read or update input/textarea values directly from DOG." },
+      { name: "dom_add_class / remove_class / toggle_class", sig: "(text, text) -> void | bool", desc: "Manipulate CSS classes dynamically in response to user actions." },
+      { name: "dom_set_style(sel, prop, val)", sig: "(text, text, text) -> void", desc: "Apply inline CSS properties cleanly." },
+      { name: "web_nav / web_card / web_grid / web_button / web_input", sig: "... -> text", desc: "Composable, XSS-escaped UI component builders." },
+      { name: "web_storage_set(k, v) / web_storage_get(k)", sig: "(text, ...) -> void | text", desc: "Read and persist browser `localStorage` state." },
+    ],
+  },
 ];
 
 export const SYNTAX_SHOWCASE = {
@@ -442,12 +473,265 @@ dog build examples/hello.dg --native`,
 ];
 
 export const CLI_COMMANDS = [
-  { cmd: "dog learn [topic] [--run]", desc: "6 interactive beginner lessons with live execution (`basics`, `english`, `input`, `functions`, `data`, `errors`)." },
+  { cmd: "dog learn [topic] [--run]", desc: "7 interactive beginner lessons with live execution (`basics`, `english`, `input`, `functions`, `data`, `errors`, `web`)." },
+  { cmd: "dog web <build|css|serve>", desc: "Compile `.dg` browser apps + `.dgss` DOG CSS stylesheets into standalone HTML/CSS/JS websites." },
   { cmd: "dog run <file.dg | file.dgb>", desc: "Run scripts or SHA-256 verified bytecode bundles with stack traces." },
   { cmd: "dog studio [dir]", desc: "Split-pane terminal IDE with live IntelliSense, auto soft word-wrap (<72 cols), and Explorer." },
   { cmd: "dog edit [file.dg]", desc: "256-color mobile-friendly editor with contextual suggestions, snippets, and formatting." },
   { cmd: "dog debug <file.dg>", desc: "Interactive step, breakpoint, and variable-inspector debugger (`n`, `c`, `b <line>`, `p`)." },
   { cmd: "dog watch <file.dg>", desc: "Monitor entry script and transitive `use` dependencies and auto-rerun on changes." },
   { cmd: "dog server [dir] [port]", desc: "Multi-threaded static HTTP file server for local and LAN hosting." },
-  { cmd: "dog add <pkg|url> / dog remove", desc: "DOG Hub package manager with custom [messages] and verified SHA-256 `dog.lock`." },
+];
+
+export const WEB_STUDIO_PRESETS = [
+  {
+    id: "interactive_counter",
+    label: "Interactive Site & Notes",
+    title: "DOG Interactive Site",
+    code: `# Client-side interactive website written in DOG!
+use "std.web"
+
+var clicks = 0
+var accent_on = false
+
+define render_ui() returns void
+    let nav = web_nav("My DOG Site", {"Counter": "#counter", "Notes": "#notes"})
+    let hero = web_card("Interactive Counter", $"Button clicks: <strong id=\\"count-val\\" data-testid=\\"count\\">{clicks}</strong><div style=\\"margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;\\">{web_button("inc-btn", "+1 Click")}{web_button("mode-btn", "Toggle Theme")}</div>")
+    let form = web_card("Live Note Box", $"<div style=\\"display:grid;gap:10px;\\">{web_input("note-box", "Type a banner message...", "")}{web_button("save-btn", "Update Banner")}</div>")
+    let status = html_el("p", {"id": "status-bar", "class": "dg-banner"}, "Click a button or type a note to test DOG DOM events.")
+    dom_mount("#app", html_el("main", {"id": "shell", "class": "dg-shell"}, $"{nav}{hero}{form}{status}"))
+    dom_on("#inc-btn", "click", "on_increment")
+    dom_on("#mode-btn", "click", "on_toggle_mode")
+    dom_on("#save-btn", "click", "on_save_note")
+end
+
+define on_increment() returns void
+    increase clicks by 1
+    dom_set_text("#count-val", text(clicks))
+    dom_set_text("#status-bar", $"DOG click handler fired! Clicks = {clicks}")
+    print($"Clicks updated to {clicks}")
+end
+
+define on_toggle_mode() returns void
+    set accent_on to dom_toggle_class("#shell", "is-warm")
+    if accent_on then
+        dom_set_text("#status-bar", "Warm accent canvas enabled via dom_toggle_class().")
+    else
+        dom_set_text("#status-bar", "Clean paper canvas restored.")
+    end
+end
+
+define on_save_note() returns void
+    let note = trim(dom_get_value("#note-box"))
+    if note is "" then
+        dom_set_text("#status-bar", "Enter text in the input field first.")
+    else
+        dom_set_text("#status-bar", $"Updated from input: {note}")
+        web_storage_set("dog_demo_note", note)
+        dom_set_value("#note-box", "")
+    end
+end
+
+render_ui()`,
+    css: `# DOG Style Sheet (.dgss) compiled directly to browser CSS
+vars
+    bg: #F7F6F2
+    surface: #FFFFFF
+    ink: #181A1F
+    accent: #C85A11
+    accent-hover: #A6480B
+    border: #E2DFD7
+    radius: 10px
+end
+
+rule *
+    box-sizing: border-box
+end
+
+rule body
+    margin: 0
+    bg: $bg
+    ink: $ink
+    font: system-ui, -apple-system, sans-serif
+    leading: 1.6
+end
+
+rule .dg-shell
+    max-w: 680px
+    mx: auto
+    pad: 20px
+    flex: col
+    gap: 14px
+    radius: $radius
+    ease: background 180ms ease
+end
+
+rule .dg-shell.is-warm
+    bg: #FDF2EA
+    border: 1px solid $accent
+end
+
+rule .dg-nav
+    display: flex
+    justify: space-between
+    align: center
+    pad: 12px 16px
+    bg: $surface
+    border: 1px solid $border
+    radius: $radius
+end
+
+rule .dg-nav-links
+    display: flex
+    gap: 14px
+end
+
+rule .dg-nav a
+    ink: $ink
+    text-decoration: none
+    weight: 600
+end
+
+rule .dg-card
+    bg: $surface
+    border: 1px solid $border
+    radius: $radius
+    pad: 16px
+    shadow: sm
+end
+
+rule .dg-card h3
+    margin: 0 0 8px
+    size: 1.05rem
+end
+
+rule .dg-btn
+    bg: $accent
+    ink: #FFFFFF
+    border: none
+    radius: 6px
+    py: 8px
+    px: 14px
+    weight: 600
+    cursor: pointer
+
+    on hover
+        bg: $accent-hover
+    end
+end
+
+rule .dg-input
+    w: 100%
+    py: 8px
+    px: 12px
+    radius: 6px
+    border: 1px solid $border
+    bg: $surface
+    ink: $ink
+end
+
+rule .dg-banner
+    pad: 10px 14px
+    bg: $surface
+    border: 1px solid $border
+    radius: 6px
+    weight: 500
+    margin: 0
+end
+
+on mobile
+    rule .dg-shell
+        pad: 12px
+    end
+end`,
+  },
+  {
+    id: "landing_showcase",
+    label: "Studio Landing Page",
+    title: "Built with DOG Web",
+    code: `use "std.web"
+
+var selected = "Starter"
+
+define choose_starter() returns void
+    set selected to "Starter"
+    dom_set_text("#plan-out", "Selected plan: Starter ($0/mo local static host)")
+end
+
+define choose_pro() returns void
+    set selected to "Studio Pro"
+    dom_set_text("#plan-out", "Selected plan: Studio Pro (Full HTTP + WebSocket API)")
+end
+
+let cards = web_grid(2, [
+    web_card("Starter", $"Pure static HTML/CSS/JS bundle compiled by DOG.<div style=\\"margin-top:12px\\">{web_button("pick-a", "Pick Starter")}</div>"),
+    web_card("Studio Pro", $"Live HTTP routes, WebSockets & KV database built in.<div style=\\"margin-top:12px\\">{web_button("pick-b", "Pick Studio Pro")}</div>")
+])
+let banner = html_el("p", {"id": "plan-out", "class": "dg-banner"}, $"Active choice: {selected}")
+dom_mount("#app", html_el("main", {"class": "dg-shell"}, $"{cards}{banner}"))
+dom_on("#pick-a", "click", "choose_starter")
+dom_on("#pick-b", "click", "choose_pro")`,
+    css: `vars
+    bg: #16181D
+    surface: #1E2128
+    ink: #ECEFF4
+    accent: #C85A11
+    border: #2B2F3A
+end
+
+rule *
+    box-sizing: border-box
+end
+
+rule body
+    margin: 0
+    bg: $bg
+    ink: $ink
+    font: system-ui, sans-serif
+end
+
+rule .dg-shell
+    max-w: 720px
+    mx: auto
+    pad: 22px
+    flex: col
+    gap: 16px
+end
+
+rule .dg-grid
+    gap: 16px
+end
+
+rule .dg-card
+    bg: $surface
+    border: 1px solid $border
+    radius: 10px
+    pad: 18px
+end
+
+rule .dg-btn
+    bg: $accent
+    ink: #FFFFFF
+    border: none
+    radius: 6px
+    py: 8px
+    px: 14px
+    weight: 600
+    cursor: pointer
+end
+
+rule .dg-banner
+    bg: $surface
+    border: 1px solid $border
+    radius: 8px
+    pad: 12px 16px
+    margin: 0
+end
+
+on mobile
+    rule .dg-grid
+        cols: 1
+    end
+end`,
+  },
 ];

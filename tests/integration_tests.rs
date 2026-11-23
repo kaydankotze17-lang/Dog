@@ -1894,6 +1894,102 @@ fn dog_learn_lessons_and_english_docs_work() {
     assert!(builtin_signature_help("print").is_some());
 }
 
+#[test]
+fn dog_web_css_and_dom_system_works() {
+    let dgss = fs::read_to_string("examples/dog_website.dgss")
+        .expect("read examples/dog_website.dgss");
+    let compiled_css = dog_lang::web::compile_dog_css(&dgss)
+        .expect("examples/dog_website.dgss compiles to valid CSS");
+    assert!(compiled_css.contains(":root {"));
+    assert!(compiled_css.contains("--accent: #C85A11;"));
+    assert!(compiled_css.contains("background: var(--surface);"));
+    assert!(compiled_css.contains(".dg-btn:hover {"));
+    assert!(compiled_css.contains("@media (max-width: 768px) {"));
+    assert!(compiled_css.contains("grid-template-columns: repeat(1, minmax(0, 1fr));"));
 
+    let site_src = fs::read_to_string("examples/dog_website.dg")
+        .expect("read examples/dog_website.dg");
+    let mut io = MockIo::new(vec![]);
+    run_source_with_io("examples/dog_website.dg", &site_src, &mut io)
+        .expect("examples/dog_website.dg executes cleanly with simulated DOM");
 
+    let bundle = dog_lang::web::build_web_bundle(&site_src, Some(&dgss), "DOG Demo Site")
+        .expect("web bundle builds cleanly");
+    assert!(bundle.index_html.contains("<title>DOG Demo Site</title>"));
+    assert!(bundle.index_html.contains("<div id=\"app\"></div>"));
+    assert!(bundle.js.contains("__dogFns[\"on_increment\"] = on_increment;"));
+    assert!(bundle.js.contains("__dogWeb.domOn(\"#inc-btn\", \"click\", \"on_increment\")"));
+    assert!(bundle.css.contains("--bg: #F7F6F2;"));
 
+    assert_eq!(resolve_std_call("std.css", "compile").unwrap(), "dog_css");
+    assert_eq!(resolve_std_call("std.web", "on").unwrap(), "dom_on");
+    assert!(STD_MODULES.iter().any(|m| m.name == "std.css"));
+    assert!(STD_MODULES.iter().any(|m| m.name == "std.web"));
+    assert!(handle_docs(Some("std.web")).contains("dom_on"));
+    assert!(handle_docs(Some("std.css")).contains("dog_css"));
+
+    let web_lesson = handle_learn(Some("web"), true, Personality::Normal)
+        .expect("web lesson executes cleanly");
+    assert!(web_lesson.contains("DOG CSS"));
+}
+
+#[test]
+fn inline_style_blocks_and_web_build_to_disk_work() {
+    let src = r#"
+style theme
+    --bg: "#F7F6F2"
+end
+
+style ".panel"
+    bg: "$bg"
+    pad: "20px"
+    radius: "12px"
+    on hover
+        bg: "#FFFFFF"
+    end
+    on mobile
+        pad: "12px"
+    end
+end
+
+var clicks = 0
+
+define bump()
+    increase clicks by 1
+    dom_set_text("#out", $"Clicks: {clicks}")
+end
+
+dom_mount("#app", web_card("Inline Style", "Zero raw CSS/JS", web_button("go", "Go")))
+dom_on("#go", "click", "bump")
+assert(contains(css_bundle(), ".panel:hover"), "inline style rules populate css_bundle()")
+"#;
+    let formatted = format_source(src);
+    assert!(formatted.contains("    style") || formatted.contains("style \".panel\""));
+    assert!(formatted.contains("    on hover\n        bg: \"#FFFFFF\"\n    end"));
+
+    let mut io = MockIo::new(vec![]);
+    run_source_with_io("inline_web.dg", src, &mut io)
+        .expect("inline style blocks run cleanly under DOG interpreter");
+
+    let bundle = dog_lang::web::build_web_bundle(src, None, "Inline Studio")
+        .expect("inline style program compiles to browser JS + CSS bundle");
+    assert!(bundle.css.contains(":root {"));
+    assert!(bundle.css.contains(".panel:hover"));
+    assert!(bundle.js.contains("__dogWeb.styleRule(\".panel\""));
+    assert!(bundle.js.contains("__dogWeb.styleMedia(\"(max-width: 640px)\", \".panel\""));
+    assert!(bundle.index_html.contains("var(--bg)"));
+
+    let out_dir = temp_file("dog_web_disk_dist");
+    let dg_path = temp_file("dog_web_disk_app.dg");
+    fs::write(&dg_path, src).expect("write temp dg");
+    let art = dog_lang::web::build_web_bundle_to_disk(
+        dg_path.to_str().unwrap(),
+        Some(out_dir.to_str().unwrap()),
+    )
+    .expect("build_web_bundle_to_disk writes dist files");
+    assert!(art.index_html_path.exists());
+    assert!(art.css_path.exists());
+    assert!(art.js_path.exists());
+    let _ = fs::remove_dir_all(&out_dir);
+    let _ = fs::remove_file(&dg_path);
+}

@@ -57,6 +57,34 @@ pub struct MatchCase {
     pub span: Span,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct StyleRuleDecl {
+    pub prop: String,
+    pub value: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StyleVariantBlock {
+    pub condition: String,
+    pub rules: Vec<StyleRuleDecl>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StyleRuleDecl {
+    pub prop: String,
+    pub value: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StyleVariantBlock {
+    pub condition: String,
+    pub rules: Vec<StyleRuleDecl>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindingKind {
     Let,
@@ -273,6 +301,12 @@ pub enum Stmt {
         params: Vec<Param>,
         return_type: TypeRef,
         body: Vec<Stmt>,
+        span: Span,
+    },
+    StyleDef {
+        selector: Expr,
+        rules: Vec<StyleRuleDecl>,
+        variants: Vec<StyleVariantBlock>,
         span: Span,
     },
     Return {

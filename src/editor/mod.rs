@@ -330,6 +330,14 @@ impl EditorBuffer {
                 | "case"
                 | "try"
                 | "catch"
+                | "style"
+                | "hover"
+                | "focus"
+                | "active"
+                | "mobile"
+                | "tablet"
+                | "desktop"
+                | "dark"
         ) || trimmed_left.ends_with('{')
         {
             4
@@ -641,6 +649,17 @@ impl EditorBuffer {
                 format!("{pad}if len(webhook) > 0"),
                 format!("{pad}    say(http_post(webhook, json_stringify(payload), \"application/json\"))"),
                 format!("{pad}end"),
+            ],
+            "website" | "web" | "style" => vec![
+                format!("{pad}style \".card\""),
+                format!("{pad}    bg: \"#FFFFFF\""),
+                format!("{pad}    pad: \"20px\""),
+                format!("{pad}    radius: \"14px\""),
+                format!("{pad}    on hover"),
+                format!("{pad}        bg: \"#F8FAFC\""),
+                format!("{pad}    end"),
+                format!("{pad}end"),
+                format!("{pad}dom_mount(\"#app\", web_card(\"Hello DOG Web\", \"Built without raw JS or CSS!\", \"<button id=\\\"btn\\\">Click</button>\"))"),
             ],
             _ => return false,
         };
@@ -1627,6 +1646,35 @@ pub fn builtin_signature_help(name: &str) -> Option<&'static str> {
         "json_write" => Some("json_write(path: text, val) -> void  | Write formatted JSON to file"),
         "toml_parse" => Some("toml_parse(raw: text) -> map<text,text>  | Parse TOML tables and key=value pairs"),
         "cookie_parse" => Some("cookie_parse(header: text) -> map<text,text>  | Parse HTTP Cookie header pairs"),
+        "dog_css" => Some("dog_css(dsl: text) -> text  | Compile DOG Style Sheet (.dgss) rules/vars/shorthands to CSS"),
+        "css_rule" => Some("css_rule(sel: text, props: map<text,text>) -> text  | Build a CSS rule with DOG shorthands"),
+        "css_vars" => Some("css_vars(vars: map<text,text>) -> text  | Build a :root CSS variables block"),
+        "css_media" => Some("css_media(query: text, css: text) -> text  | Wrap CSS inside @media (mobile|tablet|desktop|dark)"),
+        "css_keyframes" => Some("css_keyframes(name: text, steps: map<text,text>) -> text  | Build @keyframes animation"),
+        "css_theme" => Some("css_theme(bg, surface, ink, accent, font) -> text  | Generate complete responsive base CSS"),
+        "css_bundle" => Some("css_bundle(parts: list<text>) -> text  | Combine multiple CSS strings cleanly"),
+        "html_el" => Some("html_el(tag: text, attrs: map<text,text>, content: text) -> text  | Build escaped HTML element"),
+        "html_page" => Some("html_page(title: text, css: text, body: text) -> text  | Render complete HTML5 document"),
+        "web_nav" => Some("web_nav(brand: text, links: map<text,text>) -> text  | Render responsive top navigation bar"),
+        "web_card" => Some("web_card(title: text, body: text) -> text  | Render structured .dg-card article"),
+        "web_grid" => Some("web_grid(cols: number, items: list<text>) -> text  | Render responsive CSS grid"),
+        "web_button" => Some("web_button(id: text, label: text) -> text  | Render accessible button"),
+        "web_input" => Some("web_input(id: text, placeholder: text, value: text) -> text  | Render styled text input"),
+        "dom_mount" => Some("dom_mount(selector: text, html: text) -> void  | Mount HTML UI into DOM container"),
+        "dom_set_text" => Some("dom_set_text(selector: text, value: text) -> void  | Update element textContent safely"),
+        "dom_set_html" => Some("dom_set_html(selector: text, html: text) -> void  | Update element innerHTML"),
+        "dom_get_value" => Some("dom_get_value(selector: text) -> text  | Read input/textarea/select value"),
+        "dom_set_value" => Some("dom_set_value(selector: text, value: text) -> void  | Set input field value"),
+        "dom_add_class" => Some("dom_add_class(selector: text, cls: text) -> void  | Add CSS class to element"),
+        "dom_remove_class" => Some("dom_remove_class(selector: text, cls: text) -> void  | Remove CSS class"),
+        "dom_toggle_class" => Some("dom_toggle_class(selector: text, cls: text) -> bool  | Toggle CSS class state"),
+        "dom_set_style" => Some("dom_set_style(selector: text, prop: text, value: text) -> void  | Apply inline CSS property"),
+        "dom_on" => Some("dom_on(selector: text, event: text, fn_name: text) -> void  | Bind DOM event to DOG function"),
+        "web_title" => Some("web_title(title: text) -> void  | Update browser document.title"),
+        "web_storage_set" => Some("web_storage_set(key: text, value: text) -> void  | Persist key in localStorage"),
+        "web_storage_get" => Some("web_storage_get(key: text) -> text  | Read key from localStorage"),
+        "web_route" => Some("web_route() -> text  | Get current browser route/hash"),
+        "web_navigate" => Some("web_navigate(path: text) -> void  | Navigate browser hash/route"),
         _ => None,
     }
 }
@@ -1636,7 +1684,7 @@ fn is_zero_arg_builtin(name: &str) -> bool {
         name,
         "cwd" | "args" | "time_now_ms" | "time_utc" | "os_name" | "os_arch"
             | "uuid_v4" | "cli_supports_color" | "cli_is_tty" | "math_pi"
-            | "math_e" | "temp_dir" | "local_ip" | "read_key"
+            | "math_e" | "temp_dir" | "local_ip" | "read_key" | "web_route"
     )
 }
 
@@ -1724,6 +1772,7 @@ fn keyword_help(kw: &str) -> Option<&'static str> {
         "while" => Some("while bool_cond ... end  | Loop while condition is true"),
         "repeat" => Some("repeat count ... end  | Repeat body N times"),
         "use" => Some("use \"other.dg\"  | Import functions/types from local .dg file"),
+        "style" => Some("style \".card\" ... end  | Declarative DOG CSS block with hover/mobile variants"),
         _ => None,
     }
 }
