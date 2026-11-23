@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DOG Programming Language — Official Website</title>
+    <meta
+      name="description"
+      content="DOG (dog-lang) is a strictly typed, English-readable programming language built in zero-unsafe Rust with 10 std modules, built-in networking, and native Android Termux support."
+    />
+    <meta property="og:title" content="DOG Programming Language — Official Website" />
+    <meta
+      property="og:description"
+      content="Code that reads like English. Safety that compiles cleanly. Zero external crates, 208 built-ins, and native Termux support."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a href="#top" class="brand-wordmark">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 6L9 3L14 6L19 4L20 12L15 19L9 21L4 14V6Z" stroke="#181A1F" stroke-width="1.8" stroke-linejoin="round" />
+            <path d="M9 3L14 6L12 13L7 11L9 3Z" fill="#C85A11" />
+          </svg>
+          <span>DOG Language</span>
+        </a>
+
+        <nav class="nav-links" aria-label="Primary navigation">
+          <a href="#syntax" class="nav-link">Syntax</a>
+          <a href="#playground" class="nav-link">Playground</a>
+          <a href="#stdlib" class="nav-link">Standard Library</a>
+          <a href="#install" class="nav-link">Install</a>
+          <a href="#docs" class="nav-link">Docs</a>
+        </nav>
+
+        <div class="header-actions">
+          <a href="#install" class="btn btn-primary header-cta">Get Started</a>
+          <button
+            id="mobile-menu-toggle"
+            type="button"
+            class="mobile-menu-btn"
+            aria-label="Toggle navigation menu"
+            aria-expanded="false"
+            aria-controls="mobile-drawer"
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M3 5H17M3 10H17M3 15H17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <nav id="mobile-drawer" class="mobile-drawer" aria-label="Mobile navigation">
+        <a href="#syntax">Syntax</a>
+        <a href="#playground">Playground</a>
+        <a href="#stdlib">Standard Library</a>
+        <a href="#install">Install</a>
+        <a href="#docs">Docs</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero-section">
+        <div class="container">
+          <div class="hero-grid">
+            <div class="hero-copy">
+              <p class="eyebrow-meta">
+                DOG v0.3.0 <span aria-hidden="true">·</span> Zero-Unsafe Rust Core <span aria-hidden="true">·</span> Linux, macOS, Windows &amp; Android Termux
+              </p>
+              <h1 class="hero-title">Code that reads like English. Safety that compiles cleanly.</h1>
+              <p class="hero-subtitle">
+                Write clear, English-readable programs backed by a strict static type checker, 10 modular
+                standard library namespaces, built-in HTTP and WebSocket networking, and an on-device mobile IDE.
+              </p>
+              <div class="hero-actions">
+                <a href="#install" class="btn btn-accent">Install DOG</a>
+                <a href="#playground" class="text-link-action">Try Live Sandbox</a>
+              </div>
+            </div>
+
+            <figure class="hero-media" style="margin: 0;">
+              <img
+                src="/assets/dog_hero_workbench.jpg"
+                alt="Minimalist laptop and Android Termux smartphone workbench running DOG code side by side"
+                referrerpolicy="no-referrer"
+                data-fallback-id="hero-img-fallback"
+              />
+              <div
+                id="hero-img-fallback"
+                style="display:none;flex:1;min-height:280px;align-items:center;justify-content:center;padding:24px;background:linear-gradient(135deg,#EFECE5,#E2DFD7);color:#181A1F;font-weight:600;"
+              >
+                DOG Cross-Platform Workbench (Desktop &amp; Android Termux)
+              </div>
+              <figcaption class="media-caption-bar">
+                <span>Runs natively on desktop &amp; ARMv7 / AArch64 phones</span>
+                <code>dog learn --run</code>
+              </figcaption>
+            </figure>
+          </div>
+
+          <div class="proof-strip" aria-label="DOG language engine facts">
+            <div class="proof-item">
+              <p class="proof-value">0</p>
+              <p class="proof-label">External Rust crate dependencies</p>
+            </div>
+            <div class="proof-item">
+              <p class="proof-value">0</p>
+              <p class="proof-label">Unsafe memory blocks in core</p>
+            </div>
+            <div class="proof-item">
+              <p class="proof-value">10</p>
+              <p class="proof-label">Discoverable std.* modules</p>
+            </div>
+            <div class="proof-item">
+              <p class="proof-value">208</p>
+              <p class="proof-label">Strictly typed built-in functions</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="syntax" class="section">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">01. Natural Syntax, Strict Guarantees</h2>
+              <p class="section-lead">
+                Read and write natural English phrases or concise classic syntax—both lower to the exact same strictly typed AST and Rust transpiler.
+              </p>
+            </div>
+            <div class="segmented-bar" role="tablist" aria-label="Syntax dialect comparison">
+              <button type="button" class="tab-btn is-active" data-syntax-dialect="english" role="tab" aria-selected="true">
+                English Style
+              </button>
+              <button type="button" class="tab-btn" data-syntax-dialect="classic" role="tab" aria-selected="false">
+                Classic Style
+              </button>
+            </div>
+          </div>
+
+          <div class="segmented-bar" role="tablist" aria-label="Code showcase examples" style="margin-bottom: 20px;">
+            <button type="button" class="tab-btn is-active" data-syntax-topic="english" role="tab" aria-selected="true">
+              English Basics
+            </button>
+            <button type="button" class="tab-btn" data-syntax-topic="web" role="tab" aria-selected="false">
+              Web Server
+            </button>
+            <button type="button" class="tab-btn" data-syntax-topic="bot" role="tab" aria-selected="false">
+              Discord Bot
+            </button>
+            <button type="button" class="tab-btn" data-syntax-topic="errors" role="tab" aria-selected="false">
+              Error Safety
+            </button>
+          </div>
+
+          <div class="showcase-grid">
+            <div class="code-panel">
+              <div class="code-panel-bar">
+                <span id="syntax-file-label">examples/english_basics.dg</span>
+                <div class="code-panel-actions">
+                  <button type="button" id="open-in-playground-btn" class="code-action-btn">Open in Playground</button>
+                  <button type="button" id="copy-syntax-btn" class="code-action-btn">Copy</button>
+                </div>
+              </div>
+              <pre id="syntax-code-view" class="code-pre"></pre>
+            </div>
+
+            <aside class="showcase-notes">
+              <div>
+                <h3 style="margin: 0 0 16px; font-family: var(--font-display); font-size: 1.15rem;">
+                  Why DOG stays readable
+                </h3>
+                <ul id="syntax-notes-list" class="notes-list"></ul>
+              </div>
+              <div style="font-size: 0.875rem; color: var(--ink-muted); border-top: 1px solid var(--border); padding-top: 16px;">
+                Every block ends cleanly with <code>end</code>—immune to copy-paste indentation breaks on mobile keyboards.
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section id="playground" class="section">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">02. Live Browser Playground</h2>
+              <p class="section-lead">
+                Run DOG syntax directly in your browser with strict type checks, English control flow, string interpolation, and structured diagnostics.
+              </p>
+            </div>
+          </div>
+
+          <div class="playground-toolbar">
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <label for="playground-preset" style="font-size: 0.875rem; font-weight: 600; color: var(--ink-muted);">
+                Preset
+              </label>
+              <select
+                id="playground-preset"
+                class="search-field"
+                style="min-width: 220px;"
+                aria-label="Choose a DOG playground preset"
+              ></select>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <button type="button" id="playground-reset-btn" class="btn btn-secondary">Reset</button>
+              <button type="button" id="playground-run-btn" class="btn btn-accent">Run Code</button>
+            </div>
+          </div>
+
+          <div class="playground-grid">
+            <div class="code-panel">
+              <div class="code-panel-bar">
+                <span>playground.dg</span>
+                <span>Strict Typing Active</span>
+              </div>
+              <textarea
+                id="playground-editor"
+                class="editor-textarea"
+                spellcheck="false"
+                aria-label="DOG source code editor"
+              ></textarea>
+            </div>
+
+            <div class="output-panel">
+              <div class="output-bar">
+                <div class="segmented-bar" role="tablist" aria-label="Playground output views" style="padding: 2px;">
+                  <button type="button" class="tab-btn is-active" data-output-tab="console" role="tab" aria-selected="true">
+                    Console Output
+                  </button>
+                  <button type="button" class="tab-btn" data-output-tab="ast" role="tab" aria-selected="false">
+                    Declarations &amp; Types
+                  </button>
+                </div>
+                <span id="playground-status" class="output-status">Ready</span>
+              </div>
+              <div id="playground-output" class="output-body" role="region" aria-live="polite"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="stdlib" class="section">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">03. Modular Standard Library</h2>
+              <p class="section-lead">
+                10 clean namespaces covering interactive terminal UI, HTTP/WebSockets, JSON/TOML/CSV, SHA-256 cryptography, and local KV persistence.
+              </p>
+            </div>
+          </div>
+
+          <div class="stdlib-controls">
+            <div id="stdlib-module-tabs" class="segmented-bar" role="tablist" aria-label="Standard library modules"></div>
+            <input
+              id="stdlib-search"
+              type="search"
+              class="search-field"
+              placeholder="Search functions (e.g. http, sha256, ask)"
+              aria-label="Filter standard library functions"
+            />
+          </div>
+
+          <p id="stdlib-module-summary" style="margin: 0 0 18px; color: var(--ink-muted); font-size: 0.95rem;"></p>
+
+          <div class="stdlib-layout">
+            <div id="stdlib-fn-rows" class="fn-table-card"></div>
+
+            <div style="display: grid; gap: 20px;">
+              <div class="code-panel">
+                <div class="code-panel-bar">
+                  <span>Module Usage</span>
+                  <button type="button" id="copy-stdlib-example-btn" class="code-action-btn">Copy</button>
+                </div>
+                <pre id="stdlib-example-code" class="code-pre"></pre>
+              </div>
+
+              <div class="emblem-card">
+                <img
+                  src="/assets/dog_emblem_badge.jpg"
+                  alt="DOG Programming Language brushed metal geometric hound emblem"
+                  referrerpolicy="no-referrer"
+                  data-fallback-id="emblem-img-fallback"
+                />
+                <div
+                  id="emblem-img-fallback"
+                  style="display:none;height:180px;align-items:center;justify-content:center;background:#EFECE5;font-weight:700;"
+                >
+                  DOG Language Mark
+                </div>
+                <div class="emblem-card-body">
+                  <h3 class="emblem-card-title">Zero External Dependencies</h3>
+                  <p style="margin: 0; font-size: 0.9rem; color: var(--ink-muted);">
+                    Every lexer, type checker, bytecode bundler, HTTP/WebSocket stack, SHA-256 cipher, and terminal editor ships directly inside one self-contained Rust crate.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="install" class="section">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">04. Install &amp; CLI Toolchain</h2>
+              <p class="section-lead">
+                Install prebuilt Termux APT packages in seconds or compile from source on desktop and mobile hosts.
+              </p>
+            </div>
+            <div id="install-tabs" class="segmented-bar" role="tablist" aria-label="Installation platform"></div>
+          </div>
+
+          <div class="install-grid">
+            <div class="install-box">
+              <p id="install-subtitle" style="margin: 0 0 16px; color: var(--ink-muted);"></p>
+              <div class="code-panel" style="margin-bottom: 16px;">
+                <div class="code-panel-bar">
+                  <span>Terminal Setup</span>
+                  <button type="button" id="copy-install-btn" class="code-action-btn">Copy</button>
+                </div>
+                <pre id="install-cmd-primary" class="code-pre"></pre>
+              </div>
+              <p id="install-alt-label" style="margin: 0 0 10px; font-size: 0.875rem; font-weight: 600; color: var(--ink-muted);"></p>
+              <div class="code-panel">
+                <pre id="install-cmd-alt" class="code-pre" style="padding: 14px 18px;"></pre>
+              </div>
+            </div>
+
+            <div id="cli-command-list" class="cli-list" aria-label="DOG CLI tools reference"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="docs" class="section">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">05. Official Documentation &amp; Examples</h2>
+              <p class="section-lead">
+                Browse the live specification, error code reference, capability catalog, and real `.dg` examples straight from the repository.
+              </p>
+            </div>
+          </div>
+
+          <div class="docs-grid">
+            <aside id="docs-sidebar-list" class="docs-nav" aria-label="Repository documentation files"></aside>
+            <div class="doc-viewer">
+              <div class="doc-viewer-bar">
+                <span id="doc-viewer-title">docs/STANDARD_LIBRARY.md</span>
+                <button type="button" id="copy-doc-btn" class="code-action-btn" style="background: var(--surface); color: var(--ink); border-color: var(--border-strong);">
+                  Copy File
+                </button>
+              </div>
+              <pre id="doc-viewer-content" class="doc-content"></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <div>
+          <strong>DOG Programming Language</strong> <span aria-hidden="true">·</span> v0.3.0 <span aria-hidden="true">·</span> MIT License
+        </div>
+        <div class="footer-links">
+          <a href="#syntax">Syntax</a>
+          <a href="#playground">Playground</a>
+          <a href="#stdlib">Standard Library</a>
+          <a href="#install">Install</a>
+          <a href="#docs">Docs</a>
+          <a href="https://github.com/kaydankotze17-lang/Dog" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
+        </div>
+      </div>
+    </footer>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node server.mjs",
     "start": "node server.mjs",
-    "build": "node --check server.mjs",
-    "lint": "node --check server.mjs"
+    "build": "node --check server.mjs && node --check website/sandbox.js && node --check website/data.js && node --check website/app.js",
+    "lint": "node --check server.mjs && node --check website/sandbox.js && node --check website/data.js && node --check website/app.js",
+    "test": "node --test website/sandbox.test.mjs"
   }
 }
