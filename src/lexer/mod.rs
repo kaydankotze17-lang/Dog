@@ -15,6 +15,9 @@ pub enum TokenKind {
     Const,
     If,
     Otherwise,
+    Else,
+    Elif,
+    Unless,
     End,
     Or,
     And,
@@ -22,8 +25,11 @@ pub enum TokenKind {
     True,
     False,
     Fn,
+    Define,
+    Function,
     Return,
     While,
+    Until,
     Repeat,
     For,
     In,
@@ -307,13 +313,40 @@ impl Lexer {
                 }
                 other => {
                     let span = self.span();
+                    let (why, fix, tip) = match other {
+                        '!' => (
+                            "DOG uses English logical words instead of C-style '!' negation.",
+                            "Write `not condition` instead of `!condition` (keep `!=` for not-equal).",
+                            "DOG reads like English: `if not ready` or `if name is not \"\"`.",
+                        ),
+                        '&' => (
+                            "DOG uses the English word 'and' instead of '&' or '&&'.",
+                            "Replace `&&` with `and`, e.g. `if a > 0 and b > 0`.",
+                            "Logical operators in DOG are words: `and`, `or`, `not`.",
+                        ),
+                        '|' => (
+                            "DOG uses the English word 'or' instead of '|' or '||'.",
+                            "Replace `||` with `or`, e.g. `if role is \"admin\" or role is \"mod\"`.",
+                            "Logical operators in DOG are words: `and`, `or`, `not`.",
+                        ),
+                        ';' => (
+                            "DOG uses newlines to end statements and does not require semicolons.",
+                            "Remove the trailing ';' at the end of the line.",
+                            "One clean statement per line keeps DOG easy to read.",
+                        ),
+                        _ => (
+                            "The lexer encountered a character that is not valid DOG syntax.",
+                            "Remove the unexpected character or wrap text inside double quotes.",
+                            "DOG likes clean syntax, not stray punctuation.",
+                        ),
+                    };
                     return Err(DogDiagnostic::new(
                         "E001",
                         format!("Unexpected character '{other}'."),
                         span,
-                        "The lexer encountered a character that is not valid DOG syntax.",
-                        "Remove the unexpected character or wrap text inside double quotes.",
-                        "DOG likes clean syntax, not stray punctuation.",
+                        why,
+                        fix,
+                        tip,
                         "Did your keyboard sneeze?",
                     ));
                 }
@@ -769,6 +802,9 @@ impl Lexer {
             "const" => TokenKind::Const,
             "if" => TokenKind::If,
             "otherwise" => TokenKind::Otherwise,
+            "else" => TokenKind::Else,
+            "elif" => TokenKind::Elif,
+            "unless" => TokenKind::Unless,
             "end" => TokenKind::End,
             "or" => TokenKind::Or,
             "and" => TokenKind::And,
@@ -776,8 +812,11 @@ impl Lexer {
             "true" => TokenKind::True,
             "false" => TokenKind::False,
             "fn" => TokenKind::Fn,
+            "define" => TokenKind::Define,
+            "function" => TokenKind::Function,
             "return" => TokenKind::Return,
             "while" => TokenKind::While,
+            "until" => TokenKind::Until,
             "repeat" => TokenKind::Repeat,
             "for" => TokenKind::For,
             "in" => TokenKind::In,

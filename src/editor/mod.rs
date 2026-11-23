@@ -44,21 +44,32 @@ pub struct EditorBuffer {
 const KEYWORD_CANDIDATES: &[(&str, &str)] = &[
     ("let ", "Immutable binding"),
     ("var ", "Mutable binding"),
+    ("set ", "English variable assignment (`set x to value`)"),
+    ("increase ", "English increment (`increase count by 1`)"),
+    ("decrease ", "English decrement (`decrease count by 1`)"),
     ("const ", "Module constant"),
-    ("if ", "Conditional block"),
+    ("if ", "Conditional block (`if cond then ...`)"),
+    ("elif ", "Chained conditional branch"),
+    ("else if ", "Chained conditional branch"),
+    ("else", "Fallback branch (alias for otherwise)"),
     ("otherwise if ", "Chained conditional branch"),
     ("otherwise", "Fallback branch"),
+    ("unless ", "Negated conditional block (`unless cond ... end`)"),
     ("match ", "Pattern match block"),
     ("case ", "Match arm"),
     ("try", "Error-handling block"),
     ("catch ", "Catch runtime error"),
     ("while ", "Condition loop"),
-    ("repeat ", "Fixed-count loop"),
-    ("for ", "Iterator loop"),
+    ("until ", "Loop until condition becomes true"),
+    ("repeat ", "Fixed-count loop (`repeat 5 times`)"),
+    ("for ", "Iterator or numeric range loop (`for i from 1 to 5`)"),
     ("fn ", "Function declaration"),
+    ("define ", "English function declaration (`define f(...) returns T`)"),
+    ("function ", "Function declaration (alias for fn)"),
     ("struct ", "Struct record definition"),
     ("enum ", "Enum variant definition"),
-    ("use ", "Import sibling .dg module"),
+    ("use ", "Import std.* or sibling .dg module"),
+    ("std.", "DOG modular standard library (std.io, std.net, ...)"),
     ("return ", "Return from function"),
     ("break", "Exit innermost loop"),
     ("continue", "Next loop iteration"),
@@ -74,14 +85,18 @@ const KEYWORD_CANDIDATES: &[(&str, &str)] = &[
 
 const SNIPPET_CATALOG: &[(&str, &str)] = &[
     ("fn", "fn my_fn(x: number) -> number ... end"),
+    ("define", "define greet(name: text) returns text ... end"),
     ("struct", "struct Item ... field: type ... end"),
     ("enum", "enum State ... Variant ... end"),
-    ("if", "if cond ... otherwise ... end"),
+    ("if", "if cond ... else ... end"),
+    ("unless", "unless blocked then ... end"),
     ("otherwise if", "otherwise if cond ..."),
-    ("match", "match value ... case ... otherwise ... end"),
+    ("match", "match value ... case ... else ... end"),
     ("try", "try ... catch err ... end"),
-    ("for", "for i in range(0, 5) ... end"),
+    ("for", "for i from 1 to 5 ... end"),
     ("while", "while cond ... end"),
+    ("until", "until ready ... end"),
+    ("english", "Beginner English-style DOG template"),
     ("http_server", "Local HTTP web server loop"),
     ("ws_server", "Local WebSocket echo server loop"),
     ("discord_bot", "Discord bot REST/webhook command bridge"),
@@ -232,7 +247,7 @@ impl EditorBuffer {
             }
         }
         self.insert_char(ch);
-        if matches!(ch, 'd' | 'e' | 'h') {
+        if matches!(ch, 'd' | 'e' | 'f' | 'h') {
             self.maybe_auto_dedent();
         }
     }
@@ -252,7 +267,7 @@ impl EditorBuffer {
             return;
         }
         let kw = left[leading..].trim();
-        if !matches!(kw, "end" | "otherwise" | "catch") {
+        if !matches!(kw, "end" | "otherwise" | "else" | "elif" | "catch") {
             return;
         }
         let prev_indent = (0..self.cursor_row)
@@ -299,10 +314,16 @@ impl EditorBuffer {
         let extra = if matches!(
             first_word,
             "if" | "otherwise"
+                | "else"
+                | "elif"
+                | "unless"
                 | "while"
+                | "until"
                 | "repeat"
                 | "for"
                 | "fn"
+                | "define"
+                | "function"
                 | "struct"
                 | "enum"
                 | "match"
@@ -518,9 +539,9 @@ impl EditorBuffer {
             .count();
         let pad = " ".repeat(indent_len);
         let snippet_lines: Vec<String> = match kind.trim().to_ascii_lowercase().as_str() {
-            "fn" => vec![
-                format!("{pad}fn my_fn(x: number) -> number"),
-                format!("{pad}    return x"),
+            "fn" | "define" | "function" => vec![
+                format!("{pad}define greet(name: text) returns text"),
+                format!("{pad}    return $\"Hello, {{name}}!\""),
                 format!("{pad}end"),
             ],
             "struct" => vec![
@@ -536,21 +557,26 @@ impl EditorBuffer {
                 format!("{pad}end"),
             ],
             "if" => vec![
-                format!("{pad}if true"),
+                format!("{pad}if true then"),
                 format!("{pad}    say(\"ok\")"),
-                format!("{pad}otherwise"),
+                format!("{pad}else"),
                 format!("{pad}    say(\"fallback\")"),
                 format!("{pad}end"),
             ],
-            "otherwise if" | "elseif" => vec![
-                format!("{pad}otherwise if cond"),
+            "unless" => vec![
+                format!("{pad}unless false then"),
+                format!("{pad}    say(\"running!\")"),
+                format!("{pad}end"),
+            ],
+            "otherwise if" | "elseif" | "elif" => vec![
+                format!("{pad}else if cond then"),
                 format!("{pad}    say(\"branch\")"),
             ],
             "match" => vec![
                 format!("{pad}match value"),
                 format!("{pad}    case 1"),
                 format!("{pad}        say(\"one\")"),
-                format!("{pad}    otherwise"),
+                format!("{pad}    else"),
                 format!("{pad}        say(\"other\")"),
                 format!("{pad}end"),
             ],
@@ -562,13 +588,27 @@ impl EditorBuffer {
                 format!("{pad}end"),
             ],
             "for" => vec![
-                format!("{pad}for i in range(0, 5)"),
+                format!("{pad}for i from 1 to 5"),
                 format!("{pad}    say(text(i))"),
                 format!("{pad}end"),
             ],
             "while" => vec![
                 format!("{pad}while true"),
                 format!("{pad}    break"),
+                format!("{pad}end"),
+            ],
+            "until" => vec![
+                format!("{pad}var tries = 0"),
+                format!("{pad}until tries is 3"),
+                format!("{pad}    increase tries by 1"),
+                format!("{pad}end"),
+            ],
+            "english" => vec![
+                format!("{pad}let name = ask(\"What is your name? \")"),
+                format!("{pad}if name is not \"\" then"),
+                format!("{pad}    print($\"Welcome, {{name}}!\")"),
+                format!("{pad}else"),
+                format!("{pad}    print(\"Hello, friend!\")"),
                 format!("{pad}end"),
             ],
             "http_server" => vec![
@@ -737,7 +777,7 @@ impl EditorBuffer {
         self.completion_context().1
     }
 
-    /// Returns `(dot_base_ident, partial_ident_after_dot_or_at_cursor)`.
+    /// Returns `(dot_base_ident_or_std_module, partial_ident_after_dot_or_at_cursor)`.
     pub(crate) fn completion_context(&self) -> (Option<String>, String) {
         let line = &self.lines[self.cursor_row];
         let byte_idx = char_to_byte_idx(line, self.cursor_col);
@@ -752,6 +792,17 @@ impl EditorBuffer {
             .collect();
         let before_partial = &before[..before.len() - partial.len()];
         if let Some(before_dot) = before_partial.strip_suffix('.') {
+            let dotted: String = before_dot
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '.')
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
+            if dotted == "std" || dotted.starts_with("std.") {
+                return (Some(dotted), partial);
+            }
             let base: String = before_dot
                 .chars()
                 .rev()
@@ -919,6 +970,47 @@ impl EditorBuffer {
         let mut scored: Vec<(i32, SuggestionItem)> = Vec::new();
 
         if let Some(base) = dot_base {
+            if base == "std" {
+                for m in crate::stdlib::modules::STD_MODULES {
+                    let short = m.name.strip_prefix("std.").unwrap_or(m.name);
+                    if let Some(score) = score_candidate(short, &partial, true) {
+                        scored.push((
+                            score + 70,
+                            SuggestionItem {
+                                insert: format!("{short}."),
+                                label: m.name.to_string(),
+                                kind: "mod",
+                                detail: m.summary.to_string(),
+                                is_snippet: false,
+                            },
+                        ));
+                    }
+                }
+            } else if base.starts_with("std.") {
+                if let Some(def) = crate::stdlib::modules::find_std_module(&base) {
+                    for &(member, canonical) in def.exports {
+                        if let Some(score) = score_candidate(member, &partial, true) {
+                            let sig =
+                                builtin_signature_help(canonical).unwrap_or("DOG stdlib function");
+                            let ins = if is_zero_arg_builtin(canonical) {
+                                format!("{member}()")
+                            } else {
+                                format!("{member}(")
+                            };
+                            scored.push((
+                                score + 70,
+                                SuggestionItem {
+                                    insert: ins,
+                                    label: format!("{member}()"),
+                                    kind: "fn",
+                                    detail: sig.to_string(),
+                                    is_snippet: false,
+                                },
+                            ));
+                        }
+                    }
+                }
+            }
             if let Some(variants) = tables.enums.get(&base) {
                 for v in variants {
                     if let Some(score) = score_candidate(v, &partial, true) {
@@ -1074,13 +1166,7 @@ impl EditorBuffer {
         for &bname in builtin_names() {
             if let Some(score) = score_candidate(bname, &partial, false) {
                 let sig = builtin_signature_help(bname).unwrap_or("DOG built-in");
-                let no_arg = matches!(
-                    bname,
-                    "cwd" | "args" | "time_now_ms" | "time_utc" | "os_name" | "os_arch"
-                        | "uuid_v4" | "cli_supports_color" | "cli_is_tty" | "math_pi"
-                        | "math_e" | "temp_dir" | "local_ip"
-                );
-                let ins = if no_arg {
+                let ins = if is_zero_arg_builtin(bname) {
                     format!("{bname}()")
                 } else {
                     format!("{bname}(")
@@ -1099,7 +1185,7 @@ impl EditorBuffer {
         }
         // Keywords & types
         for &(kw, doc) in KEYWORD_CANDIDATES {
-            let ident = kw.trim_end_matches(&[' ', '<'][..]);
+            let ident = kw.trim_end_matches(&[' ', '<', '.'][..]);
             if let Some(score) = score_candidate(ident, &partial, false) {
                 scored.push((
                     score,
@@ -1243,11 +1329,20 @@ impl EditorBuffer {
             let callee: String = fn_slice
                 .chars()
                 .rev()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '.')
                 .collect::<String>()
                 .chars()
                 .rev()
                 .collect();
+            if callee.contains('.') {
+                if let Some((mod_name, fn_name)) = callee.rsplit_once('.') {
+                    if let Ok(canon) = crate::stdlib::modules::resolve_std_call(mod_name, fn_name) {
+                        if let Some(sig) = builtin_signature_help(canon) {
+                            return Some(sig.to_string());
+                        }
+                    }
+                }
+            }
             if let Some(sig) = builtin_signature_help(&callee) {
                 return Some(sig.to_string());
             }
@@ -1325,7 +1420,15 @@ impl EditorBuffer {
 pub fn builtin_signature_help(name: &str) -> Option<&'static str> {
     match name {
         "say" => Some("say(value) -> void  | Print a value followed by a newline"),
+        "print" => Some("print(value) -> void  | Print a value followed by a newline (alias for say)"),
         "answer" => Some("answer([prompt: text]) -> text  | Read a line from stdin"),
+        "ask" => Some("ask([prompt: text]) -> text  | Prompt user for keyboard input line"),
+        "confirm" => Some("confirm(prompt: text) -> bool  | Interactive yes/no confirmation prompt"),
+        "choose" => Some("choose(prompt: text, options: list<text>) -> text  | Interactive numbered menu"),
+        "password" => Some("password([prompt: text]) -> text  | Hidden/masked terminal password prompt"),
+        "read_key" => Some("read_key() -> text  | Read single key event (enter, up, down, a...)"),
+        "progress" => Some("progress(label: text, current: number, total: number) -> void  | Render progress bar"),
+        "table" => Some("table(headers: list<text>, rows: list<list<text>>) -> void  | Print formatted table"),
         "lower" => Some("lower(s: text) -> text  | Convert text to lowercase"),
         "upper" => Some("upper(s: text) -> text  | Convert text to uppercase"),
         "trim" => Some("trim(s: text) -> text  | Strip leading/trailing whitespace"),
@@ -1350,7 +1453,7 @@ pub fn builtin_signature_help(name: &str) -> Option<&'static str> {
         "pop" => Some("pop(var list: list<T>) -> T"),
         "insert_at" => Some("insert_at(var list: list<T>, idx: number, item: T) -> void"),
         "remove_at" => Some("remove_at(var list: list<T>, idx: number) -> T"),
-        "clear" => Some("clear(var list: list<T>) -> void"),
+        "clear" => Some("clear([var list: list<T>]) -> void  | Clear terminal screen or mutable list"),
         "sort" => Some("sort(var list: list<T>) -> void  | In-place ascending sort"),
         "reverse" => Some("reverse(var list: list<T>) -> void  | Reverse elements in-place"),
         "list_contains" => Some("list_contains(list: list<T>, item: T) -> bool"),
@@ -1518,8 +1621,23 @@ pub fn builtin_signature_help(name: &str) -> Option<&'static str> {
         "ws_ping" => Some("ws_ping(ws_id: number, msg: text) -> void  | Send WS ping frame"),
         "local_ip" => Some("local_ip() -> text  | Best-effort LAN IPv4 address"),
         "http_status_text" => Some("http_status_text(code: number) -> text  | Standard HTTP reason"),
+        "env_load" => Some("env_load(path: text) -> number  | Load .env KEY=VALUE pairs into env, returns count"),
+        "time_format" => Some("time_format(ms: number, pattern: text) -> text  | Format UTC ms (%Y-%m-%d %H:%M:%S)"),
+        "json_read" => Some("json_read(path: text) -> map<text,text>  | Read and parse JSON file"),
+        "json_write" => Some("json_write(path: text, val) -> void  | Write formatted JSON to file"),
+        "toml_parse" => Some("toml_parse(raw: text) -> map<text,text>  | Parse TOML tables and key=value pairs"),
+        "cookie_parse" => Some("cookie_parse(header: text) -> map<text,text>  | Parse HTTP Cookie header pairs"),
         _ => None,
     }
+}
+
+fn is_zero_arg_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "cwd" | "args" | "time_now_ms" | "time_utc" | "os_name" | "os_arch"
+            | "uuid_v4" | "cli_supports_color" | "cli_is_tty" | "math_pi"
+            | "math_e" | "temp_dir" | "local_ip" | "read_key"
+    )
 }
 
 #[derive(Default)]
@@ -3084,8 +3202,17 @@ pub(crate) fn highlight_dog_line(line: &str) -> String {
                 "let"
                     | "var"
                     | "const"
+                    | "set"
+                    | "to"
+                    | "increase"
+                    | "decrease"
+                    | "by"
                     | "if"
+                    | "then"
                     | "otherwise"
+                    | "else"
+                    | "elif"
+                    | "unless"
                     | "match"
                     | "case"
                     | "try"
@@ -3097,11 +3224,20 @@ pub(crate) fn highlight_dog_line(line: &str) -> String {
                     | "or"
                     | "and"
                     | "not"
+                    | "is"
+                    | "equals"
                     | "fn"
+                    | "define"
+                    | "function"
+                    | "returns"
                     | "return"
                     | "while"
+                    | "until"
                     | "repeat"
+                    | "times"
                     | "for"
+                    | "each"
+                    | "from"
                     | "in"
                     | "break"
                     | "continue"

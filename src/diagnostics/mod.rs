@@ -69,6 +69,7 @@ pub struct DogDiagnostic {
     pub fix: String,
     pub tip: String,
     pub joke: String,
+    pub stack_trace: Vec<String>,
 }
 
 impl DogDiagnostic {
@@ -91,12 +92,18 @@ impl DogDiagnostic {
             fix: fix.into(),
             tip: tip.into(),
             joke: joke.into(),
+            stack_trace: Vec::new(),
         }
     }
 
     pub fn with_types(mut self, expected: impl Into<String>, received: impl Into<String>) -> Self {
         self.expected = Some(expected.into());
         self.received = Some(received.into());
+        self
+    }
+
+    pub fn with_stack_trace(mut self, frames: Vec<String>) -> Self {
+        self.stack_trace = frames;
         self
     }
 
@@ -114,6 +121,13 @@ impl DogDiagnostic {
                 out.push_str(&format!("\n  {:>4} | {}\n", self.span.line, line_text));
                 let caret_pad = " ".repeat(self.span.column.saturating_sub(1));
                 out.push_str(&format!("       | {}^\n", caret_pad));
+            }
+        }
+
+        if !self.stack_trace.is_empty() {
+            out.push_str("\nSTACK TRACE:\n");
+            for (idx, frame) in self.stack_trace.iter().rev().enumerate() {
+                out.push_str(&format!("  {}: {frame}\n", idx + 1));
             }
         }
 

@@ -11,6 +11,40 @@ use std::path::{Path, PathBuf};
 
 const MAX_CALL_DEPTH: usize = 256;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DebugStepDecision {
+    Continue,
+    Abort,
+}
+
+pub trait ExecObserver {
+    fn on_before_stmt(&mut self, stmt: &Stmt, env: &Environment) -> DebugStepDecision;
+}
+
+pub fn stmt_span(stmt: &Stmt) -> &Span {
+    match stmt {
+        Stmt::Use { span, .. }
+        | Stmt::StructDef { span, .. }
+        | Stmt::EnumDef { span, .. }
+        | Stmt::Binding { span, .. }
+        | Stmt::Assign { span, .. }
+        | Stmt::CompoundAssign { span, .. }
+        | Stmt::IndexAssign { span, .. }
+        | Stmt::FieldAssign { span, .. }
+        | Stmt::If { span, .. }
+        | Stmt::Match { span, .. }
+        | Stmt::TryCatch { span, .. }
+        | Stmt::While { span, .. }
+        | Stmt::Repeat { span, .. }
+        | Stmt::For { span, .. }
+        | Stmt::FnDef { span, .. }
+        | Stmt::Return { span, .. }
+        | Stmt::Break { span }
+        | Stmt::Continue { span }
+        | Stmt::ExprStmt { span, .. } => span,
+    }
+}
+
 #[derive(Debug, Clone)]
 struct FnDefRuntime {
     params: Vec<Param>,
@@ -29,7 +63,9 @@ pub struct Interpreter<'a> {
     functions: HashMap<String, FnDefRuntime>,
     enum_names: HashSet<String>,
     io: &'a mut dyn InterpreterIo,
+    observer: Option<&'a mut dyn ExecObserver>,
     call_depth: usize,
+    call_stack: Vec<String>,
 }
 
 impl<'a> Interpreter<'a> {
@@ -40,7 +76,25 @@ impl<'a> Interpreter<'a> {
             functions: HashMap::new(),
             enum_names: HashSet::new(),
             io,
+            observer: None,
             call_depth: 0,
+            call_stack: Vec::new(),
+        }
+    }
+
+    pub fn with_observer(
+        io: &'a mut dyn InterpreterIo,
+        observer: &'a mut dyn ExecObserver,
+    ) -> Self {
+        crate::term::reset_session_style_to(crate::config::DogConfig::load().term_style());
+        Self {
+            env: Environment::new(),
+            functions: HashMap::new(),
+            enum_names: HashSet::new(),
+            io,
+            observer: Some(observer),
+            call_depth: 0,
+            call_stack: Vec::new(),
         }
     }
 
@@ -85,6 +139,24 @@ impl<'a> Interpreter<'a> {
     }
 
     fn eval_stmt(&mut self, stmt: &Stmt) -> Result<ExecFlow, DogDiagnostic> {
+        if !matches!(
+            stmt,
+            Stmt::FnDef { .. } | Stmt::StructDef { .. } | Stmt::EnumDef { .. } | Stmt::Use { .. }
+        ) {
+            if let Some(obs) = self.observer.as_deref_mut() {
+                if obs.on_before_stmt(stmt, &self.env) == DebugStepDecision::Abort {
+                    return Err(DogDiagnostic::new(
+                        "E035",
+                        "Execution aborted by debugger.",
+                        stmt_span(stmt).clone(),
+                        "Debugger session exited before program completion.",
+                        "Run `dog run` to execute normally.",
+                        "Debugger stopped cleanly.",
+                        "Stopped on user command.",
+                    ));
+                }
+            }
+        }
         match stmt {
             Stmt::FnDef { .. } | Stmt::StructDef { .. } | Stmt::EnumDef { .. } | Stmt::Use { .. } => {
                 Ok(ExecFlow::Next)
@@ -496,7 +568,30 @@ impl<'a> Interpreter<'a> {
                     _ => unreachable!(),
                 }
             }
-            Expr::Call { callee, args, span } => {
+            Expr::Call { callee, args, span } => self.eval_call(callee, args, span),
+            Expr::NamespaceCall {
+                module,
+                func,
+                args,
+                span,
+            } => {
+                let canonical = crate::stdlib::modules::resolve_std_call(module, func).map_err(|msg| {
+                    DogDiagnostic::new(
+                        "E013",
+                        msg,
+                        span.clone(),
+                        "Standard library module calls use `std.<module>.<fn>(...)`.",
+                        "Run `dog docs std` to inspect valid standard modules.",
+                        "Check module and function name spelling.",
+                        "Wrong aisle in the standard library.",
+                    )
+                })?;
+                self.eval_call(canonical, args, span)
+            }
+        }
+    }
+
+    fn eval_call(&mut self, callee: &str, args: &[Expr], span: &Span) -> Result<Value, DogDiagnostic> {
                 if callee == "push" {
                     let Expr::Identifier { name, .. } = &args[0] else {
                         unreachable!();
@@ -647,6 +742,10 @@ impl<'a> Interpreter<'a> {
                     return Ok(items.remove(idx as usize));
                 }
                 if callee == "clear" {
+                    if args.is_empty() {
+                        self.io.clear_screen();
+                        return Ok(Value::Void);
+                    }
                     let Expr::Identifier { name, .. } = &args[0] else {
                         unreachable!();
                     };
@@ -713,25 +812,45 @@ impl<'a> Interpreter<'a> {
                             "Ensure recursive functions converge to a terminating base case.",
                             "Check your stopping condition.",
                             "Chasing my own tail in an infinite loop.",
-                        ));
+                        )
+                        .with_stack_trace(self.call_stack.clone()));
                     }
+                    let mut bound = Vec::with_capacity(fn_def.params.len());
+                    for (idx, param) in fn_def.params.iter().enumerate() {
+                        let val = if idx < evaluated.len() {
+                            evaluated[idx].clone()
+                        } else {
+                            let def_expr = param.default.as_ref().expect("type checker guarantees default");
+                            self.eval_expr(def_expr)?
+                        };
+                        bound.push((param.name.clone(), val));
+                    }
+
                     self.call_depth += 1;
+                    self.call_stack
+                        .push(format!("{callee}() at {}:{}", span.file, span.line));
                     self.env.push_scope();
-                    for (param, val) in fn_def.params.iter().zip(evaluated.into_iter()) {
-                        self.env.define(param.name.clone(), BindingKind::Let, val);
+                    for (pname, val) in bound {
+                        self.env.define(pname, BindingKind::Let, val);
                     }
                     let flow = self.eval_block(&fn_def.body);
                     self.env.pop_scope();
                     self.call_depth -= 1;
-                    return match flow? {
-                        ExecFlow::Return(v) => Ok(v),
-                        ExecFlow::Next | ExecFlow::Break | ExecFlow::Continue => Ok(Value::Void),
+                    let res = match flow {
+                        Ok(ExecFlow::Return(v)) => Ok(v),
+                        Ok(ExecFlow::Next | ExecFlow::Break | ExecFlow::Continue) => Ok(Value::Void),
+                        Err(mut diag) => {
+                            if diag.stack_trace.is_empty() {
+                                diag.stack_trace = self.call_stack.clone();
+                            }
+                            Err(diag)
+                        }
                     };
+                    self.call_stack.pop();
+                    return res;
                 }
 
                 call_builtin(callee, evaluated, span, self.io)
-            }
-        }
     }
 }
 
@@ -794,6 +913,25 @@ fn resolve_recursive(
     let mut merged = Vec::new();
     for stmt in program.statements {
         if let Stmt::Use { path, span } = stmt {
+            if path.starts_with("std.") {
+                if crate::stdlib::modules::is_std_module(&path) {
+                    merged.push(Stmt::Use { path, span });
+                    continue;
+                }
+                let mut fix = "Available std modules: std.io, std.text, std.math, std.files, std.net, std.system, std.data, std.crypto, std.cli, std.collections.".to_string();
+                if let Some(hint) = crate::stdlib::modules::suggest_std_module(&path) {
+                    fix = format!("Did you mean `use \"{hint}\"`? {fix}");
+                }
+                return Err(DogDiagnostic::new(
+                    "E040",
+                    format!("Unknown standard library module '{path}'."),
+                    span,
+                    format!("'{path}' is not a built-in DOG standard library module."),
+                    fix,
+                    "Inspect built-in modules with `dog docs std`.",
+                    "That standard aisle doesn't exist.",
+                ));
+            }
             let target = base_dir.join(&path);
             let canonical = fs::canonicalize(&target).unwrap_or_else(|_| target.clone());
             if active.contains(&canonical) {

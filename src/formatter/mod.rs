@@ -56,7 +56,7 @@ pub fn format_source(source: &str) -> String {
                 }
                 _ => stack_indent(&stack),
             },
-            "otherwise" => match stack.last() {
+            "otherwise" | "else" => match stack.last() {
                 Some(BlockKind::If) => stack_indent(&stack).saturating_sub(1),
                 Some(BlockKind::Match { in_arm }) => {
                     let level = stack_indent(&stack);
@@ -66,6 +66,10 @@ pub fn format_source(source: &str) -> String {
                         level
                     }
                 }
+                _ => stack_indent(&stack),
+            },
+            "elif" => match stack.last() {
+                Some(BlockKind::If) => stack_indent(&stack).saturating_sub(1),
                 _ => stack_indent(&stack),
             },
             "catch" => {
@@ -96,7 +100,7 @@ pub fn format_source(source: &str) -> String {
 
         // Update block stack after printing the line
         match first_word {
-            "if" => stack.push(BlockKind::If),
+            "if" | "unless" => stack.push(BlockKind::If),
             "match" => stack.push(BlockKind::Match { in_arm: false }),
             "try" => stack.push(BlockKind::Try),
             "case" => {
@@ -104,12 +108,13 @@ pub fn format_source(source: &str) -> String {
                     *in_arm = true;
                 }
             }
-            "otherwise" => {
+            "otherwise" | "else" => {
                 if let Some(BlockKind::Match { in_arm }) = stack.last_mut() {
                     *in_arm = true;
                 }
             }
-            "while" | "repeat" | "for" | "fn" | "struct" | "enum" => {
+            "while" | "until" | "repeat" | "for" | "fn" | "define" | "function" | "struct"
+            | "enum" => {
                 stack.push(BlockKind::Simple);
             }
             _ => {

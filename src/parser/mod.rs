@@ -37,12 +37,14 @@ impl Parser {
             TokenKind::Var => self.parse_binding(BindingKind::Var),
             TokenKind::Const => self.parse_binding(BindingKind::Const),
             TokenKind::If => self.parse_if(),
+            TokenKind::Unless => self.parse_unless(),
             TokenKind::Match => self.parse_match(),
             TokenKind::Try => self.parse_try(),
             TokenKind::While => self.parse_while(),
+            TokenKind::Until => self.parse_until(),
             TokenKind::Repeat => self.parse_repeat(),
             TokenKind::For => self.parse_for(),
-            TokenKind::Fn => self.parse_fn(),
+            TokenKind::Fn | TokenKind::Define | TokenKind::Function => self.parse_fn(),
             TokenKind::Return => self.parse_return(),
             TokenKind::Break => {
                 let span = self.advance().span.clone();
@@ -53,6 +55,17 @@ impl Parser {
                 let span = self.advance().span.clone();
                 self.expect_end_of_statement()?;
                 Ok(Stmt::Continue { span })
+            }
+            TokenKind::Identifier(kw)
+                if kw == "set" && matches!(self.peek_next_kind(), Some(TokenKind::Identifier(_))) =>
+            {
+                self.parse_english_set()
+            }
+            TokenKind::Identifier(kw)
+                if matches!(kw.as_str(), "increase" | "decrease")
+                    && matches!(self.peek_next_kind(), Some(TokenKind::Identifier(_))) =>
+            {
+                self.parse_english_delta()
             }
             TokenKind::Identifier(name) if self.peek_next_kind() == Some(&TokenKind::Assign) => {
                 let name = name.clone();
@@ -330,6 +343,7 @@ impl Parser {
             while !self.is_at_end()
                 && self.peek().kind != TokenKind::Case
                 && self.peek().kind != TokenKind::Otherwise
+                && self.peek().kind != TokenKind::Else
                 && self.peek().kind != TokenKind::End
             {
                 body.push(self.parse_statement()?);
@@ -342,19 +356,20 @@ impl Parser {
             });
         }
 
-        let otherwise_branch = if self.peek().kind == TokenKind::Otherwise {
-            self.advance();
-            self.expect_end_of_statement()?;
-            self.skip_newlines();
-            let mut body = Vec::new();
-            while !self.is_at_end() && self.peek().kind != TokenKind::End {
-                body.push(self.parse_statement()?);
+        let otherwise_branch =
+            if matches!(self.peek().kind, TokenKind::Otherwise | TokenKind::Else) {
+                self.advance();
+                self.expect_end_of_statement()?;
                 self.skip_newlines();
-            }
-            Some(body)
-        } else {
-            None
-        };
+                let mut body = Vec::new();
+                while !self.is_at_end() && self.peek().kind != TokenKind::End {
+                    body.push(self.parse_statement()?);
+                    self.skip_newlines();
+                }
+                Some(body)
+            } else {
+                None
+            };
 
         if self.peek().kind != TokenKind::End {
             return Err(DogDiagnostic::new(
@@ -478,23 +493,256 @@ impl Parser {
         })
     }
 
+    fn parse_english_set(&mut self) -> Result<Stmt, DogDiagnostic> {
+        let kw_tok = self.advance().clone(); // set
+        let name = match &self.peek().kind {
+            TokenKind::Identifier(n) => n.clone(),
+            _ => unreachable!(),
+        };
+        self.advance();
+
+        enum SetTarget {
+            Var(String),
+            Field(String, String),
+            Index(String, Expr),
+        }
+
+        let target = if self.peek().kind == TokenKind::Dot {
+            self.advance();
+            let field = match &self.peek().kind {
+                TokenKind::Identifier(f) => f.clone(),
+                _ => {
+                    return Err(DogDiagnostic::new(
+                        "E004",
+                        "Expected field name after '.' in 'set' statement.",
+                        self.peek().span.clone(),
+                        "Property assignment requires a field identifier.",
+                        format!("Write e.g. `set {name}.field to value`."),
+                        "Example: `set user.name to \"DOG\"`.",
+                        "Set which field?",
+                    ));
+                }
+            };
+            self.advance();
+            SetTarget::Field(name, field)
+        } else if self.peek().kind == TokenKind::LBracket {
+            self.advance();
+            let index = self.parse_expression()?;
+            if self.peek().kind != TokenKind::RBracket {
+                return Err(DogDiagnostic::new(
+                    "E004",
+                    "Expected ']' after index in 'set' statement.",
+                    self.peek().span.clone(),
+                    "Indexed assignment requires a closing ']'.",
+                    format!("Write e.g. `set {name}[0] to value`."),
+                    "Balance list brackets.",
+                    "Unclosed list index.",
+                ));
+            }
+            self.advance();
+            SetTarget::Index(name, index)
+        } else {
+            SetTarget::Var(name)
+        };
+
+        if self.peek().kind == TokenKind::Assign || self.peek_ident_at(0) == Some("to") {
+            self.advance();
+        } else {
+            return Err(DogDiagnostic::new(
+                "E004",
+                "Expected 'to' or '=' in 'set' statement.",
+                self.peek().span.clone(),
+                "English assignment follows the form `set variable to value`.",
+                "Write e.g. `set count to 10`.",
+                "Remember to declare new variables first with `var count = 0` or `let`.",
+                "Set it to what?",
+            ));
+        }
+
+        let value = self.parse_expression()?;
+        self.expect_end_of_statement()?;
+
+        Ok(match target {
+            SetTarget::Var(name) => Stmt::Assign {
+                name,
+                value,
+                span: kw_tok.span,
+            },
+            SetTarget::Field(target, field) => Stmt::FieldAssign {
+                target,
+                field,
+                value,
+                span: kw_tok.span,
+            },
+            SetTarget::Index(target, index) => Stmt::IndexAssign {
+                target,
+                index,
+                value,
+                span: kw_tok.span,
+            },
+        })
+    }
+
+    fn parse_english_delta(&mut self) -> Result<Stmt, DogDiagnostic> {
+        let kw_tok = self.advance().clone();
+        let verb = match &kw_tok.kind {
+            TokenKind::Identifier(kw) if kw == "increase" => "increase",
+            _ => "decrease",
+        };
+        let op = if verb == "increase" {
+            BinOp::Add
+        } else {
+            BinOp::Sub
+        };
+        let name = match &self.peek().kind {
+            TokenKind::Identifier(n) => n.clone(),
+            _ => unreachable!(),
+        };
+        let target_span = self.advance().span.clone();
+
+        enum DeltaTarget {
+            Var(String),
+            Field(String, String),
+            Index(String, Expr),
+        }
+
+        let target = if self.peek().kind == TokenKind::Dot {
+            self.advance();
+            let field = match &self.peek().kind {
+                TokenKind::Identifier(f) => f.clone(),
+                _ => {
+                    return Err(DogDiagnostic::new(
+                        "E004",
+                        format!("Expected field name after '.' in '{verb}' statement."),
+                        self.peek().span.clone(),
+                        "Property update requires a field identifier.",
+                        format!("Write e.g. `{verb} {name}.field by 1`."),
+                        format!("Example: `{verb} player.score by 10`."),
+                        "Update which field?",
+                    ));
+                }
+            };
+            self.advance();
+            DeltaTarget::Field(name, field)
+        } else if self.peek().kind == TokenKind::LBracket {
+            self.advance();
+            let index = self.parse_expression()?;
+            if self.peek().kind != TokenKind::RBracket {
+                return Err(DogDiagnostic::new(
+                    "E004",
+                    format!("Expected ']' after index in '{verb}' statement."),
+                    self.peek().span.clone(),
+                    "Indexed update requires a closing ']'.",
+                    format!("Write e.g. `{verb} {name}[0] by 1`."),
+                    "Balance list brackets.",
+                    "Unclosed list index.",
+                ));
+            }
+            self.advance();
+            DeltaTarget::Index(name, index)
+        } else {
+            DeltaTarget::Var(name)
+        };
+
+        let target_label = match &target {
+            DeltaTarget::Var(n) => n.clone(),
+            DeltaTarget::Field(t, f) => format!("{t}.{f}"),
+            DeltaTarget::Index(t, _) => format!("{t}[i]"),
+        };
+
+        if self.peek_ident_at(0) == Some("by") {
+            self.advance();
+        } else {
+            return Err(DogDiagnostic::new(
+                "E004",
+                format!("Expected 'by' after '{target_label}' in '{verb}' statement."),
+                self.peek().span.clone(),
+                format!("English updates follow the form `{verb} variable by amount`."),
+                format!("Write e.g. `{verb} {target_label} by 1`."),
+                "Only mutable `var` bindings can be updated.",
+                "Change it by how much?",
+            ));
+        }
+
+        let value = self.parse_expression()?;
+        self.expect_end_of_statement()?;
+
+        Ok(match target {
+            DeltaTarget::Var(name) => Stmt::CompoundAssign {
+                name,
+                op,
+                value,
+                span: kw_tok.span,
+            },
+            DeltaTarget::Field(target, field) => Stmt::FieldAssign {
+                target: target.clone(),
+                field: field.clone(),
+                value: Expr::Binary {
+                    left: Box::new(Expr::FieldAccess {
+                        target: Box::new(Expr::Identifier {
+                            name: target,
+                            span: target_span.clone(),
+                        }),
+                        field,
+                        span: target_span,
+                    }),
+                    op,
+                    right: Box::new(value),
+                    span: kw_tok.span.clone(),
+                },
+                span: kw_tok.span,
+            },
+            DeltaTarget::Index(target, index) => Stmt::IndexAssign {
+                target: target.clone(),
+                index: index.clone(),
+                value: Expr::Binary {
+                    left: Box::new(Expr::Index {
+                        target: Box::new(Expr::Identifier {
+                            name: target,
+                            span: target_span.clone(),
+                        }),
+                        index: Box::new(index),
+                        span: target_span,
+                    }),
+                    op,
+                    right: Box::new(value),
+                    span: kw_tok.span.clone(),
+                },
+                span: kw_tok.span,
+            },
+        })
+    }
+
     fn parse_if(&mut self) -> Result<Stmt, DogDiagnostic> {
         let if_tok = self.advance().clone();
         let condition = self.parse_expression()?;
+        if self.peek_ident_at(0) == Some("then") {
+            self.advance();
+        }
         self.expect_end_of_statement()?;
         self.skip_newlines();
 
         let mut then_branch = Vec::new();
         while !self.is_at_end()
-            && self.peek().kind != TokenKind::Otherwise
-            && self.peek().kind != TokenKind::End
+            && !matches!(
+                self.peek().kind,
+                TokenKind::Otherwise | TokenKind::Else | TokenKind::Elif | TokenKind::End
+            )
         {
             then_branch.push(self.parse_statement()?);
             self.skip_newlines();
         }
 
-        let otherwise_branch = if self.peek().kind == TokenKind::Otherwise {
-            self.advance(); // otherwise
+        let otherwise_branch = if self.peek().kind == TokenKind::Elif {
+            let nested_if = self.parse_if()?;
+            return Ok(Stmt::If {
+                condition,
+                then_branch,
+                otherwise_branch: Some(vec![nested_if]),
+                span: if_tok.span,
+            });
+        } else if matches!(self.peek().kind, TokenKind::Otherwise | TokenKind::Else) {
+            self.advance(); // otherwise | else
             if self.peek().kind == TokenKind::If {
                 let nested_if = self.parse_if()?;
                 return Ok(Stmt::If {
@@ -521,7 +769,7 @@ impl Parser {
                 "E005",
                 "Missing 'end' keyword for 'if' block.",
                 if_tok.span,
-                "DOG uses 'end' (not indentation) to close every 'if' or 'otherwise' block.",
+                "DOG uses 'end' (not indentation) to close every 'if', 'else', or 'otherwise' block.",
                 "Add `end` on its own line after the block body.",
                 "Indentation is visual; `end` closes the block.",
                 "You opened a door and walked away without closing it.",
@@ -538,6 +786,67 @@ impl Parser {
         })
     }
 
+    fn parse_unless(&mut self) -> Result<Stmt, DogDiagnostic> {
+        let kw_tok = self.advance().clone();
+        let raw_cond = self.parse_expression()?;
+        if self.peek_ident_at(0) == Some("then") {
+            self.advance();
+        }
+        self.expect_end_of_statement()?;
+        self.skip_newlines();
+
+        let mut then_branch = Vec::new();
+        while !self.is_at_end()
+            && !matches!(
+                self.peek().kind,
+                TokenKind::Otherwise | TokenKind::Else | TokenKind::End
+            )
+        {
+            then_branch.push(self.parse_statement()?);
+            self.skip_newlines();
+        }
+
+        let otherwise_branch =
+            if matches!(self.peek().kind, TokenKind::Otherwise | TokenKind::Else) {
+                self.advance();
+                self.expect_end_of_statement()?;
+                self.skip_newlines();
+                let mut else_stmts = Vec::new();
+                while !self.is_at_end() && self.peek().kind != TokenKind::End {
+                    else_stmts.push(self.parse_statement()?);
+                    self.skip_newlines();
+                }
+                Some(else_stmts)
+            } else {
+                None
+            };
+
+        if self.peek().kind != TokenKind::End {
+            return Err(DogDiagnostic::new(
+                "E005",
+                "Missing 'end' keyword for 'unless' block.",
+                kw_tok.span,
+                "DOG uses 'end' to close every 'unless' block.",
+                "Add `end` on its own line after the block body.",
+                "`unless cond` runs the block when `cond` is false.",
+                "Left an 'unless' block open.",
+            ));
+        }
+        self.advance();
+        self.expect_end_of_statement()?;
+
+        Ok(Stmt::If {
+            condition: Expr::Unary {
+                op: UnaryOp::Not,
+                expr: Box::new(raw_cond),
+                span: kw_tok.span.clone(),
+            },
+            then_branch,
+            otherwise_branch,
+            span: kw_tok.span,
+        })
+    }
+
     fn parse_while(&mut self) -> Result<Stmt, DogDiagnostic> {
         let kw_tok = self.advance().clone();
         let condition = self.parse_expression()?;
@@ -550,9 +859,28 @@ impl Parser {
         })
     }
 
+    fn parse_until(&mut self) -> Result<Stmt, DogDiagnostic> {
+        let kw_tok = self.advance().clone();
+        let raw_cond = self.parse_expression()?;
+        self.expect_end_of_statement()?;
+        let body = self.parse_block_until_end(&kw_tok, "until")?;
+        Ok(Stmt::While {
+            condition: Expr::Unary {
+                op: UnaryOp::Not,
+                expr: Box::new(raw_cond),
+                span: kw_tok.span.clone(),
+            },
+            body,
+            span: kw_tok.span,
+        })
+    }
+
     fn parse_repeat(&mut self) -> Result<Stmt, DogDiagnostic> {
         let kw_tok = self.advance().clone();
         let count = self.parse_expression()?;
+        if self.peek_ident_at(0) == Some("times") {
+            self.advance();
+        }
         self.expect_end_of_statement()?;
         let body = self.parse_block_until_end(&kw_tok, "repeat")?;
         Ok(Stmt::Repeat {
@@ -564,6 +892,12 @@ impl Parser {
 
     fn parse_for(&mut self) -> Result<Stmt, DogDiagnostic> {
         let kw_tok = self.advance().clone();
+        if self.peek_ident_at(0) == Some("each")
+            && matches!(self.peek_next_kind(), Some(TokenKind::Identifier(_)))
+            && self.peek_ident_at(1) != Some("from")
+        {
+            self.advance(); // each
+        }
         let var_name = match &self.peek().kind {
             TokenKind::Identifier(n) => n.clone(),
             _ => {
@@ -572,7 +906,7 @@ impl Parser {
                     "Expected loop variable name after 'for'.",
                     self.peek().span.clone(),
                     "A 'for' loop binds each element to a variable name.",
-                    "Write e.g. `for item in items`.",
+                    "Write `for item in items` or `for n from 1 to 5`.",
                     "Pick a clear loop variable name.",
                     "For whom does the loop toll?",
                 ));
@@ -580,20 +914,51 @@ impl Parser {
         };
         self.advance();
 
-        if self.peek().kind != TokenKind::In {
+        let iterable = if self.peek().kind == TokenKind::In {
+            self.advance();
+            self.parse_expression()?
+        } else if self.peek_ident_at(0) == Some("from") {
+            self.advance(); // from
+            let start = self.parse_expression()?;
+            if self.peek_ident_at(0) != Some("to") {
+                return Err(DogDiagnostic::new(
+                    "E004",
+                    "Expected 'to' after range start in 'for ... from ... to ...' loop.",
+                    self.peek().span.clone(),
+                    "Inclusive range loops follow the form `for n from 1 to 10`.",
+                    format!("Add `to <end>` after the start value in `for {var_name} from ...`."),
+                    "Or use `for n in range(1, 11)` for half-open ranges.",
+                    "Missing destination after 'from'.",
+                ));
+            }
+            self.advance(); // to
+            let end_expr = self.parse_expression()?;
+            let end_plus_one = Expr::Binary {
+                left: Box::new(end_expr),
+                op: BinOp::Add,
+                right: Box::new(Expr::NumberLit {
+                    value: 1,
+                    span: kw_tok.span.clone(),
+                }),
+                span: kw_tok.span.clone(),
+            };
+            Expr::Call {
+                callee: "range".to_string(),
+                args: vec![start, end_plus_one],
+                span: kw_tok.span.clone(),
+            }
+        } else {
             return Err(DogDiagnostic::new(
                 "E004",
-                "Expected 'in' after loop variable in 'for' loop.",
+                "Expected 'in' or 'from' after loop variable in 'for' loop.",
                 self.peek().span.clone(),
-                "DOG 'for' loops follow the form `for item in collection`.",
-                format!("Add `in` after `{var_name}`."),
+                "DOG 'for' loops follow `for item in collection` or `for n from 1 to 5`.",
+                format!("Add `in` or `from` after `{var_name}`."),
                 "Check loop header syntax.",
-                "Missing 'in' between dog and yard.",
+                "Missing 'in' or 'from' after loop variable.",
             ));
-        }
-        self.advance();
+        };
 
-        let iterable = self.parse_expression()?;
         self.expect_end_of_statement()?;
         let body = self.parse_block_until_end(&kw_tok, "for")?;
         Ok(Stmt::For {
@@ -611,10 +976,10 @@ impl Parser {
             _ => {
                 return Err(DogDiagnostic::new(
                     "E004",
-                    "Expected function name after 'fn'.",
+                    "Expected function name after function keyword.",
                     self.peek().span.clone(),
                     "Functions must have a valid identifier name.",
-                    "Write e.g. `fn greet(name: text) -> text`.",
+                    "Write e.g. `fn greet(name: text) -> text` or `define greet(name: text) returns text`.",
                     "Use lowercase_snake_case for function names.",
                     "Anonymous paws need a name here.",
                 ));
@@ -668,9 +1033,16 @@ impl Parser {
                 }
                 self.advance();
                 let ty = self.parse_type_ref()?;
+                let default = if self.peek().kind == TokenKind::Assign {
+                    self.advance();
+                    Some(self.parse_expression()?)
+                } else {
+                    None
+                };
                 params.push(Param {
                     name: param_name,
                     ty,
+                    default,
                     span: param_span,
                 });
 
@@ -695,12 +1067,13 @@ impl Parser {
         }
         self.advance();
 
-        let return_type = if self.peek().kind == TokenKind::Arrow {
-            self.advance();
-            self.parse_type_ref()?
-        } else {
-            TypeRef::Void
-        };
+        let return_type =
+            if self.peek().kind == TokenKind::Arrow || self.peek_ident_at(0) == Some("returns") {
+                self.advance();
+                self.parse_type_ref()?
+            } else {
+                TypeRef::Void
+            };
 
         self.expect_end_of_statement()?;
         let body = self.parse_block_until_end(&kw_tok, "fn")?;
@@ -883,12 +1256,32 @@ impl Parser {
     fn parse_equality(&mut self) -> Result<Expr, DogDiagnostic> {
         let mut expr = self.parse_comparison()?;
         loop {
-            let op = match self.peek().kind {
-                TokenKind::EqEq => BinOp::Eq,
-                TokenKind::BangEq => BinOp::NotEq,
+            let (op, consume_count) = match self.peek().kind {
+                TokenKind::EqEq => (BinOp::Eq, 1usize),
+                TokenKind::BangEq => (BinOp::NotEq, 1usize),
+                _ if self.peek_ident_at(0) == Some("equals") => (BinOp::Eq, 1usize),
+                _ if self.peek_ident_at(0) == Some("is") => {
+                    if self.peek_kind_at(1) == Some(&TokenKind::Not)
+                        && self.peek_ident_at(2) == Some("equal")
+                        && self.peek_ident_at(3) == Some("to")
+                    {
+                        (BinOp::NotEq, 4usize)
+                    } else if self.peek_kind_at(1) == Some(&TokenKind::Not) {
+                        (BinOp::NotEq, 2usize)
+                    } else if self.peek_ident_at(1) == Some("equal")
+                        && self.peek_ident_at(2) == Some("to")
+                    {
+                        (BinOp::Eq, 3usize)
+                    } else {
+                        (BinOp::Eq, 1usize)
+                    }
+                }
                 _ => break,
             };
-            let op_tok = self.advance().clone();
+            let op_tok = self.peek().clone();
+            for _ in 0..consume_count {
+                self.advance();
+            }
             let right = self.parse_comparison()?;
             expr = Expr::Binary {
                 left: Box::new(expr),
@@ -903,14 +1296,42 @@ impl Parser {
     fn parse_comparison(&mut self) -> Result<Expr, DogDiagnostic> {
         let mut expr = self.parse_term()?;
         loop {
-            let op = match self.peek().kind {
-                TokenKind::Gt => BinOp::Gt,
-                TokenKind::Lt => BinOp::Lt,
-                TokenKind::GtEq => BinOp::GtEq,
-                TokenKind::LtEq => BinOp::LtEq,
+            let (op, consume_count) = match self.peek().kind {
+                TokenKind::Gt => (BinOp::Gt, 1usize),
+                TokenKind::Lt => (BinOp::Lt, 1usize),
+                TokenKind::GtEq => (BinOp::GtEq, 1usize),
+                TokenKind::LtEq => (BinOp::LtEq, 1usize),
+                _ if self.peek_ident_at(0) == Some("is") => {
+                    if self.peek_ident_at(1) == Some("greater")
+                        && self.peek_ident_at(2) == Some("than")
+                    {
+                        (BinOp::Gt, 3usize)
+                    } else if self.peek_ident_at(1) == Some("less")
+                        && self.peek_ident_at(2) == Some("than")
+                    {
+                        (BinOp::Lt, 3usize)
+                    } else if self.peek_ident_at(1) == Some("at")
+                        && self.peek_ident_at(2) == Some("least")
+                    {
+                        (BinOp::GtEq, 3usize)
+                    } else if self.peek_ident_at(1) == Some("at")
+                        && self.peek_ident_at(2) == Some("most")
+                    {
+                        (BinOp::LtEq, 3usize)
+                    } else if self.peek_ident_at(1) == Some("over") {
+                        (BinOp::Gt, 2usize)
+                    } else if self.peek_ident_at(1) == Some("under") {
+                        (BinOp::Lt, 2usize)
+                    } else {
+                        break;
+                    }
+                }
                 _ => break,
             };
-            let op_tok = self.advance().clone();
+            let op_tok = self.peek().clone();
+            for _ in 0..consume_count {
+                self.advance();
+            }
             let right = self.parse_term()?;
             expr = Expr::Binary {
                 left: Box::new(expr),
@@ -1030,13 +1451,67 @@ impl Parser {
                 expr = Expr::FieldAccess {
                     target: Box::new(expr),
                     field,
-                    span: dot_tok.span,
+                    span: dot_tok.span.clone(),
                 };
+                if self.peek().kind == TokenKind::LParen {
+                    if let Some(mut parts) = extract_dotted_path(&expr) {
+                        if parts.len() >= 3 && parts[0] == "std" {
+                            let func = parts.pop().unwrap_or_default();
+                            let module = parts.join(".");
+                            let label = format!("{module}.{func}");
+                            let args = self.parse_call_args(&label)?;
+                            expr = Expr::NamespaceCall {
+                                module,
+                                func,
+                                args,
+                                span: dot_tok.span,
+                            };
+                            continue;
+                        }
+                    }
+                    return Err(DogDiagnostic::new(
+                        "E004",
+                        "Unexpected '(' after dot access.",
+                        self.peek().span.clone(),
+                        "Dot calls in DOG are reserved for standard library modules like `std.io.ask(...)` or `std.text.upper(...)`.",
+                        "Use `std.<module>.<fn>(...)` for module calls or `fn_name(value, ...)` for functions.",
+                        "DOG functions take values as explicit arguments.",
+                        "Values don't carry secret methods here — unless they live in `std.*`.",
+                    ));
+                }
             } else {
                 break;
             }
         }
         Ok(expr)
+    }
+
+    fn parse_call_args(&mut self, call_name: &str) -> Result<Vec<Expr>, DogDiagnostic> {
+        self.advance(); // (
+        let mut args = Vec::new();
+        if self.peek().kind != TokenKind::RParen {
+            loop {
+                args.push(self.parse_expression()?);
+                if self.peek().kind == TokenKind::Comma {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+        if self.peek().kind != TokenKind::RParen {
+            return Err(DogDiagnostic::new(
+                "E004",
+                format!("Expected ')' after arguments to '{call_name}()'."),
+                self.peek().span.clone(),
+                "A function call opened with '(' was not closed with ')'.",
+                "Add the missing closing parenthesis ')'.",
+                "Check nested calls like number(answer(\"Age: \")).",
+                "Unclosed parentheses keep me awake at night.",
+            ));
+        }
+        self.advance(); // )
+        Ok(args)
     }
 
     fn parse_primary(&mut self) -> Result<Expr, DogDiagnostic> {
@@ -1174,30 +1649,7 @@ impl Parser {
             }
             TokenKind::Identifier(name) => {
                 if self.peek().kind == TokenKind::LParen {
-                    self.advance(); // (
-                    let mut args = Vec::new();
-                    if self.peek().kind != TokenKind::RParen {
-                        loop {
-                            args.push(self.parse_expression()?);
-                            if self.peek().kind == TokenKind::Comma {
-                                self.advance();
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    if self.peek().kind != TokenKind::RParen {
-                        return Err(DogDiagnostic::new(
-                            "E004",
-                            format!("Expected ')' after arguments to '{name}()'."),
-                            self.peek().span.clone(),
-                            "A function call opened with '(' was not closed with ')'.",
-                            "Add the missing closing parenthesis ')'.",
-                            "Check nested calls like number(answer(\"Age: \")).",
-                            "Unclosed parentheses keep me awake at night.",
-                        ));
-                    }
-                    self.advance(); // )
+                    let args = self.parse_call_args(&name)?;
                     Ok(Expr::Call {
                         callee: name,
                         args,
@@ -1345,10 +1797,33 @@ impl Parser {
         self.tokens.get(self.pos + 1).map(|t| &t.kind)
     }
 
+    fn peek_kind_at(&self, offset: usize) -> Option<&TokenKind> {
+        self.tokens.get(self.pos + offset).map(|t| &t.kind)
+    }
+
+    fn peek_ident_at(&self, offset: usize) -> Option<&str> {
+        match self.tokens.get(self.pos + offset).map(|t| &t.kind) {
+            Some(TokenKind::Identifier(s)) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
     fn advance(&mut self) -> &Token {
         if !self.is_at_end() {
             self.pos += 1;
         }
         &self.tokens[self.pos - 1]
+    }
+}
+
+fn extract_dotted_path(expr: &Expr) -> Option<Vec<String>> {
+    match expr {
+        Expr::Identifier { name, .. } => Some(vec![name.clone()]),
+        Expr::FieldAccess { target, field, .. } => {
+            let mut parts = extract_dotted_path(target)?;
+            parts.push(field.clone());
+            Some(parts)
+        }
+        _ => None,
     }
 }

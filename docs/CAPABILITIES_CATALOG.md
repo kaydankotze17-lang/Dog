@@ -92,15 +92,15 @@ Complete non-duplicate taxonomy (`DOG-0001` through `DOG-2040`) across 40 engine
 | DOG-0074 | Structured log_warn() | `log_warn(msg)` | Prefixes [WARN] cleanly | implemented |
 | DOG-0075 | Structured log_error() | `log_error(msg)` | Prefixes [ERROR] cleanly | implemented |
 | DOG-0076 | Top-level sequential script execution | `Entry .dg file execution` | Stops cleanly on unhandled diagnostic | tested |
-| DOG-0077 | Functions & Execution: Function values, default arguments, closures, and async/tail execution (item 1) | `roadmap::d02::cap_01` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
-| DOG-0078 | Functions & Execution: Function values, default arguments, closures, and async/tail execution (item 2) | `roadmap::d02::cap_02` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
-| DOG-0079 | Functions & Execution: Function values, default arguments, closures, and async/tail execution (item 3) | `roadmap::d02::cap_03` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
-| DOG-0080 | Functions & Execution: Function values, default arguments, closures, and async/tail execution (item 4) | `roadmap::d02::cap_04` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
-| DOG-0081 | Functions & Execution: Function values, default arguments, closures, and async/tail execution (item 5) | `roadmap::d02::cap_05` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
-| DOG-0082 | Functions & Execution: Function values, default arguments, closures, and async/tail execution (item 6) | `roadmap::d02::cap_06` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
-| DOG-0083 | Functions & Execution: Function values, default arguments, closures, and async/tail execution (item 7) | `roadmap::d02::cap_07` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
-| DOG-0084 | Functions & Execution: Function values, default arguments, closures, and async/tail execution (item 8) | `roadmap::d02::cap_08` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
-| DOG-0085 | Functions & Execution: Function values, default arguments, closures, and async/tail execution (item 9) | `roadmap::d02::cap_09` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
+| DOG-0077 | Default function parameter values | `fn greet(name: text, prefix: text = "Hi")` | Strict typing on default exprs & min_args..=max_args arity checks | tested |
+| DOG-0078 | Interactive ask() / confirm() / choose() I/O | `ask(), confirm(), choose()` | Inline prompts, (y/n) confirmation, numbered menus | tested |
+| DOG-0079 | Hidden password(), single read_key(), table(), progress(), clear() | `password(), read_key(), table(), progress(), clear()` | Interactive stty no-echo & ANSI screen clear alongside list clear(var) | tested |
+| DOG-0080 | Runtime call-stack traces on failures | `STACK TRACE: frame list` | Unhandled runtime diagnostics print caller chain & line numbers | tested |
+| DOG-0081 | English function syntax & `print()` alias | `define / function ... returns T`, `print(val)` | Lowers cleanly to `Stmt::FnDef` and `say()` across interpreter & transpiler | tested |
+| DOG-0082 | English conditionals (`else`, `elif`, `then`, `unless`) | `if c then ... elif ... else ... end`, `unless c ... end` | Lowered to `Stmt::If` with strict `bool` check (E022) | tested |
+| DOG-0083 | English loops & updates (`until`, `times`, `each`, `from..to`, `set..to`, `increase/decrease`) | `until c`, `repeat N times`, `for x from A to B`, `set x to v`, `increase x by n` | Contextual keywords keep `from`/`to`/`times`/`then`/`set` valid identifiers | tested |
+| DOG-0084 | Natural English comparison operators | `is`, `is not`, `equals`, `is equal/greater/less than`, `is at least/most`, `is over/under` | Precedence-matched lowering to `BinOp` comparison nodes | tested |
+| DOG-0085 | Interactive beginner guide (`dog learn`) | `dog learn [lesson] [--run]` | Six built-in runnable lessons (`basics`, `english`, `input`, `functions`, `data`, `errors`) | tested |
 | DOG-0086 | Functions & Execution: Function values, default arguments, closures, and async/tail execution (item 10) | `roadmap::d02::cap_10` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
 | DOG-0087 | Functions & Execution: Function values, default arguments, closures, and async/tail execution (item 11) | `roadmap::d02::cap_11` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
 | DOG-0088 | Functions & Execution: Function values, default arguments, closures, and async/tail execution (item 12) | `roadmap::d02::cap_12` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
@@ -841,9 +841,9 @@ Complete non-duplicate taxonomy (`DOG-0001` through `DOG-2040`) across 40 engine
 | DOG-0763 | AST & symbol inspection | `dog inspect <file.dg>` | Dumps token count, AST outline, symbol types | implemented |
 | DOG-0764 | Execution stage profiler | `dog profile <file.dg>` | Times lex, parse, check, and run in microseconds | implemented |
 | DOG-0765 | CLI & SDU log viewer | `dog logs [sdu]` | Reads ~/.dog/logs/{dog,sdu_audit}.log | implemented |
-| DOG-0766 | Testing & Debugging: Unit test blocks, coverage reports, breakpoints, and step debugger (item 1) | `roadmap::d14::cap_01` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
-| DOG-0767 | Testing & Debugging: Unit test blocks, coverage reports, breakpoints, and step debugger (item 2) | `roadmap::d14::cap_02` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
-| DOG-0768 | Testing & Debugging: Unit test blocks, coverage reports, breakpoints, and step debugger (item 3) | `roadmap::d14::cap_03` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
+| DOG-0766 | Interactive step & breakpoint debugger | `dog debug <file.dg>` | Observer hooks n/c/b/p/l/q with full scope inspection | tested |
+| DOG-0767 | Line-level test execution coverage | `dog coverage [path]` | Reports covered/total executable lines and pass/fail counts | tested |
+| DOG-0768 | Transitive file-watcher runner | `dog watch <file.dg> [--test / --check]` | Monitors entrypoint and imported modules via mtime polling | implemented |
 | DOG-0769 | Testing & Debugging: Unit test blocks, coverage reports, breakpoints, and step debugger (item 4) | `roadmap::d14::cap_04` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
 | DOG-0770 | Testing & Debugging: Unit test blocks, coverage reports, breakpoints, and step debugger (item 5) | `roadmap::d14::cap_05` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
 | DOG-0771 | Testing & Debugging: Unit test blocks, coverage reports, breakpoints, and step debugger (item 6) | `roadmap::d14::cap_06` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
@@ -952,8 +952,8 @@ Complete non-duplicate taxonomy (`DOG-0001` through `DOG-2040`) across 40 engine
 | DOG-0864 | SHA-256 dependency lockfile | `dog.lock` | Deterministic integrity lock entries | implemented |
 | DOG-0865 | Offline DOG Hub cache CLI | `dog add / remove / search / list / info` | Resolves local paths & ~/.dog/cache | implemented |
 | DOG-0866 | Project scaffold generator | `dog forge new <name>` | Creates dog.pack, src/main.dg, tests/ | implemented |
-| DOG-0867 | Modules & Package Development: Remote DOG Hub registry sync, semantic version solver, and workspace monorepos (item 1) | `roadmap::d16::cap_01` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
-| DOG-0868 | Modules & Package Development: Remote DOG Hub registry sync, semantic version solver, and workspace monorepos (item 2) | `roadmap::d16::cap_02` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
+| DOG-0867 | Modular 10-namespace standard library | `use "std.<mod>" + std.<mod>.<fn>()` | Supports std.io/text/math/files/net/system/data/crypto/cli/collections | tested |
+| DOG-0868 | Project & module dependency grapher | `dog graph [target]` | Maps dog.pack deps, local use edges, and std.* namespaces | tested |
 | DOG-0869 | Modules & Package Development: Remote DOG Hub registry sync, semantic version solver, and workspace monorepos (item 3) | `roadmap::d16::cap_03` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
 | DOG-0870 | Modules & Package Development: Remote DOG Hub registry sync, semantic version solver, and workspace monorepos (item 4) | `roadmap::d16::cap_04` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
 | DOG-0871 | Modules & Package Development: Remote DOG Hub registry sync, semantic version solver, and workspace monorepos (item 5) | `roadmap::d16::cap_05` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
@@ -1126,9 +1126,9 @@ Complete non-duplicate taxonomy (`DOG-0001` through `DOG-2040`) across 40 engine
 | DOG-1018 | Native Rust AST codegen bridge | `dog build --native` | Bridges DOG types to Rust std types cleanly | implemented |
 | DOG-1019 | Pretty-printed JSON formatter | `json_pretty(raw_or_val) -> text` | 2-space indented canonical JSON output | tested |
 | DOG-1020 | RFC 4180 CSV parser codec | `csv_parse(raw) -> list<list<text>>` | Handles quoted commas, escaped quotes, CRLF/LF | tested |
-| DOG-1021 | Serialization & Interoperability: TOML/CSV/YAML codecs, C-FFI extern bindings, and WebAssembly target (item 3) | `roadmap::d20::cap_03` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
-| DOG-1022 | Serialization & Interoperability: TOML/CSV/YAML codecs, C-FFI extern bindings, and WebAssembly target (item 4) | `roadmap::d20::cap_04` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
-| DOG-1023 | Serialization & Interoperability: TOML/CSV/YAML codecs, C-FFI extern bindings, and WebAssembly target (item 5) | `roadmap::d20::cap_05` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
+| DOG-1021 | Pure-Rust TOML key-value & table parser | `toml_parse(raw) -> map<text, text>` | Flattens [section] keys as section.key and strips comments | tested |
+| DOG-1022 | Direct JSON file read/write & HTTP cookies | `json_read / json_write / cookie_parse` | Reads/writes disk JSON and parses Cookie headers safely | tested |
+| DOG-1023 | Dotenv loader & UTC timestamp formatter | `env_load / time_format` | Populates process env from .env files and formats %Y-%m-%d %H:%M:%S | tested |
 | DOG-1024 | Serialization & Interoperability: TOML/CSV/YAML codecs, C-FFI extern bindings, and WebAssembly target (item 6) | `roadmap::d20::cap_06` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
 | DOG-1025 | Serialization & Interoperability: TOML/CSV/YAML codecs, C-FFI extern bindings, and WebAssembly target (item 7) | `roadmap::d20::cap_07` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
 | DOG-1026 | Serialization & Interoperability: TOML/CSV/YAML codecs, C-FFI extern bindings, and WebAssembly target (item 8) | `roadmap::d20::cap_08` | Must uphold strict typing, zero implicit coercion, and explicit E-code diagnostics | specified |
@@ -1431,9 +1431,9 @@ Complete non-duplicate taxonomy (`DOG-0001` through `DOG-2040`) across 40 engine
 | DOG-1293 | Statistical benchmark runner CLI | `dog bench <file.dg> [runs]` | Measures min/median/avg/p95/max microseconds & throughput | tested |
 | DOG-1294 | Built-in function docs lookup | `dog docs <builtin_name>` | Queries editor signature registry directly from CLI | tested |
 | DOG-1295 | Updated shell tab completions | `dog completions [bash/zsh/fish]` | Includes eval, lint, and bench across Bash/Zsh/Fish | implemented |
-| DOG-1296 | Developer CLI Productivity (eval/lint/bench/docs): Zero-file snippet evaluation, AST static linting, statistical benchmarking, and built-in help (patch #06) | `upgrade::s26::patch_06` | Pure-std zero-unsafe implementation upholding ARMv7 Termux & Linux parity (slot DOG-1296) | specified |
-| DOG-1297 | Developer CLI Productivity (eval/lint/bench/docs): Zero-file snippet evaluation, AST static linting, statistical benchmarking, and built-in help (patch #07) | `upgrade::s26::patch_07` | Pure-std zero-unsafe implementation upholding ARMv7 Termux & Linux parity (slot DOG-1297) | specified |
-| DOG-1298 | Developer CLI Productivity (eval/lint/bench/docs): Zero-file snippet evaluation, AST static linting, statistical benchmarking, and built-in help (patch #08) | `upgrade::s26::patch_08` | Pure-std zero-unsafe implementation upholding ARMv7 Termux & Linux parity (slot DOG-1298) | specified |
+| DOG-1296 | Interactive debugger, coverage & watch CLI | `dog debug / dog coverage / dog watch` | Zero-dependency interactive debugging, line coverage, and hot reload | tested |
+| DOG-1297 | Dependency graph, explain, package & playground | `dog graph / explain / package / playground` | E001-E041 error reference, AST summary, .dgb bundler, REPL alias | tested |
+| DOG-1298 | Modular stdlib CLI documentation browser | `dog docs std / dog docs std.<mod>` | Live module overview and member export signatures in terminal | tested |
 | DOG-1299 | Developer CLI Productivity (eval/lint/bench/docs): Zero-file snippet evaluation, AST static linting, statistical benchmarking, and built-in help (patch #09) | `upgrade::s26::patch_09` | Pure-std zero-unsafe implementation upholding ARMv7 Termux & Linux parity (slot DOG-1299) | specified |
 | DOG-1300 | Developer CLI Productivity (eval/lint/bench/docs): Zero-file snippet evaluation, AST static linting, statistical benchmarking, and built-in help (patch #10) | `upgrade::s26::patch_10` | Pure-std zero-unsafe implementation upholding ARMv7 Termux & Linux parity (slot DOG-1300) | specified |
 | DOG-1301 | Developer CLI Productivity (eval/lint/bench/docs): Zero-file snippet evaluation, AST static linting, statistical benchmarking, and built-in help (patch #11) | `upgrade::s26::patch_11` | Pure-std zero-unsafe implementation upholding ARMv7 Termux & Linux parity (slot DOG-1301) | specified |
@@ -1481,7 +1481,7 @@ Complete non-duplicate taxonomy (`DOG-0001` through `DOG-2040`) across 40 engine
 
 | ID | Capability | Syntax / API | Edge Cases & Contracts | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| DOG-1341 | Editor IntelliSense, Snippets & Code Navigation: Fuzzy symbol completion, hover signatures, AST outline, go-to-definition hooks, and multi-tab editing (patch #01) | `upgrade::s27::patch_01` | Pure-std zero-unsafe implementation upholding ARMv7 Termux & Linux parity (slot DOG-1341) | specified |
+| DOG-1341 | Namespace IntelliSense & signature help for std.* | `std. / std.<mod>. popup + contextual hints` | Autocompletes all 10 std modules, exports, and 207 built-in docs | tested |
 | DOG-1342 | Editor IntelliSense, Snippets & Code Navigation: Fuzzy symbol completion, hover signatures, AST outline, go-to-definition hooks, and multi-tab editing (patch #02) | `upgrade::s27::patch_02` | Pure-std zero-unsafe implementation upholding ARMv7 Termux & Linux parity (slot DOG-1342) | specified |
 | DOG-1343 | Editor IntelliSense, Snippets & Code Navigation: Fuzzy symbol completion, hover signatures, AST outline, go-to-definition hooks, and multi-tab editing (patch #03) | `upgrade::s27::patch_03` | Pure-std zero-unsafe implementation upholding ARMv7 Termux & Linux parity (slot DOG-1343) | specified |
 | DOG-1344 | Editor IntelliSense, Snippets & Code Navigation: Fuzzy symbol completion, hover signatures, AST outline, go-to-definition hooks, and multi-tab editing (patch #04) | `upgrade::s27::patch_04` | Pure-std zero-unsafe implementation upholding ARMv7 Termux & Linux parity (slot DOG-1344) | specified |

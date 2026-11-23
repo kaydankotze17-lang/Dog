@@ -146,4 +146,14 @@ impl Environment {
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
     }
+
+    pub fn snapshot_all_symbols(&self) -> Vec<(String, String)> {
+        let mut merged: BTreeMap<String, String> = BTreeMap::new();
+        for scope in &self.scopes {
+            for (k, slot) in scope {
+                merged.insert(k.clone(), slot.value.to_string());
+            }
+        }
+        merged.into_iter().collect()
+    }
 }

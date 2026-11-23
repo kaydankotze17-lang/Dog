@@ -1,25 +1,36 @@
-use dog_lang::bytecode::{build_bundle, decode_bundle, run_bundle_with_io};
+use dog_lang::bytecode::{
+    build_bundle, decode_bundle, run_bundle_with_io, transpile_program_to_rust,
+};
+use dog_lang::checker::builtin_names;
 use dog_lang::config::Personality;
 use dog_lang::crypto::{
     base64_decode, base64_encode, base64_url_decode, base64_url_encode, constant_time_eq,
     hex_decode, hex_encode, hmac_sha256_hex, hmac_sha256_verify, rand_bytes_hex, sha256_hex,
     sha512_hex,
 };
-use dog_lang::editor::{render_editor_frame_rows, visible_ansi_len, EditorBuffer};
+use dog_lang::editor::{
+    builtin_signature_help, render_editor_frame_rows, visible_ansi_len, EditorBuffer,
+};
 use dog_lang::formatter::format_source;
 use dog_lang::hub::DogPack;
-use dog_lang::interpreter::{check_source, run_source_with_io};
+use dog_lang::interpreter::{check_source, resolve_program, run_source_with_io};
 use dog_lang::json::parse_json;
 use dog_lang::lexer::Lexer;
 use dog_lang::net::{http_status_text, local_ip};
 use dog_lang::prompt::{handle_completions, handle_prompt};
 use dog_lang::sdu::handle_sdu;
+use dog_lang::stdlib::modules::{resolve_std_call, STD_MODULES};
 use dog_lang::stdlib::InterpreterIo;
-use dog_lang::sys::{eval_snippet_captured, handle_bench, handle_docs, handle_lint};
+use dog_lang::sys::{
+    collect_watched_files, eval_snippet_captured, handle_bench, handle_docs, handle_explain,
+    handle_graph, handle_learn, handle_lint, run_debug_with_streams,
+};
 use dog_lang::term::{DogMessenger, TermCapabilities, TermStyleConfig};
+use dog_lang::tester::run_coverage;
 use std::collections::VecDeque;
 use std::env;
 use std::fs;
+use std::io::Cursor;
 
 struct MockIo {
     inputs: VecDeque<String>,
@@ -1430,5 +1441,459 @@ assert(not is_dir(sub))
     run_source_with_io("fs_move.dg", &src_dg, &mut io).expect("file_move and rmdir pass");
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn interactive_io_ask_confirm_choose_password_read_key_table_progress_clear() {
+    let src = "\
+let name = ask(\"Your name? \")
+let ok = confirm(\"Deploy now\")
+let target = choose(\"Pick target\", [\"dev\", \"staging\", \"prod\"])
+let default_target = choose(\"Default pick\", [\"alpha\", \"beta\"])
+let secret = password(\"PIN: \")
+let key = read_key()
+progress(\"Setup\", 2, 4)
+table([\"Field\", \"Value\"], [[\"name\", name], [\"target\", target]])
+clear()
+var xs: list<number> = [1, 2, 3]
+clear(xs)
+assert(name == \"Kaydan\")
+assert(ok == true)
+assert(target == \"prod\")
+assert(default_target == \"alpha\")
+assert(secret == \"s3cr3t\")
+assert(key == \"q\")
+assert(len(xs) == 0)
+";
+    let mut io = MockIo::new(vec!["Kaydan", "yes", "3", "", "s3cr3t", "q"]);
+    run_source_with_io("interactive.dg", src, &mut io).expect("interactive builtins pass");
+    assert!(io.output.contains("Your name? "));
+    assert!(io.output.contains("Deploy now (y/n): "));
+    assert!(io.output.contains("3) prod"));
+    assert!(io.output.contains("| Field"));
+    assert!(io.output.contains("\x1b[2J\x1b[H"));
+
+    let bad_choice = "let x = choose(\"Pick\", [\"one\"])\n";
+    let mut bad_io = MockIo::new(vec!["9"]);
+    let err = run_source_with_io("bad_choice.dg", bad_choice, &mut bad_io)
+        .expect_err("out of range choose() must fail with E030");
+    assert_eq!(err.code, "E030");
+}
+
+#[test]
+fn modular_stdlib_namespaces_bundling_and_suggestions_work() {
+    let dir = env::temp_dir().join("dog_modular_std_test");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    let script = dir.join("app.dg");
+    let src = "\
+use \"std.io\"
+use \"std.text\"
+use \"std.math\"
+use \"std.crypto\"
+use \"std.collections\"
+
+let upper_name = std.text.upper(\"dog-pack\")
+let g = std.math.gcd(42, 18)
+let digest = std.crypto.sha256(\"abc\")
+var items: list<number> = [3, 1, 2]
+std.collections.sort(items)
+std.io.say($\"{upper_name}:{g}:{items[0]}:{slice(digest, 0, 6)}\")
+";
+    fs::write(&script, src).unwrap();
+
+    let mut io = MockIo::new(vec![]);
+    run_source_with_io(&script.display().to_string(), src, &mut io)
+        .expect("std.* namespaces execute cleanly");
+    assert_eq!(io.output, "DOG-PACK:6:1:ba7816\n");
+
+    let (bundle_path, bundle) =
+        build_bundle(&script.display().to_string(), None).expect("bundle with std.* builds");
+    let decoded = decode_bundle(&fs::read(&bundle_path).unwrap()).unwrap();
+    assert_eq!(decoded.sha256, bundle.sha256);
+
+    let mut bundle_io = MockIo::new(vec![]);
+    run_bundle_with_io(&bundle_path.display().to_string(), &mut bundle_io)
+        .expect("bundled std.* script runs");
+    assert_eq!(bundle_io.output, "DOG-PACK:6:1:ba7816\n");
+
+    let bad_mod = "use \"std.tex\"\n";
+    let diag_mod = check_source("bad_mod.dg", bad_mod).expect_err("unknown std module fails");
+    assert_eq!(diag_mod.code, "E040");
+    assert!(diag_mod.fix.contains("std.text"));
+
+    let bad_fn = "let x = std.text.uppre(\"hi\")\n";
+    let diag_fn = check_source("bad_fn.dg", bad_fn).expect_err("unknown std export fails");
+    assert_eq!(diag_fn.code, "E013");
+    assert!(diag_fn.fix.contains("std.text.upper"));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn default_function_parameters_checker_interpreter_and_native_transpile() {
+    let src = "\
+use \"std.text\"
+
+fn format_tag(label: text, prefix: text = \"[\", suffix: text = \"]\") -> text
+    return prefix + std.text.upper(label) + suffix
+end
+
+assert(format_tag(\"dog\") == \"[DOG]\")
+assert(format_tag(\"dog\", \"<\") == \"<DOG]\")
+assert(format_tag(\"dog\", \"(\", \")\") == \"(DOG)\")
+";
+    let mut io = MockIo::new(vec![]);
+    run_source_with_io("defaults.dg", src, &mut io).expect("default params execute");
+
+    let prog = resolve_program("defaults.dg", src).unwrap();
+    let rs = transpile_program_to_rust(&prog).expect("transpiles defaults and std.* to Rust");
+    assert!(rs.contains("format_tag("));
+    assert!(rs.contains(".to_uppercase()"));
+
+    let bad_order = "\
+fn broken(a: text = \"x\", b: text) -> text
+    return a + b
+end
+";
+    let err_order = check_source("bad_order.dg", bad_order)
+        .expect_err("required param after default param must fail");
+    assert_eq!(err_order.code, "E004");
+
+    let too_few = "\
+fn greet(name: text, hi: text = \"yo\") -> text
+    return hi + name
+end
+let x = greet()
+";
+    let err_arity = check_source("too_few.dg", too_few).expect_err("missing required arg fails");
+    assert_eq!(err_arity.code, "E014");
+}
+
+#[test]
+fn runtime_stack_traces_capture_nested_calls() {
+    let src = "\
+fn inner(v: number) -> number
+    assert(v > 0, \"positive only\")
+    return v
+end
+
+fn outer(v: number) -> number
+    return inner(v)
+end
+
+let r = outer(-5)
+say(r)
+";
+    let mut io = MockIo::new(vec![]);
+    let diag = run_source_with_io("trace.dg", src, &mut io)
+        .expect_err("assertion inside nested call must fail with stack trace");
+    assert_eq!(diag.code, "E033");
+    assert!(
+        diag.stack_trace.iter().any(|f| f.contains("inner"))
+            && diag.stack_trace.iter().any(|f| f.contains("outer")),
+        "expected inner and outer frames in {:?}",
+        diag.stack_trace
+    );
+    let rendered = diag.format_with(Personality::Professional, Some(src));
+    assert!(rendered.contains("STACK TRACE:"));
+    assert!(rendered.contains("outer"));
+    assert!(rendered.contains("inner"));
+}
+
+#[test]
+fn data_time_env_and_cookie_builtins_work() {
+    let dir = env::temp_dir().join("dog_030_data_builtins");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    let json_path = dir.join("cfg.json");
+    let env_path = dir.join(".env");
+    fs::write(
+        &env_path,
+        "# sample dotenv\nDOG_TEST_ENV_KEY=\"bark_99\"\nexport DOG_TEST_ENV_PORT=9090\n",
+    )
+    .unwrap();
+
+    let src = "\
+let jpath = args()[0]
+let epath = args()[1]
+var data: map<text, text> = {}
+map_set(data, \"lang\", \"dog\")
+map_set(data, \"ver\", \"0.3.0\")
+json_write(jpath, data)
+let loaded_json = json_read(jpath)
+assert(map_get(loaded_json, \"lang\") == \"dog\" and map_get(loaded_json, \"ver\") == \"0.3.0\")
+
+let toml = toml_parse(\"name = 'dog'\\n[net]\\nhost = \\\"0.0.0.0\\\" # bind all\\nport = 3000\\n\")
+assert(map_get(toml, \"name\") == \"dog\" and map_get(toml, \"net.host\") == \"0.0.0.0\" and map_get(toml, \"net.port\") == \"3000\")
+
+let n_env = env_load(epath)
+assert(n_env == 2)
+assert(env_get(\"DOG_TEST_ENV_KEY\") == \"bark_99\" and env_get(\"DOG_TEST_ENV_PORT\") == \"9090\")
+
+assert(time_format(0, \"%F %T\") == \"1970-01-01 00:00:00\")
+let ck = cookie_parse(\"sid=xyz789; mode=dark\")
+assert(map_get(ck, \"sid\") == \"xyz789\" and map_get(ck, \"mode\") == \"dark\")
+";
+    let mut io = ArgsMockIo {
+        args: vec![
+            json_path.display().to_string(),
+            env_path.display().to_string(),
+        ],
+        output: String::new(),
+    };
+    run_source_with_io("data030.dg", src, &mut io).expect("0.3.0 data/env/time builtins pass");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn editor_std_intellisense_and_builtin_help_parity_hold() {
+    for &b in builtin_names() {
+        assert!(
+            builtin_signature_help(b).is_some(),
+            "built-in '{b}' is missing an arm in editor::builtin_signature_help"
+        );
+    }
+    for m in STD_MODULES {
+        for &(member, canonical) in m.exports {
+            let resolved = resolve_std_call(m.name, member)
+                .unwrap_or_else(|e| panic!("failed resolving {}.{}: {e}", m.name, member));
+            assert_eq!(resolved, canonical);
+            assert!(
+                builtin_names().contains(&canonical),
+                "std export {}.{} -> {} is not in BUILTIN_NAMES",
+                m.name,
+                member,
+                canonical
+            );
+            assert!(
+                builtin_signature_help(canonical).is_some(),
+                "std export {}.{} -> {} has no signature help",
+                m.name,
+                member,
+                canonical
+            );
+        }
+    }
+
+    let mut buf = EditorBuffer::empty("intellisense.dg");
+    buf.lines = vec!["let s = std.".to_string()];
+    buf.cursor_row = 0;
+    buf.cursor_col = buf.lines[0].chars().count();
+    let mod_sugs = buf.ranked_suggestions(true);
+    assert!(mod_sugs.iter().any(|s| s.label == "std.io" && s.kind == "mod"));
+
+    buf.lines = vec!["let s = std.io.as".to_string()];
+    buf.cursor_col = buf.lines[0].chars().count();
+    let fn_sugs = buf.ranked_suggestions(false);
+    assert!(fn_sugs.iter().any(|s| s.label == "ask()" && s.kind == "fn"));
+
+    buf.lines = vec!["std.text.upper(".to_string()];
+    buf.cursor_col = buf.lines[0].chars().count();
+    let hint = buf.contextual_hint().expect("contextual hint should resolve std.text.upper");
+    assert!(hint.contains("upper("));
+}
+
+#[test]
+fn devtools_debug_coverage_graph_explain_watch_and_docs_work() {
+    let dir = env::temp_dir().join("dog_030_devtools_test");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    let helper_path = dir.join("helper.dg");
+    fs::write(
+        &helper_path,
+        "fn double_it(n: number) -> number\n    return n * 2\nend\n",
+    )
+    .unwrap();
+
+    let main_path = dir.join("main_test.dg");
+    let main_src = "\
+use \"helper.dg\"
+use \"std.math\"
+var x = 10
+let y = double_it(x)
+let z = std.math.gcd(y, 12)
+assert(z == 4)
+say(z)
+";
+    fs::write(&main_path, main_src).unwrap();
+
+    // Debugger: breakpoint + print vars + step + continue
+    let dbg_cmds = b"b 5\nc\np x\nn\nq\n";
+    let mut cmd_in = Cursor::new(&dbg_cmds[..]);
+    let mut cmd_out = Vec::new();
+    let mut io = MockIo::new(vec![]);
+    run_debug_with_streams(
+        &main_path.display().to_string(),
+        main_src,
+        Personality::Normal,
+        &mut io,
+        &mut cmd_in,
+        &mut cmd_out,
+    )
+    .expect("debugger runs cleanly");
+    let dbg_log = String::from_utf8(cmd_out).unwrap();
+    assert!(dbg_log.contains("Set breakpoint at line 5"));
+    assert!(dbg_log.contains("x = 10"));
+    assert!(dbg_log.contains("Debugger aborted execution."));
+
+    // Coverage report
+    let cov = run_coverage(Some(&main_path.display().to_string()), Personality::Normal)
+        .expect("coverage succeeds");
+    assert_eq!(cov.tests_passed, 1);
+    assert_eq!(cov.tests_failed, 0);
+    assert!(cov.total_covered > 0 && cov.percent > 50.0);
+    assert!(cov.report_text.contains("DOG Coverage Report"));
+
+    // Dependency watcher & graph
+    let watched = collect_watched_files(&main_path.display().to_string());
+    assert_eq!(watched.len(), 2);
+
+    let graph = handle_graph(Some(&main_path.display().to_string())).expect("graph succeeds");
+    assert!(graph.contains("use \"helper.dg\""));
+    assert!(graph.contains("std.math"));
+
+    // Explain (error code & .dg file)
+    let exp_err = handle_explain("E021").expect("explain E021 succeeds");
+    assert!(exp_err.contains("Strict type mismatch"));
+    let exp_file = handle_explain(&main_path.display().to_string()).expect("explain file succeeds");
+    assert!(exp_file.contains("std.math"));
+
+    // Docs std.*
+    let docs_std = handle_docs(Some("std"));
+    assert!(docs_std.contains("std.io") && docs_std.contains("std.net"));
+    let docs_io = handle_docs(Some("std.io"));
+    assert!(docs_io.contains("std.io.ask") && docs_io.contains("std.io.confirm"));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn english_like_syntax_control_flow_loops_operators_and_transpile() {
+    let src = "\
+struct Counter
+    total: number
+end
+
+define describe(n: number, suffix: text = \"!\") returns text
+    if n is greater than 10 then
+        return $\"big{suffix}\"
+    elif n is at least 5 then
+        return $\"mid{suffix}\"
+    else if n is over 0 then
+        return $\"small{suffix}\"
+    else
+        return $\"zero{suffix}\"
+    end
+end
+
+function helper() returns number
+    return 7
+end
+
+var c = Counter { total: 1 }
+set c.total to 2
+var nums: list<number> = [10, 20]
+set nums[0] to 15
+
+var score = 0
+set score to 3
+increase score by 4
+decrease score by 2
+
+until score is at least 7
+    increase score by 1
+end
+
+var flag = false
+unless flag then
+    repeat 2 times
+        increase score by 1
+    end
+end
+
+for step from 1 to 3
+    increase score by step
+end
+
+for each v in nums
+    if v is equal to 15 or v is not equal to 99 then
+        increase c.total by 1
+    end
+end
+
+var word = \"\"
+match score
+    case 0
+        set word to \"zero\"
+    else
+        set word to \"ready\"
+end
+let from = 1
+let to = 2
+let times = 3
+let then = 4
+assert(from + to + times + then is 10)
+assert(score is 15 and c.total is 4 and word is \"ready\")
+assert(helper() is 7 and 3 is under 4 and 4 is at most 4 and 2 is less than 3 and 5 equals 5)
+print(describe(score))
+std.io.print(describe(3, \".\"))
+";
+    let mut io = MockIo::new(vec![]);
+    run_source_with_io("english_all.dg", src, &mut io).expect("English-style DOG syntax runs");
+    assert_eq!(io.output, "big!\nsmall.\n");
+
+    let prog = resolve_program("english_all.dg", src).unwrap();
+    let rs = transpile_program_to_rust(&prog).expect("English AST lowers cleanly to Rust");
+    assert!(rs.contains("fn describe("));
+    assert!(rs.contains("println!"));
+
+    let messy = "define f(x: number) returns text\nif x is 1 then\nprint(\"one\")\nelse\nprint(\"other\")\nend\nend\n";
+    let formatted = format_source(messy);
+    assert!(formatted.contains("    if x is 1 then\n        print(\"one\")\n    else\n        print(\"other\")\n    end"));
+
+    let bad_bang = check_source("bang.dg", "let x = !true\n").expect_err("! gives English hint");
+    assert_eq!(bad_bang.code, "E001");
+    assert!(bad_bang.fix.contains("not"));
+
+    let bad_amp = check_source("amp.dg", "let x = true && false\n").expect_err("&& gives English hint");
+    assert_eq!(bad_amp.code, "E001");
+    assert!(bad_amp.fix.contains("and"));
+
+    let bad_pipe = check_source("pipe.dg", "let x = true || false\n").expect_err("|| gives English hint");
+    assert_eq!(bad_pipe.code, "E001");
+    assert!(bad_pipe.fix.contains("or"));
+
+    let example_src =
+        fs::read_to_string("examples/english_basics.dg").expect("read examples/english_basics.dg");
+    let mut ex_io = MockIo::new(vec![]);
+    run_source_with_io("examples/english_basics.dg", &example_src, &mut ex_io)
+        .expect("examples/english_basics.dg executes cleanly");
+    assert!(ex_io.output.contains("Hello, Friend Alex!"));
+    assert!(ex_io.output.contains("Done after 2 retries."));
+}
+
+#[test]
+fn dog_learn_lessons_and_english_docs_work() {
+    let menu = handle_learn(None, false, Personality::Normal).expect("learn menu succeeds");
+    assert!(menu.contains("basics") && menu.contains("english") && menu.contains("--run"));
+
+    for lesson in ["basics", "english", "input", "functions", "data", "errors"] {
+        let out = handle_learn(Some(lesson), true, Personality::Normal)
+            .unwrap_or_else(|e| panic!("lesson '{lesson}' failed: {e}"));
+        assert!(out.contains("Live Output:"), "lesson '{lesson}' should render Live Output");
+    }
+
+    let docs_eng = handle_docs(Some("english"));
+    assert!(docs_eng.contains("unless") && docs_eng.contains("until") && docs_eng.contains("dog learn"));
+    let docs_print = handle_docs(Some("print"));
+    assert!(docs_print.contains("print(value)"));
+    assert!(builtin_signature_help("print").is_some());
+}
+
+
 
 

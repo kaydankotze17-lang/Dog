@@ -1,3 +1,9 @@
+use "std.io"
+use "std.text"
+use "std.math"
+use "std.files"
+use "std.data"
+
 fn add(a: number, b: number) -> number
     return a + b
 end
@@ -240,3 +246,121 @@ assert(not contains(b64u, "=") and base64_url_decode(b64u) == "hello?dog/1+2=", 
 assert(len(rand_bytes_hex(16)) == 32, "rand_bytes_hex returns 2*N hex chars")
 assert(http_status_text(200) == "OK" and http_status_text(404) == "Not Found", "http_status_text maps status codes")
 assert(len(local_ip()) > 0, "local_ip returns an IPv4 string")
+
+# v0.3.0 Modular std.*, default parameters, interactive formatting, TOML, time_format, cookies
+use "std.io"
+use "std.text"
+use "std.math"
+use "std.files"
+use "std.data"
+
+assert(std.text.upper("pack") == "PACK", "std.text.upper namespace call works")
+assert(std.math.gcd(36, 24) == 12, "std.math.gcd namespace call works")
+assert(std.files.basename("pkg/mod/app.dg") == "app.dg", "std.files.basename works")
+assert(contains(std.files.join("alpha", "beta.dg"), "beta.dg"), "std.files.join works")
+assert(std.data.json_has_key("{\"ok\":1}", "ok"), "std.data.json_has_key works")
+
+fn greet_default(name: text, prefix: text = "Hello", excl: text = "!") -> text
+    return $"{prefix}, {name}{excl}"
+end
+
+assert(greet_default("DOG") == "Hello, DOG!", "default params apply when omitted")
+assert(greet_default("DOG", "Yo") == "Yo, DOG!", "partial override of default params works")
+assert(greet_default("DOG", "Hi", "?") == "Hi, DOG?", "full args override all defaults")
+
+fn scale_val(base: number, factor: number = 2 + 3) -> number
+    return base * factor
+end
+
+assert(scale_val(4) == 20 and scale_val(4, 3) == 12, "expression default parameters work")
+
+let cfg = toml_parse("[server]\nhost = \"127.0.0.1\"\nport = 8080 # inline comment\n")
+assert(map_get(cfg, "server.host") == "127.0.0.1" and map_get(cfg, "server.port") == "8080", "toml_parse reads sections and strips comments")
+
+assert(time_format(0, "%Y-%m-%d %H:%M:%S") == "1970-01-01 00:00:00", "time_format renders Unix epoch UTC cleanly")
+assert(time_format(1700000000000, "%F") == "2023-11-14", "time_format %F formats YYYY-MM-DD")
+
+let cookies = cookie_parse("session=abc123; theme=kali; empty=")
+assert(map_get(cookies, "session") == "abc123" and map_get(cookies, "theme") == "kali", "cookie_parse extracts cookie pairs")
+
+std.io.progress("DOG 0.3.0", 3, 3)
+std.io.table(["Mod", "Status"], [["std.io", "ok"], ["std.net", "ok"]])
+clear()
+var scratch: list<text> = ["a", "b"]
+clear(scratch)
+assert(len(scratch) == 0, "0-arg clear() clears screen while 1-arg clear(var) clears list")
+
+define english_grade(score: number, bonus: number = 5) returns text
+    let total = score + bonus
+    if total is at least 90 then
+        return "A"
+    elif total is at least 80 then
+        return "B"
+    else if total is over 69 then
+        return "C"
+    else
+        return "D"
+    end
+end
+
+assert(english_grade(86) is "A", "define + returns + is at least + elif + default param works")
+assert(english_grade(76) equals "B", "elif and equals work")
+assert(english_grade(66) is equal to "C", "else if and is over work")
+assert(english_grade(50) is not "A", "else and is not work")
+assert(10 is greater than 5 and 2 is less than 4 and 4 is at most 4 and 3 is under 4, "all English comparisons work")
+assert(7 is not equal to 8, "is not equal to works")
+
+var counter = 0
+set counter to 2
+increase counter by 3
+decrease counter by 1
+assert(counter is 4, "set to, increase by, decrease by work")
+
+until counter is at least 6
+    increase counter by 1
+end
+assert(counter is 6, "until loop works")
+
+unless counter is less than 6 then
+    set counter to 10
+else
+    set counter to 0
+end
+assert(counter is 10, "unless ... then ... else ... end works")
+
+var loops = 0
+repeat 3 times
+    increase loops by 1
+end
+assert(loops is 3, "repeat N times works")
+
+var range_sum = 0
+for n from 1 to 4
+    increase range_sum by n
+end
+assert(range_sum is 10, "for n from 1 to 4 inclusive range works")
+
+var joined_words = ""
+for each w in ["hi", "dog"]
+    joined_words += w
+end
+assert(joined_words is "hidog", "for each ... in ... works")
+
+let match_word = 2
+var match_out = ""
+match match_word
+    case 1
+        set match_out to "one"
+    else
+        set match_out to "other"
+end
+assert(match_out is "other", "match ... else ... works")
+
+let from = 1
+let to = 2
+let times = 3
+let then = 4
+assert(from + to + times + then is 10, "contextual English words remain usable as identifiers")
+print("language_test English checks passed")
+std.io.print("std.io.print works")
+

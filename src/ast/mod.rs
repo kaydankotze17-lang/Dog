@@ -35,10 +35,11 @@ pub enum TypeRef {
     Named(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: String,
     pub ty: TypeRef,
+    pub default: Option<Expr>,
     pub span: Span,
 }
 
@@ -157,6 +158,12 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Span,
     },
+    NamespaceCall {
+        module: String,
+        func: String,
+        args: Vec<Expr>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -175,7 +182,8 @@ impl Expr {
             | Expr::Index { span, .. }
             | Expr::Unary { span, .. }
             | Expr::Binary { span, .. }
-            | Expr::Call { span, .. } => span,
+            | Expr::Call { span, .. }
+            | Expr::NamespaceCall { span, .. } => span,
         }
     }
 }

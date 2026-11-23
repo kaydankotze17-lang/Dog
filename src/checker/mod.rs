@@ -12,39 +12,41 @@ struct BindingInfo {
 #[derive(Debug, Clone)]
 struct FnSig {
     params: Vec<DogType>,
+    min_args: usize,
     return_type: DogType,
 }
 
 const BUILTIN_NAMES: &[&str] = &[
-    "say", "answer", "lower", "upper", "trim", "contains", "split", "join", "len", "text",
-    "number", "decimal", "push", "pop", "abs", "min", "max", "assert", "fail", "map_get",
-    "map_set", "map_has", "map_keys", "map_remove", "file_read", "file_write", "file_append",
-    "file_exists", "file_delete", "dir_list", "mkdir", "cwd", "args", "env_get", "env_set",
-    "time_now_ms", "sleep_ms", "json_parse", "json_stringify", "hex_encode", "hex_decode",
-    "base64_encode", "base64_decode", "sha256", "hmac_sha256", "sha1", "http_get", "http_post",
-    "http_put", "http_delete", "http_request", "http_request_timeout", "http_listen", "http_port",
-    "http_accept", "http_try_accept", "http_reply", "http_reply_headers", "http_redirect",
-    "http_serve_file", "http_close", "tcp_listen", "tcp_port", "tcp_accept", "tcp_connect",
-    "tcp_send", "tcp_recv", "tcp_set_timeout", "tcp_remote_addr", "tcp_close", "url_encode",
-    "url_decode", "url_parse", "query_parse", "query_stringify", "html_escape",
-    "http_route_match", "ws_upgrade", "ws_connect", "ws_send", "ws_recv", "ws_close", "udp_bind",
-    "udp_send_to", "udp_recv_from", "udp_close", "dns_lookup", "port_is_open", "csv_parse",
-    "kv_set", "kv_get", "kv_has", "kv_delete", "kv_keys", "exec_cmd", "os_name", "os_arch",
-    "uuid_v4", "log_info", "log_warn", "log_error", "cli_info", "cli_success", "cli_warn",
-    "cli_error", "cli_debug", "cli_progress", "cli_spinner", "cli_theme", "cli_prefix",
-    "cli_timestamps", "cli_supports_color", "cli_is_tty", "replace", "starts_with", "ends_with",
-    "slice", "index_of", "str_repeat", "pad_left", "pad_right", "round", "floor", "ceil", "sqrt",
-    "pow", "clamp", "sin", "cos", "log", "rand_int", "range", "sort", "reverse", "list_contains",
+    "say", "print", "answer", "ask", "confirm", "choose", "password", "read_key", "progress", "table",
+    "lower", "upper", "trim", "contains", "split", "join", "len", "text", "number", "decimal",
+    "push", "pop", "abs", "min", "max", "assert", "fail", "map_get", "map_set", "map_has",
+    "map_keys", "map_remove", "file_read", "file_write", "file_append", "file_exists",
+    "file_delete", "dir_list", "mkdir", "cwd", "args", "env_get", "env_set", "env_load",
+    "time_now_ms", "time_format", "sleep_ms", "json_parse", "json_stringify", "json_read",
+    "json_write", "toml_parse", "hex_encode", "hex_decode", "base64_encode", "base64_decode",
+    "sha256", "hmac_sha256", "sha1", "http_get", "http_post", "http_put", "http_delete",
+    "http_request", "http_request_timeout", "http_listen", "http_port", "http_accept",
+    "http_try_accept", "http_reply", "http_reply_headers", "http_redirect", "http_serve_file",
+    "http_close", "tcp_listen", "tcp_port", "tcp_accept", "tcp_connect", "tcp_send", "tcp_recv",
+    "tcp_set_timeout", "tcp_remote_addr", "tcp_close", "url_encode", "url_decode", "url_parse",
+    "query_parse", "query_stringify", "cookie_parse", "html_escape", "http_route_match",
+    "ws_upgrade", "ws_connect", "ws_send", "ws_recv", "ws_close", "udp_bind", "udp_send_to",
+    "udp_recv_from", "udp_close", "dns_lookup", "port_is_open", "csv_parse", "kv_set", "kv_get",
+    "kv_has", "kv_delete", "kv_keys", "exec_cmd", "os_name", "os_arch", "uuid_v4", "log_info",
+    "log_warn", "log_error", "cli_info", "cli_success", "cli_warn", "cli_error", "cli_debug",
+    "cli_progress", "cli_spinner", "cli_theme", "cli_prefix", "cli_timestamps",
+    "cli_supports_color", "cli_is_tty", "replace", "starts_with", "ends_with", "slice",
+    "index_of", "str_repeat", "pad_left", "pad_right", "round", "floor", "ceil", "sqrt", "pow",
+    "clamp", "sin", "cos", "log", "rand_int", "range", "sort", "reverse", "list_contains",
     "list_index_of", "list_slice", "insert_at", "remove_at", "clear", "map_clear", "map_merge",
     "map_values", "glob_match", "time_utc", "json_pretty", "file_copy", "file_size", "is_file",
-    "is_dir", "path_join",
-    "char_at", "last_index_of", "count_matches", "remove_prefix", "remove_suffix", "title_case",
-    "reverse_text", "lines", "tan", "atan2", "exp", "log10", "pow_int", "sign", "gcd", "lcm",
-    "math_pi", "math_e", "list_unique", "list_take", "list_skip", "list_flatten", "list_sum",
-    "list_avg", "list_concat", "map_from_lists", "map_get_or", "csv_stringify", "json_has_key",
-    "path_dirname", "path_basename", "path_ext", "file_move", "rmdir", "temp_dir", "sha512",
-    "hmac_sha256_verify", "base64_url_encode", "base64_url_decode", "rand_bytes_hex", "ws_ping",
-    "local_ip", "http_status_text",
+    "is_dir", "path_join", "char_at", "last_index_of", "count_matches", "remove_prefix",
+    "remove_suffix", "title_case", "reverse_text", "lines", "tan", "atan2", "exp", "log10",
+    "pow_int", "sign", "gcd", "lcm", "math_pi", "math_e", "list_unique", "list_take",
+    "list_skip", "list_flatten", "list_sum", "list_avg", "list_concat", "map_from_lists",
+    "map_get_or", "csv_stringify", "json_has_key", "path_dirname", "path_basename", "path_ext",
+    "file_move", "rmdir", "temp_dir", "sha512", "hmac_sha256_verify", "base64_url_encode",
+    "base64_url_decode", "rand_bytes_hex", "ws_ping", "local_ip", "http_status_text",
 ];
 
 pub fn builtin_names() -> &'static [&'static str] {
@@ -199,7 +201,24 @@ impl TypeChecker {
                     ));
                 }
                 let mut param_tys = Vec::with_capacity(params.len());
+                let mut min_args = 0usize;
+                let mut saw_default = false;
                 for p in params {
+                    if p.default.is_some() {
+                        saw_default = true;
+                    } else if saw_default {
+                        return Err(DogDiagnostic::new(
+                            "E004",
+                            format!("Required parameter '{}' cannot follow an optional parameter with a default value.", p.name),
+                            p.span.clone(),
+                            "Parameters with default values must appear at the end of the parameter list.",
+                            "Move required parameters before parameters with `= default`.",
+                            "Example: `fn greet(name: text, prefix: text = \"Hi\") -> text`.",
+                            "Required ingredients go in the bowl first.",
+                        ));
+                    } else {
+                        min_args += 1;
+                    }
                     param_tys.push(self.resolve_type_ref(&p.ty, &p.span)?);
                 }
                 let ret_ty = self.resolve_type_ref(return_type, span)?;
@@ -207,6 +226,7 @@ impl TypeChecker {
                     name.clone(),
                     FnSig {
                         params: param_tys,
+                        min_args,
                         return_type: ret_ty,
                     },
                 );
@@ -744,10 +764,29 @@ impl TypeChecker {
                     ));
                 }
                 let ret_ty = self.resolve_type_ref(return_type, span)?;
-                self.current_return_type = Some(ret_ty.clone());
-                self.scopes.push(HashMap::new());
+                let mut resolved_params = Vec::with_capacity(params.len());
                 for param in params {
                     let p_ty = self.resolve_type_ref(&param.ty, &param.span)?;
+                    if let Some(def_expr) = &param.default {
+                        let got = self.check_expr_with_hint(def_expr, Some(&p_ty))?;
+                        if got != p_ty {
+                            return Err(DogDiagnostic::new(
+                                "E021",
+                                format!("Default value for parameter '{}' does not match declared type.", param.name),
+                                def_expr.span().clone(),
+                                format!("Parameter '{}' expects '{p_ty}', default value has type '{got}'.", param.name),
+                                format!("Provide a '{p_ty}' default value."),
+                                "Default parameter expressions must match their parameter type.",
+                                "Default value clashes with its own collar.",
+                            )
+                            .with_types(p_ty.label(), got.label()));
+                        }
+                    }
+                    resolved_params.push((param, p_ty));
+                }
+                self.current_return_type = Some(ret_ty.clone());
+                self.scopes.push(HashMap::new());
+                for (param, p_ty) in resolved_params {
                     let scope = self.scopes.last_mut().expect("fn scope");
                     if scope.contains_key(&param.name) {
                         self.scopes.pop();
@@ -1226,6 +1265,23 @@ impl TypeChecker {
                 self.check_binary(lt, *op, rt, span)
             }
             Expr::Call { callee, args, span } => self.check_call(callee, args, span),
+            Expr::NamespaceCall {
+                module,
+                func,
+                args,
+                span,
+            } => match crate::stdlib::modules::resolve_std_call(module, func) {
+                Ok(canonical) => self.check_call(canonical, args, span),
+                Err(msg) => Err(DogDiagnostic::new(
+                    "E013",
+                    msg,
+                    span.clone(),
+                    "Standard library module calls use `std.<module>.<fn>(...)`.",
+                    "Run `dog docs std` to inspect valid standard modules and functions.",
+                    "Valid modules include std.io, std.text, std.math, std.files, std.net, std.system, std.data, std.crypto, std.cli, and std.collections.",
+                    "Wrong aisle in the standard library.",
+                )),
+            },
         }
     }
 
@@ -1250,8 +1306,8 @@ impl TypeChecker {
                         "Type mismatch detected.",
                         span.clone(),
                         format!("You're trying to add {rt} to {lt}. DOG forbids implicit conversions."),
-                        "Use number(), decimal(), or text() so both sides match.",
-                        "Keep your types consistent.",
+                        "Use `$\"text {value}\"` for string interpolation, or convert explicitly with `text()`, `number()`, or `decimal()`.",
+                        "Keep your types consistent (`$\"...\"` is easiest when mixing words and numbers).",
                         "Math wasn't supposed to be this difficult.",
                     )
                     .with_types(lt.label(), rt.label()))
@@ -1554,6 +1610,9 @@ impl TypeChecker {
             return Ok(inner_ty);
         }
         if callee == "clear" {
+            if args.is_empty() {
+                return Ok(DogType::Void);
+            }
             if args.len() != 1 {
                 return Err(arity_error(callee, 1, args.len(), span));
             }
@@ -1591,34 +1650,81 @@ impl TypeChecker {
         }
 
         match callee {
-            "say" => {
+            "say" | "print" => {
                 if arg_types.len() != 1 {
                     return Err(arity_error(callee, 1, arg_types.len(), span));
                 }
                 if arg_types[0] == DogType::Void {
                     return Err(DogDiagnostic::new(
                         "E021",
-                        "Cannot pass 'void' to say().",
+                        format!("Cannot pass 'void' to {callee}()."),
                         span.clone(),
-                        "say() requires a printable value.",
-                        "Pass text, number, decimal, bool, list, map, struct, or enum to say().",
-                        "Do not nest say(say(...)).",
+                        format!("{callee}() requires a printable value."),
+                        format!("Pass text, number, decimal, bool, list, map, struct, or enum to {callee}()."),
+                        "Do not nest say(say(...)) or print(print(...)).",
                         "Saying nothing out loud is called silence.",
                     )
                     .with_types("printable value", "void"));
                 }
                 Ok(DogType::Void)
             }
-            "answer" => {
+            "answer" | "ask" | "password" => {
                 if arg_types.len() > 1 {
                     return Err(arity_error(callee, 1, arg_types.len(), span));
                 }
                 if let Some(t) = arg_types.first() {
                     if *t != DogType::Text {
-                        return Err(type_err("text", &t.label(), span, "answer() prompt must be 'text'."));
+                        return Err(type_err("text", &t.label(), span, &format!("{callee}() prompt must be 'text'.")));
                     }
                 }
                 Ok(DogType::Text)
+            }
+            "confirm" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err("text", &arg_types[0].label(), span, "confirm() prompt must be 'text'."));
+                }
+                Ok(DogType::Bool)
+            }
+            "choose" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text
+                    || arg_types[1] != DogType::List(Box::new(DogType::Text))
+                {
+                    return Err(type_err(
+                        "text, list<text>",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "choose() expects (prompt: text, options: list<text>).",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "read_key" => {
+                if !arg_types.is_empty() {
+                    return Err(arity_error(callee, 0, arg_types.len(), span));
+                }
+                Ok(DogType::Text)
+            }
+            "table" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                let expected_headers = DogType::List(Box::new(DogType::Text));
+                let expected_rows = DogType::List(Box::new(DogType::List(Box::new(DogType::Text))));
+                if arg_types[0] != expected_headers || arg_types[1] != expected_rows {
+                    return Err(type_err(
+                        "list<text>, list<list<text>>",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "table() expects (headers: list<text>, rows: list<list<text>>).",
+                    ));
+                }
+                Ok(DogType::Void)
             }
             "lower" | "upper" | "trim" | "hex_encode" | "hex_decode" | "base64_encode"
             | "base64_decode" | "sha256" | "file_read" | "http_get" | "url_encode"
@@ -2241,7 +2347,7 @@ impl TypeChecker {
                 }
                 Ok(DogType::Void)
             }
-            "cli_progress" => {
+            "cli_progress" | "progress" => {
                 if arg_types.len() != 3 {
                     return Err(arity_error(callee, 3, arg_types.len(), span));
                 }
@@ -3172,6 +3278,70 @@ impl TypeChecker {
                 }
                 Ok(DogType::Void)
             }
+            "json_read" | "toml_parse" | "cookie_parse" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        &format!("{callee}() expects 'text'."),
+                    ));
+                }
+                Ok(DogType::Map(Box::new(DogType::Text), Box::new(DogType::Text)))
+            }
+            "json_write" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        "json_write() expects file path 'text' as first argument.",
+                    ));
+                }
+                if arg_types[1] == DogType::Void {
+                    return Err(type_err(
+                        "non-void",
+                        "void",
+                        span,
+                        "Cannot serialize 'void' to JSON file.",
+                    ));
+                }
+                Ok(DogType::Void)
+            }
+            "time_format" => {
+                if arg_types.len() != 2 {
+                    return Err(arity_error(callee, 2, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Number || arg_types[1] != DogType::Text {
+                    return Err(type_err(
+                        "number, text",
+                        &format!("{}, {}", arg_types[0], arg_types[1]),
+                        span,
+                        "time_format() expects (epoch_ms: number, fmt: text).",
+                    ));
+                }
+                Ok(DogType::Text)
+            }
+            "env_load" => {
+                if arg_types.len() != 1 {
+                    return Err(arity_error(callee, 1, arg_types.len(), span));
+                }
+                if arg_types[0] != DogType::Text {
+                    return Err(type_err(
+                        "text",
+                        &arg_types[0].label(),
+                        span,
+                        "env_load() expects `.env` file path 'text'.",
+                    ));
+                }
+                Ok(DogType::Number)
+            }
             other => {
                 let Some(sig) = self.functions.get(other) else {
                     let mut fix = "Check spelling or define the function with `fn`.".to_string();
@@ -3192,8 +3362,29 @@ impl TypeChecker {
                         "I looked everywhere for that function. Nobody home.",
                     ));
                 };
-                if args.len() != sig.params.len() {
-                    return Err(arity_error(callee, sig.params.len(), args.len(), span));
+                if args.len() < sig.min_args || args.len() > sig.params.len() {
+                    if sig.min_args == sig.params.len() {
+                        return Err(arity_error(callee, sig.params.len(), args.len(), span));
+                    } else {
+                        return Err(DogDiagnostic::new(
+                            "E014",
+                            format!("Incorrect argument count for '{callee}()'."),
+                            span.clone(),
+                            format!(
+                                "'{callee}()' expects {} to {} argument(s), but received {}.",
+                                sig.min_args,
+                                sig.params.len(),
+                                args.len()
+                            ),
+                            format!(
+                                "Pass between {} and {} argument(s) to {callee}().",
+                                sig.min_args,
+                                sig.params.len()
+                            ),
+                            "Trailing parameters with default values may be omitted.",
+                            "Count on your paws and try again.",
+                        ));
+                    }
                 }
                 for (idx, (got, exp)) in arg_types.iter().zip(sig.params.iter()).enumerate() {
                     if got != exp {

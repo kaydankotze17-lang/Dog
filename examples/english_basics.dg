@@ -1,0 +1,38 @@
+# Easy-to-read English-style DOG program
+# Run with: dog run examples/english_basics.dg
+
+define greet(name: text, title: text = "Friend") returns text
+    return $"Hello, {title} {name}!"
+end
+
+var points = 0
+let badge = "Starter"
+
+print(greet("Alex"))
+
+if badge is "Starter" then
+    increase points by 10
+else if badge is "Pro" then
+    increase points by 25
+else
+    set points to 5
+end
+
+unless points is less than 10 then
+    print($"Nice! You have {points} points (rank: {badge}).")
+end
+
+repeat 2 times
+    print("Keep learning DOG!")
+end
+
+for step from 1 to 3
+    print($"Countdown step {step}")
+end
+
+var retries = 0
+until retries is 2
+    increase retries by 1
+end
+
+print($"Done after {retries} retries.")

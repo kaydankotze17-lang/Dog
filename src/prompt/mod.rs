@@ -184,7 +184,7 @@ fn preview_output() -> String {
 }
 
 pub fn generate_completion_snippet(shell: ShellKind) -> String {
-    let cmds = "run eval build check lint bench format fmt test inspect profile repl edit studio forge new add remove search list info prompt completions docs server doctor system status env process permissions logs clean update upgrade config sdu version help";
+    let cmds = "run eval build package check lint bench benchmark format fmt test coverage debug watch graph explain inspect profile repl playground edit studio forge new add remove search list info prompt completions docs learn server doctor system status env process permissions logs clean update upgrade config sdu version help";
     match shell {
         ShellKind::Bash => format!(
             "_dog_complete() {{\n\
@@ -198,7 +198,8 @@ pub fn generate_completion_snippet(shell: ShellKind) -> String {
                  case \"$prev\" in\n\
                      prompt) COMPREPLY=( $(compgen -W \"preview install uninstall status init\" -- \"$cur\") ) ;;\n\
                      sdu) COMPREPLY=( $(compgen -W \"status auth permissions revoke logs doctor\" -- \"$cur\") ) ;;\n\
-                     docs) COMPREPLY=( $(compgen -W \"syntax types stdlib errors editor hub sdu prompt\" -- \"$cur\") ) ;;\n\
+                     docs) COMPREPLY=( $(compgen -W \"std syntax english types stdlib network cli errors editor hub sdu prompt\" -- \"$cur\") ) ;;\n\
+                     learn) COMPREPLY=( $(compgen -W \"basics english input functions data errors\" -- \"$cur\") ) ;;\n\
                      *) COMPREPLY=( $(compgen -f -- \"$cur\") ) ;;\n\
                  esac\n\
              }}\n\

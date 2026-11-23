@@ -4,24 +4,28 @@ use crate::config::{DogConfig, Personality};
 use crate::editor::BufferRunIo;
 use crate::formatter::format_source;
 use crate::hub::DogPack;
-use crate::interpreter::{resolve_program, run_source_with_io, Interpreter};
+use crate::interpreter::{
+    check_source, resolve_program, run_source_with_io, stmt_span, DebugStepDecision,
+    ExecObserver, Interpreter,
+};
 use crate::lexer::Lexer;
 use crate::net::guess_mime_type;
 use crate::parser::Parser;
+use crate::runtime::Environment;
 use crate::sdu::{audit_log_path, detect_actual_root, session_path};
 use crate::stdlib::{InterpreterIo, StdIo};
 use crate::term::{DogMessenger, ProgressBar, ProgressUnit};
 use crate::types::DogType;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::env;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{self, BufRead, Read, Write};
 use std::net::TcpListener;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 pub fn handle_inspect(path: &str) -> Result<String, String> {
     let source = fs::read_to_string(path).map_err(|e| format!("Failed to read '{path}': {e}"))?;
@@ -116,22 +120,52 @@ pub fn handle_profile(path: &str) -> Result<String, String> {
 }
 
 pub fn handle_docs(topic: Option<&str>) -> String {
-    match topic.unwrap_or("overview").to_ascii_lowercase().as_str() {
-        "syntax" => {
-            "DOG Syntax Reference\n\
-             --------------------\n\
-             let x = 10               immutable binding\n\
-             var y = 0                mutable binding (`y += 5`, `-=`, `*=`, `/=`, `%=`)\n\
-             const PI = 3.14          constant\n\
-             $\"Hi {name}, {x + 1}!\"   string interpolation (plain \"...\" stays literal)\n\
-             struct Dog ... end       product type\n\
-             enum Role ... end        sum/variant type\n\
-             if ... otherwise if ... otherwise ... end   conditional chain\n\
-             match x case 1 ... end   pattern match\n\
-             try ... catch err ... end error handling\n\
-             while / repeat / for     loops (break/continue supported)\n\
-             fn add(a: number, b: number) -> number ... end\n\
-             use \"module.dg\"          local module import"
+    let raw_topic = topic.map(str::trim).unwrap_or("overview");
+    let lower_topic = raw_topic.to_ascii_lowercase();
+    if lower_topic == "std" {
+        return crate::stdlib::modules::render_std_docs(None);
+    }
+    if lower_topic.starts_with("std.") {
+        if crate::stdlib::modules::is_std_module(&lower_topic) {
+            return crate::stdlib::modules::render_std_docs(Some(&lower_topic));
+        }
+        if let Some((mod_name, fn_name)) = lower_topic.rsplit_once('.') {
+            if let Ok(canon) = crate::stdlib::modules::resolve_std_call(mod_name, fn_name) {
+                let sig = crate::editor::builtin_signature_help(canon).unwrap_or("");
+                return format!(
+                    "DOG Standard Library Member: {lower_topic}\n\
+                     ------------------------------------------\n\
+                     Resolves to: {canon}()\n\
+                     {sig}"
+                );
+            }
+        }
+        return crate::stdlib::modules::render_std_docs(None);
+    }
+
+    match lower_topic.as_str() {
+        "syntax" | "english" | "cheat" => {
+            "DOG Syntax & English-Style Reference\n\
+             ------------------------------------\n\
+             Variables  : let x = 10              (fixed) | var y = 0 (mutable)\n\
+                          set y to 5              (English assign) | increase y by 2 | decrease y by 1\n\
+             Output     : say(\"Hi!\") or print(\"Hi!\") | $\"Hi {name}, {x + 1}!\"\n\
+             Compare    : == / != / > / < / >= / <=\n\
+                          is / is not / equals / is equal to / is greater than / is less than\n\
+                          is at least / is at most / is over / is under\n\
+             Logic      : and / or / not\n\
+             Branching  : if cond then ... elif ... else ... end   (or otherwise if / otherwise)\n\
+                          unless cond then ... else ... end        (runs when cond is false)\n\
+             Pattern    : match x case 1 ... else ... end          (or otherwise)\n\
+             Errors     : try ... catch err ... end\n\
+             Loops      : while cond ... end  | until cond ... end\n\
+                          repeat 3 times ... end | for each item in items ... end\n\
+                          for i from 1 to 5 ... end  (inclusive 1..5)\n\
+             Functions  : fn add(a: number, b: number = 1) -> number ... end\n\
+                          define greet(name: text) returns text ... end\n\
+             Types      : struct Dog ... end | enum Role ... end\n\
+             Modules    : use \"std.io\" | use \"module.dg\"\n\n\
+             Tip: Run `dog learn` for guided step-by-step interactive lessons."
                 .to_string()
         }
         "types" => {
@@ -145,9 +179,12 @@ pub fn handle_docs(topic: Option<&str>) -> String {
                 .to_string()
         }
         "stdlib" => {
-            "DOG Standard Library\n\
-             --------------------\n\
-             I/O     : say(), answer(), log_info(), log_warn(), log_error()\n\
+            "DOG Standard Library (v0.3.0 — Modular `std.*` + Global Built-ins)\n\
+             -----------------------------------------------------------------\n\
+             Modules : `dog docs std` for std.io, std.text, std.math, std.files, std.net,\n\
+                       std.system, std.data, std.crypto, std.cli, std.collections\n\
+             I/O     : say(), answer(), ask(), confirm(), choose(), password(), read_key(),\n\
+                       clear(), progress(), table(), log_info(), log_warn(), log_error()\n\
              CLI UI  : cli_info(), cli_success(), cli_warn(), cli_error(), cli_debug(),\n\
                        cli_progress(), cli_spinner(), cli_theme(), cli_prefix(),\n\
                        cli_timestamps(), cli_supports_color(), cli_is_tty()\n\
@@ -171,11 +208,13 @@ pub fn handle_docs(topic: Option<&str>) -> String {
                        path_join(), path_dirname(), path_basename(), path_ext(),\n\
                        dir_list(), mkdir(), rmdir(), temp_dir(), cwd()\n\
              KV DB   : kv_set(), kv_get(), kv_has(), kv_delete(), kv_keys()\n\
-             System  : args(), env_get(), env_set(), exec_cmd(), os_name(), os_arch(),\n\
-                       time_now_ms(), time_utc(), sleep_ms(), uuid_v4()\n\
+             System  : args(), env_get(), env_set(), env_load(), exec_cmd(), os_name(),\n\
+                       os_arch(), time_now_ms(), time_utc(), time_format(), sleep_ms(),\n\
+                       uuid_v4()\n\
              Interop : json_parse(), json_stringify(), json_pretty(), json_has_key(),\n\
-                       csv_parse(), csv_stringify(), url_encode(), url_decode(),\n\
-                       url_parse(), query_parse(), query_stringify()\n\
+                       json_read(), json_write(), toml_parse(), csv_parse(),\n\
+                       csv_stringify(), url_encode(), url_decode(), url_parse(),\n\
+                       query_parse(), query_stringify(), cookie_parse()\n\
              Crypto  : hex_encode(), hex_decode(), base64_encode(), base64_decode(),\n\
                        base64_url_encode(), base64_url_decode(), sha256(), sha512(),\n\
                        hmac_sha256(), hmac_sha256_verify(), sha1(), rand_bytes_hex()\n\
@@ -296,11 +335,153 @@ pub fn handle_docs(topic: Option<&str>) -> String {
             "DOG Documentation Topics\n\
              ------------------------\n\
              Run `dog docs <topic>` with one of:\n\
-               syntax, types, stdlib, cli, network, errors, editor, prompt, hub, sdu\n\
-             Or pass any built-in function name (e.g. `dog docs ws_ping`, `dog docs sha512`)."
+               std, syntax, english, types, stdlib, cli, network, errors, editor, prompt, hub, sdu\n\
+             New to DOG? Run `dog learn` for step-by-step beginner lessons.\n\
+             Inspect a std module: `dog docs std.io`, `dog docs std.net`, `dog docs std.data`\n\
+             Or pass any built-in function name (e.g. `dog docs print`, `dog docs ask`)."
                 .to_string()
         }
     }
+}
+
+pub fn handle_learn(
+    topic: Option<&str>,
+    run_demo: bool,
+    personality: Personality,
+) -> Result<String, String> {
+    let key = topic.map(|s| s.trim().to_ascii_lowercase()).unwrap_or_default();
+    if key.is_empty() || key == "list" || key == "all" {
+        return Ok(
+            "DOG Beginner Guide (`dog learn`)\n\
+             -------------------------------\n\
+             DOG is designed to read clearly like English while keeping strict types.\n\n\
+             Lessons:\n\
+               1. dog learn basics      -- print/say, let/var, and $\"hello {name}\" text\n\
+               2. dog learn english     -- is/is not, unless, until, repeat N times, for..from..to\n\
+               3. dog learn input       -- ask(), confirm(), choose(), number()\n\
+               4. dog learn functions   -- define / fn, defaults, and returns\n\
+               5. dog learn data        -- lists, maps, structs, enums, and match\n\
+               6. dog learn errors      -- strict typing and try ... catch err ... end\n\n\
+             Add `--run` to execute the lesson example live:\n\
+               dog learn english --run\n\
+             Quick cheat sheet: `dog docs english`"
+                .to_string(),
+        );
+    }
+
+    let (title, explanation, code, runnable_code) = match key.as_str() {
+        "basics" | "1" => (
+            "Lesson 1: Basics (Output & Variables)",
+            "Use `print(...)` or `say(...)` to show output, `let` for fixed values,\n\
+             `var` for values that change, and `$\"...\"` to place values inside text.",
+            "let pet = \"Buddy\"\n\
+             var treats = 2\n\
+             increase treats by 1\n\
+             print($\"{pet} earned {treats} treats!\")",
+            "let pet = \"Buddy\"\nvar treats = 2\nincrease treats by 1\nprint($\"{pet} earned {treats} treats!\")",
+        ),
+        "english" | "2" => (
+            "Lesson 2: Natural English Control Flow",
+            "Write conditions and loops almost like plain English sentences:\n\
+             `is`, `is not`, `is at least`, `then`, `else`, `unless`, `until`,\n\
+             `repeat N times`, `for n from 1 to 5`, `set x to ...`, `increase x by ...`.",
+            "var energy = 1\n\
+             until energy is at least 3\n\
+                 print($\"Charging... level {energy}\")\n\
+                 increase energy by 1\n\
+             end\n\
+             unless energy is less than 3 then\n\
+                 print(\"Ready to roll!\")\n\
+             end\n\
+             for step from 1 to 3\n\
+                 print($\"Step #{step}\")\n\
+             end",
+            "var energy = 1\nuntil energy is at least 3\n    print($\"Charging... level {energy}\")\n    increase energy by 1\nend\nunless energy is less than 3 then\n    print(\"Ready to roll!\")\nend\nfor step from 1 to 3\n    print($\"Step #{step}\")\nend",
+        ),
+        "input" | "3" => (
+            "Lesson 3: Talking to the User",
+            "Ask questions interactively with `ask()`, `confirm()`, and `choose()`.\n\
+             Convert text answers to numbers explicitly with `number(...)`.",
+            "let name = ask(\"Your name? \")\n\
+             let ready = confirm(\"Start adventure?\")\n\
+             if ready is true then\n\
+                 let mode = choose(\"Difficulty\", [\"Easy\", \"Normal\", \"Hard\"])\n\
+                 print($\"Good luck, {name} on {mode}!\")\n\
+             else\n\
+                 print(\"See you next time!\")\n\
+             end",
+            "let name = \"Alex\"\nlet ready = true\nif ready is true then\n    print($\"Good luck, {name}!\")\nelse\n    print(\"See you next time!\")\nend",
+        ),
+        "functions" | "4" => (
+            "Lesson 4: Writing Reusable Functions",
+            "Declare functions with `define` (or `fn`), optional parameter defaults,\n\
+             and `returns <Type>` (or `-> <Type>`).",
+            "define greet(name: text, greeting: text = \"Hello\") returns text\n\
+                 return $\"{greeting}, {name}!\"\n\
+             end\n\
+             \n\
+             print(greet(\"DOG\"))\n\
+             print(greet(\"Termux\", \"Welcome to\"))",
+            "define greet(name: text, greeting: text = \"Hello\") returns text\n    return $\"{greeting}, {name}!\"\nend\nprint(greet(\"DOG\"))\nprint(greet(\"Termux\", \"Welcome to\"))",
+        ),
+        "data" | "5" => (
+            "Lesson 5: Lists, Maps, Structs & Match",
+            "Organize structured data with lists, maps, structs, enums, and `match`.",
+            "let fruits = [\"apple\", \"mango\", \"pear\"]\n\
+             for each fruit in fruits\n\
+                 print($\"Fruit: {fruit}\")\n\
+             end\n\
+             \n\
+             let rank = 2\n\
+             match rank\n\
+                 case 1\n\
+                     print(\"Gold medal\")\n\
+                 else\n\
+                     print(\"Keep climbing!\")\n\
+             end",
+            "let fruits = [\"apple\", \"mango\", \"pear\"]\nfor each fruit in fruits\n    print($\"Fruit: {fruit}\")\nend\nlet rank = 2\nmatch rank\n    case 1\n        print(\"Gold medal\")\n    else\n        print(\"Keep climbing!\")\nend",
+        ),
+        "errors" | "6" => (
+            "Lesson 6: Safety & Error Handling",
+            "DOG prevents silent text+number bugs at check time. For runtime input\n\
+             like parsing user text, wrap risky code in `try ... catch err ... end`.",
+            "try\n\
+                 let parsed = number(\"not-a-number\")\n\
+                 print(parsed)\n\
+             catch err\n\
+                 print($\"Handled safely: {err}\")\n\
+             end",
+            "try\n    let parsed = number(\"not-a-number\")\n    print(parsed)\ncatch err\n    print(\"Handled safely!\")\nend",
+        ),
+        other => {
+            return Err(format!(
+                "Unknown lesson '{other}'. Run `dog learn` to see available lessons (basics, english, input, functions, data, errors)."
+            ));
+        }
+    };
+
+    let indented_code: String = code
+        .lines()
+        .map(|l| format!("  {l}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let mut out = format!(
+        "DOG {title}\n{}\n{explanation}\n\nExample:\n{indented_code}\n",
+        "-".repeat(title.len() + 4)
+    );
+
+    if run_demo {
+        let output = eval_snippet_captured(runnable_code, personality)?;
+        out.push_str("\nLive Output:\n");
+        for line in output.lines() {
+            out.push_str(&format!("  > {line}\n"));
+        }
+    } else {
+        out.push_str(&format!("\nTry it live: `dog learn {key} --run`"));
+    }
+
+    Ok(out)
 }
 
 pub fn handle_eval_with_io(
@@ -326,7 +507,8 @@ pub fn handle_eval_with_io(
 
     if program.statements.len() == 1 {
         if let Some(Stmt::ExprStmt { expr, span }) = program.statements.first().cloned() {
-            let is_say = matches!(&expr, Expr::Call { callee, .. } if callee == "say");
+            let is_say =
+                matches!(&expr, Expr::Call { callee, .. } if callee == "say" || callee == "print");
             if !is_say {
                 let mut single_checker = TypeChecker::new();
                 if let Ok(ty) = single_checker.infer_single_expr(&expr) {
@@ -580,7 +762,12 @@ fn collect_stmt_reads(stmt: &Stmt, used: &mut HashSet<String>) {
                 collect_stmt_reads(s, used);
             }
         }
-        Stmt::FnDef { body, .. } => {
+        Stmt::FnDef { params, body, .. } => {
+            for p in params {
+                if let Some(d) = &p.default {
+                    collect_expr_reads(d, used);
+                }
+            }
             for s in body {
                 collect_stmt_reads(s, used);
             }
@@ -635,7 +822,7 @@ fn collect_expr_reads(expr: &Expr, used: &mut HashSet<String>) {
             collect_expr_reads(left, used);
             collect_expr_reads(right, used);
         }
-        Expr::Call { args, .. } => {
+        Expr::Call { args, .. } | Expr::NamespaceCall { args, .. } => {
             for a in args {
                 collect_expr_reads(a, used);
             }
@@ -1265,4 +1452,842 @@ pub fn handle_logs(args: &[String]) -> Result<String, String> {
         return Ok(format!("No DOG CLI logs recorded yet at {}.", log_file.display()));
     }
     fs::read_to_string(&log_file).map_err(|e| format!("Failed to read DOG logs: {e}"))
+}
+
+// =========================================================================
+// DOG 0.3.0 Developer Tools: Debug, Watch, Graph, Explain
+// =========================================================================
+
+pub struct DebugObserver<'a> {
+    source_lines: Vec<String>,
+    breakpoints: BTreeSet<usize>,
+    stepping: bool,
+    cmd_in: &'a mut dyn BufRead,
+    cmd_out: &'a mut dyn Write,
+}
+
+impl<'a> DebugObserver<'a> {
+    pub fn new(
+        source: &str,
+        cmd_in: &'a mut dyn BufRead,
+        cmd_out: &'a mut dyn Write,
+    ) -> Self {
+        Self {
+            source_lines: source.lines().map(String::from).collect(),
+            breakpoints: BTreeSet::new(),
+            stepping: true,
+            cmd_in,
+            cmd_out,
+        }
+    }
+
+    fn print_source_window(&mut self, current_line: usize) {
+        let total = self.source_lines.len();
+        let start = current_line.saturating_sub(3).max(1);
+        let end = (current_line + 3).min(total);
+        for ln in start..=end {
+            let marker = if ln == current_line { "=>" } else { "  " };
+            let bp = if self.breakpoints.contains(&ln) { "*" } else { " " };
+            let text = self
+                .source_lines
+                .get(ln.saturating_sub(1))
+                .map(String::as_str)
+                .unwrap_or("");
+            let _ = writeln!(self.cmd_out, "{marker}{bp} {ln:>4} | {text}");
+        }
+    }
+}
+
+impl<'a> ExecObserver for DebugObserver<'a> {
+    fn on_before_stmt(&mut self, stmt: &Stmt, env: &Environment) -> DebugStepDecision {
+        let span = stmt_span(stmt);
+        let line = span.line;
+        if !self.stepping && !self.breakpoints.contains(&line) {
+            return DebugStepDecision::Continue;
+        }
+        self.stepping = true;
+        let code_line = self
+            .source_lines
+            .get(line.saturating_sub(1))
+            .map(|s| s.trim())
+            .unwrap_or("");
+        let _ = writeln!(
+            self.cmd_out,
+            "[debug] {}:{}  {}",
+            span.file, line, code_line
+        );
+
+        loop {
+            let _ = write!(self.cmd_out, "(dog-dbg) ");
+            let _ = self.cmd_out.flush();
+            let mut input = String::new();
+            match self.cmd_in.read_line(&mut input) {
+                Ok(0) => {
+                    self.stepping = false;
+                    return DebugStepDecision::Continue;
+                }
+                Ok(_) => {
+                    let cmd = input.trim();
+                    let mut parts = cmd.split_whitespace();
+                    match parts.next().unwrap_or("") {
+                        "" | "n" | "next" | "s" | "step" => {
+                            self.stepping = true;
+                            return DebugStepDecision::Continue;
+                        }
+                        "c" | "cont" | "continue" => {
+                            self.stepping = false;
+                            return DebugStepDecision::Continue;
+                        }
+                        "b" | "break" => {
+                            if let Some(ln) = parts.next().and_then(|s| s.parse::<usize>().ok()) {
+                                if self.breakpoints.contains(&ln) {
+                                    self.breakpoints.remove(&ln);
+                                    let _ = writeln!(self.cmd_out, "Removed breakpoint at line {ln}");
+                                } else {
+                                    self.breakpoints.insert(ln);
+                                    let _ = writeln!(self.cmd_out, "Set breakpoint at line {ln}");
+                                }
+                            } else {
+                                let _ = writeln!(self.cmd_out, "Usage: b <line-number>");
+                            }
+                        }
+                        "p" | "print" | "vars" => {
+                            let syms = env.snapshot_all_symbols();
+                            if let Some(target) = parts.next() {
+                                if let Some((_, val)) = syms.iter().find(|(k, _)| k == target) {
+                                    let _ = writeln!(self.cmd_out, "  {target} = {val}");
+                                } else {
+                                    let _ = writeln!(self.cmd_out, "  <{target} is not defined in current scope>");
+                                }
+                            } else if syms.is_empty() {
+                                let _ = writeln!(self.cmd_out, "  (no variables in scope)");
+                            } else {
+                                for (k, v) in syms {
+                                    let _ = writeln!(self.cmd_out, "  {k} = {v}");
+                                }
+                            }
+                        }
+                        "l" | "list" => {
+                            self.print_source_window(line);
+                        }
+                        "h" | "help" | "?" => {
+                            let _ = writeln!(
+                                self.cmd_out,
+                                "Commands: n/step, c/continue, b <line>, p [var]/vars, l/list, q/quit"
+                            );
+                        }
+                        "q" | "quit" | "exit" => {
+                            let _ = writeln!(self.cmd_out, "Debugger aborted execution.");
+                            return DebugStepDecision::Abort;
+                        }
+                        other => {
+                            let _ = writeln!(
+                                self.cmd_out,
+                                "Unknown debugger command '{other}'. Type 'h' for help."
+                            );
+                        }
+                    }
+                }
+                Err(_) => return DebugStepDecision::Abort,
+            }
+        }
+    }
+}
+
+pub fn run_debug_with_streams(
+    path: &str,
+    source: &str,
+    personality: Personality,
+    io: &mut dyn InterpreterIo,
+    cmd_in: &mut dyn BufRead,
+    cmd_out: &mut dyn Write,
+) -> Result<(), String> {
+    let program = check_source(path, source)
+        .map_err(|d| d.format_with(personality, Some(source)))?;
+    let _ = writeln!(
+        cmd_out,
+        "DOG Debugger attached to {path} (type 'h' for commands: n, c, b <line>, p, l, q)"
+    );
+    let mut observer = DebugObserver::new(source, cmd_in, cmd_out);
+    let mut interp = Interpreter::with_observer(io, &mut observer);
+    match interp.eval_program(&program) {
+        Ok(()) => Ok(()),
+        Err(diag) if diag.code == "E035" && diag.title.contains("aborted by debugger") => Ok(()),
+        Err(diag) => Err(diag.format_with(personality, Some(source))),
+    }
+}
+
+pub fn handle_debug(path: &str, personality: Personality) -> Result<(), String> {
+    let source = fs::read_to_string(path).map_err(|e| format!("Failed to read '{path}': {e}"))?;
+    let mut stdio = StdIo;
+    let stdin = io::stdin();
+    let mut cmd_in = stdin.lock();
+    let mut cmd_out = io::stderr();
+    run_debug_with_streams(path, &source, personality, &mut stdio, &mut cmd_in, &mut cmd_out)
+}
+
+pub fn collect_watched_files(entry: &str) -> Vec<PathBuf> {
+    let mut result = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut queue: VecDeque<PathBuf> = VecDeque::new();
+    queue.push_back(PathBuf::from(entry));
+
+    while let Some(path) = queue.pop_front() {
+        let canon = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if !seen.insert(canon) {
+            continue;
+        }
+        result.push(path.clone());
+        if let Ok(src) = fs::read_to_string(&path) {
+            if let Ok(tokens) = Lexer::new(&path.display().to_string(), &src).tokenize() {
+                if let Ok(program) = Parser::new(tokens).parse() {
+                    let base = path.parent().unwrap_or_else(|| Path::new("."));
+                    for stmt in &program.statements {
+                        if let Stmt::Use { path: rel, .. } = stmt {
+                            if !rel.starts_with("std.") {
+                                queue.push_back(base.join(rel));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    result.sort();
+    result
+}
+
+pub fn snapshot_mtimes(files: &[PathBuf]) -> Vec<(PathBuf, Option<SystemTime>)> {
+    files
+        .iter()
+        .map(|p| {
+            let mtime = fs::metadata(p).and_then(|m| m.modified()).ok();
+            (p.clone(), mtime)
+        })
+        .collect()
+}
+
+pub fn handle_watch(args: &[String], personality: Personality) -> Result<(), String> {
+    let mut test_mode = false;
+    let mut check_only = false;
+    let mut target: Option<String> = None;
+
+    for a in args {
+        match a.as_str() {
+            "--test" | "-t" => test_mode = true,
+            "--check" | "-c" => check_only = true,
+            flag if flag.starts_with('-') => {
+                return Err(format!(
+                    "Unknown watch flag '{flag}'. Usage: dog watch <file.dg> [--test | --check]"
+                ));
+            }
+            val if target.is_none() => target = Some(val.to_string()),
+            extra => {
+                return Err(format!(
+                    "Unexpected argument '{extra}'. Usage: dog watch <file.dg> [--test | --check]"
+                ));
+            }
+        }
+    }
+
+    let entry = target.unwrap_or_else(|| {
+        if Path::new("src/main.dg").exists() {
+            "src/main.dg".to_string()
+        } else {
+            "main.dg".to_string()
+        }
+    });
+    if !Path::new(&entry).exists() && !test_mode {
+        return Err(format!(
+            "Watch target '{entry}' does not exist. Usage: dog watch <file.dg> [--test | --check]"
+        ));
+    }
+
+    let messenger = DogConfig::load().messenger();
+    loop {
+        messenger.info(&format!("[watch] Running '{entry}' ..."));
+        if test_mode {
+            if let Err(err) = crate::tester::run_tests(Some(&entry), personality) {
+                messenger.error(&err);
+            }
+        } else {
+            match fs::read_to_string(&entry) {
+                Ok(source) => {
+                    if check_only {
+                        match check_source(&entry, &source) {
+                            Ok(_) => messenger.success(&format!("{entry} passed checks.")),
+                            Err(diag) => eprintln!("{}", diag.format_with(personality, Some(&source))),
+                        }
+                    } else {
+                        let mut stdio = StdIo;
+                        if let Err(diag) = run_source_with_io(&entry, &source, &mut stdio) {
+                            eprintln!("{}", diag.format_with(personality, Some(&source)));
+                        }
+                    }
+                }
+                Err(err) => messenger.error(&format!("Failed to read '{entry}': {err}")),
+            }
+        }
+
+        let watched = if Path::new(&entry).is_dir() {
+            crate::tester::collect_test_files(Some(&entry)).unwrap_or_default()
+        } else {
+            collect_watched_files(&entry)
+        };
+        let mut last_snap = snapshot_mtimes(&watched);
+        messenger.info(&format!(
+            "[watch] Watching {} file(s) for changes (Ctrl+C to stop)...",
+            watched.len()
+        ));
+
+        loop {
+            thread::sleep(Duration::from_millis(450));
+            let cur_files = if Path::new(&entry).is_dir() {
+                crate::tester::collect_test_files(Some(&entry)).unwrap_or_default()
+            } else {
+                collect_watched_files(&entry)
+            };
+            let cur_snap = snapshot_mtimes(&cur_files);
+            if cur_snap != last_snap {
+                last_snap = cur_snap;
+                break;
+            }
+        }
+    }
+}
+
+pub fn handle_graph(target: Option<&str>) -> Result<String, String> {
+    let mut out = String::from("DOG Dependency Graph\n--------------------\n");
+    let pack_path = Path::new("dog.pack");
+    if pack_path.is_file() {
+        if let Ok(pack) = DogPack::load(pack_path) {
+            out.push_str(&format!("Package: {} v{}\n", pack.name, pack.version));
+            if pack.dependencies.is_empty() {
+                out.push_str("  [dependencies] (none)\n");
+            } else {
+                for (dep, spec) in &pack.dependencies {
+                    out.push_str(&format!("  +-- pkg:{dep} ({spec})\n"));
+                }
+            }
+            out.push('\n');
+        }
+    }
+
+    let mut files: Vec<PathBuf> = Vec::new();
+    match target {
+        Some(p) => {
+            let path = PathBuf::from(p);
+            if path.is_file() {
+                files = collect_watched_files(p);
+            } else if path.is_dir() {
+                collect_all_dg_files(&path, &mut files);
+                files.sort();
+            } else {
+                return Err(format!("Graph target '{p}' does not exist."));
+            }
+        }
+        None => {
+            if Path::new("src/main.dg").is_file() {
+                files = collect_watched_files("src/main.dg");
+            } else {
+                collect_all_dg_files(Path::new("."), &mut files);
+                files.sort();
+            }
+        }
+    }
+
+    if files.is_empty() {
+        out.push_str("No `.dg` files found in target.\n");
+        return Ok(out);
+    }
+
+    out.push_str("Module Edges:\n");
+    for file in &files {
+        let label = file.display().to_string();
+        let src = match fs::read_to_string(file) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let mut local_uses: Vec<String> = Vec::new();
+        let mut std_mods: BTreeSet<String> = BTreeSet::new();
+        if let Ok(tokens) = Lexer::new(&label, &src).tokenize() {
+            if let Ok(program) = Parser::new(tokens).parse() {
+                for stmt in &program.statements {
+                    if let Stmt::Use { path, .. } = stmt {
+                        if path.starts_with("std.") {
+                            std_mods.insert(path.clone());
+                        } else {
+                            local_uses.push(path.clone());
+                        }
+                    } else {
+                        collect_std_namespaces_in_stmt(stmt, &mut std_mods);
+                    }
+                }
+            }
+        }
+        out.push_str(&format!("  {label}\n"));
+        for u in &local_uses {
+            out.push_str(&format!("    +-- use \"{u}\"\n"));
+        }
+        for s in &std_mods {
+            out.push_str(&format!("    +-- {s}\n"));
+        }
+        if local_uses.is_empty() && std_mods.is_empty() {
+            out.push_str("    +-- (no imports)\n");
+        }
+    }
+    Ok(out)
+}
+
+fn collect_all_dg_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+                if name == "target" || name.starts_with('.') {
+                    continue;
+                }
+            }
+            collect_all_dg_files(&p, out);
+        } else if p.extension().and_then(|s| s.to_str()) == Some("dg") {
+            out.push(p);
+        }
+    }
+}
+
+fn collect_std_namespaces_in_stmt(stmt: &Stmt, out: &mut BTreeSet<String>) {
+    match stmt {
+        Stmt::Binding { value, .. } | Stmt::Assign { value, .. } | Stmt::CompoundAssign { value, .. } => {
+            collect_std_namespaces_in_expr(value, out);
+        }
+        Stmt::FieldAssign { value, .. } => collect_std_namespaces_in_expr(value, out),
+        Stmt::IndexAssign { index, value, .. } => {
+            collect_std_namespaces_in_expr(index, out);
+            collect_std_namespaces_in_expr(value, out);
+        }
+        Stmt::If {
+            condition,
+            then_branch,
+            otherwise_branch,
+            ..
+        } => {
+            collect_std_namespaces_in_expr(condition, out);
+            for s in then_branch {
+                collect_std_namespaces_in_stmt(s, out);
+            }
+            if let Some(el) = otherwise_branch {
+                for s in el {
+                    collect_std_namespaces_in_stmt(s, out);
+                }
+            }
+        }
+        Stmt::Match {
+            subject,
+            cases,
+            otherwise_branch,
+            ..
+        } => {
+            collect_std_namespaces_in_expr(subject, out);
+            for c in cases {
+                collect_std_namespaces_in_expr(&c.pattern, out);
+                for s in &c.body {
+                    collect_std_namespaces_in_stmt(s, out);
+                }
+            }
+            if let Some(el) = otherwise_branch {
+                for s in el {
+                    collect_std_namespaces_in_stmt(s, out);
+                }
+            }
+        }
+        Stmt::TryCatch {
+            try_body,
+            catch_body,
+            ..
+        } => {
+            for s in try_body {
+                collect_std_namespaces_in_stmt(s, out);
+            }
+            for s in catch_body {
+                collect_std_namespaces_in_stmt(s, out);
+            }
+        }
+        Stmt::While { condition, body, .. } => {
+            collect_std_namespaces_in_expr(condition, out);
+            for s in body {
+                collect_std_namespaces_in_stmt(s, out);
+            }
+        }
+        Stmt::Repeat { count, body, .. } => {
+            collect_std_namespaces_in_expr(count, out);
+            for s in body {
+                collect_std_namespaces_in_stmt(s, out);
+            }
+        }
+        Stmt::For { iterable, body, .. } => {
+            collect_std_namespaces_in_expr(iterable, out);
+            for s in body {
+                collect_std_namespaces_in_stmt(s, out);
+            }
+        }
+        Stmt::FnDef { params, body, .. } => {
+            for p in params {
+                if let Some(d) = &p.default {
+                    collect_std_namespaces_in_expr(d, out);
+                }
+            }
+            for s in body {
+                collect_std_namespaces_in_stmt(s, out);
+            }
+        }
+        Stmt::Return { value: Some(e), .. } | Stmt::ExprStmt { expr: e, .. } => {
+            collect_std_namespaces_in_expr(e, out);
+        }
+        Stmt::Use { .. }
+        | Stmt::StructDef { .. }
+        | Stmt::EnumDef { .. }
+        | Stmt::Return { value: None, .. }
+        | Stmt::Break { .. }
+        | Stmt::Continue { .. } => {}
+    }
+}
+
+fn collect_std_namespaces_in_expr(expr: &Expr, out: &mut BTreeSet<String>) {
+    match expr {
+        Expr::NamespaceCall { module, args, .. } => {
+            out.insert(module.clone());
+            for a in args {
+                collect_std_namespaces_in_expr(a, out);
+            }
+        }
+        Expr::Call { args, .. } | Expr::ListLit { elements: args, .. } => {
+            for a in args {
+                collect_std_namespaces_in_expr(a, out);
+            }
+        }
+        Expr::InterpString { parts, .. } => {
+            for p in parts {
+                if let InterpPart::Expr(e) = p {
+                    collect_std_namespaces_in_expr(e, out);
+                }
+            }
+        }
+        Expr::MapLit { entries, .. } => {
+            for (k, v) in entries {
+                collect_std_namespaces_in_expr(k, out);
+                collect_std_namespaces_in_expr(v, out);
+            }
+        }
+        Expr::StructInit { fields, .. } => {
+            for (_, v) in fields {
+                collect_std_namespaces_in_expr(v, out);
+            }
+        }
+        Expr::FieldAccess { target, .. } | Expr::Unary { expr: target, .. } => {
+            collect_std_namespaces_in_expr(target, out);
+        }
+        Expr::Index { target, index, .. } => {
+            collect_std_namespaces_in_expr(target, out);
+            collect_std_namespaces_in_expr(index, out);
+        }
+        Expr::Binary { left, right, .. } => {
+            collect_std_namespaces_in_expr(left, out);
+            collect_std_namespaces_in_expr(right, out);
+        }
+        Expr::StringLit { .. }
+        | Expr::NumberLit { .. }
+        | Expr::DecimalLit { .. }
+        | Expr::BoolLit { .. }
+        | Expr::Identifier { .. } => {}
+    }
+}
+
+pub fn handle_explain(target: &str) -> Result<String, String> {
+    let upper = target.trim().to_ascii_uppercase();
+    if upper.starts_with('E')
+        && upper.len() == 4
+        && upper[1..].chars().all(|c| c.is_ascii_digit())
+    {
+        return explain_error_code(&upper)
+            .ok_or_else(|| format!("Unknown DOG error code '{upper}'. Valid codes span E001-E041."));
+    }
+
+    let source =
+        fs::read_to_string(target).map_err(|e| format!("Failed to read '{target}': {e}"))?;
+    let tokens = Lexer::new(target, &source)
+        .tokenize()
+        .map_err(|d| format!("{d}"))?;
+    let program = Parser::new(tokens).parse().map_err(|d| format!("{d}"))?;
+
+    let mut uses: Vec<String> = Vec::new();
+    let mut structs: Vec<String> = Vec::new();
+    let mut enums: Vec<String> = Vec::new();
+    let mut functions: Vec<String> = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+    let mut has_loops = false;
+    let mut has_try = false;
+    let mut std_used: BTreeSet<String> = BTreeSet::new();
+
+    for stmt in &program.statements {
+        collect_std_namespaces_in_stmt(stmt, &mut std_used);
+        match stmt {
+            Stmt::Use { path, .. } => uses.push(path.clone()),
+            Stmt::StructDef { name, fields, .. } => {
+                structs.push(format!("struct {name} ({} fields)", fields.len()));
+            }
+            Stmt::EnumDef { name, variants, .. } => {
+                enums.push(format!("enum {name} ({})", variants.join(", ")));
+            }
+            Stmt::FnDef {
+                name,
+                params,
+                return_type,
+                ..
+            } => {
+                let req = params.iter().filter(|p| p.default.is_none()).count();
+                let opt = params.len() - req;
+                let opt_note = if opt > 0 {
+                    format!(", {opt} default")
+                } else {
+                    String::new()
+                };
+                functions.push(format!(
+                    "fn {name}({} params{opt_note}) -> {:?}",
+                    params.len(),
+                    return_type
+                ));
+            }
+            Stmt::Binding { kind, name, .. } => {
+                bindings.push(format!("{kind:?} {name}"));
+            }
+            Stmt::While { .. } | Stmt::Repeat { .. } | Stmt::For { .. } => has_loops = true,
+            Stmt::TryCatch { .. } => has_try = true,
+            _ => {}
+        }
+    }
+
+    let mut caps: Vec<&str> = Vec::new();
+    if source.contains("http_") || source.contains("ws_") || source.contains("tcp_") || source.contains("udp_") {
+        caps.push("Networking (HTTP/WS/TCP/UDP)");
+    }
+    if source.contains("file_") || source.contains("dir_list") || source.contains("kv_") || source.contains("json_read") {
+        caps.push("Filesystem / Persistent KV");
+    }
+    if source.contains("ask(") || source.contains("answer(") || source.contains("confirm(") || source.contains("choose(") || source.contains("password(") {
+        caps.push("Interactive Terminal I/O");
+    }
+    if source.contains("sha") || source.contains("hmac_") || source.contains("base64") {
+        caps.push("Cryptography");
+    }
+    if source.contains("exec_cmd") {
+        caps.push("Subprocess Execution");
+    }
+
+    let mut out = format!(
+        "DOG Code Explanation: {target}\n\
+         ------------------------------\n\
+         Lines       : {}\n\
+         Statements  : {}\n\
+         Imports     : {}\n\
+         Std Modules : {}\n\
+         Control Flow: loops={}, try/catch={}\n\
+         Capabilities: {}\n",
+        source.lines().count(),
+        program.statements.len(),
+        if uses.is_empty() {
+            "none".to_string()
+        } else {
+            uses.join(", ")
+        },
+        if std_used.is_empty() {
+            "global built-ins".to_string()
+        } else {
+            std_used.into_iter().collect::<Vec<_>>().join(", ")
+        },
+        has_loops,
+        has_try,
+        if caps.is_empty() {
+            "Pure computation".to_string()
+        } else {
+            caps.join(", ")
+        }
+    );
+
+    if !structs.is_empty() || !enums.is_empty() {
+        out.push_str("\nData Types:\n");
+        for s in structs {
+            out.push_str(&format!("  - {s}\n"));
+        }
+        for e in enums {
+            out.push_str(&format!("  - {e}\n"));
+        }
+    }
+    if !functions.is_empty() {
+        out.push_str("\nFunctions:\n");
+        for f in functions {
+            out.push_str(&format!("  - {f}\n"));
+        }
+    }
+    if !bindings.is_empty() {
+        out.push_str("\nTop-Level Bindings:\n");
+        for b in bindings {
+            out.push_str(&format!("  - {b}\n"));
+        }
+    }
+    Ok(out)
+}
+
+fn explain_error_code(code: &str) -> Option<String> {
+    let (title, cause, example_bad, example_fix) = match code {
+        "E001" => (
+            "Unexpected character / invalid token",
+            "Source contains a character or operator not recognized by the DOG lexer.",
+            "let x = 1 @ 2",
+            "Use valid DOG operators: +, -, *, /, %, ==, !=, <, >, <=, >=",
+        ),
+        "E002" => (
+            "Unterminated string literal",
+            "A plain \"...\" or triple-quoted \"\"\"...\"\"\" string was opened without a matching closing quote.",
+            "let name = \"DOG",
+            "let name = \"DOG\" (use \"\"\"...\"\"\" for multi-line strings)",
+        ),
+        "E003" => (
+            "Malformed numeric literal",
+            "A decimal, hex (0x...), or binary (0b...) literal has invalid digits or overflows i64/f64.",
+            "let bad = 0xZZ",
+            "let ok = 0xFF_00",
+        ),
+        "E004" => (
+            "Unexpected syntax token",
+            "Parser expected a keyword, identifier, delimiter, or expression at this position.",
+            "let = 5",
+            "let x = 5",
+        ),
+        "E005" => (
+            "Unclosed block / missing `end`",
+            "A block opened by if, while, for, repeat, fn, match, try, struct, or enum was never closed with `end`.",
+            "if true\n    say(\"hi\")",
+            "if true\n    say(\"hi\")\nend",
+        ),
+        "E010" => (
+            "Undefined identifier, field, or enum variant",
+            "Referenced variable, function, struct field, or enum variant does not exist in scope.",
+            "say(usre_name)",
+            "Declare with `let user_name = ...` or apply the suggested spelling fix.",
+        ),
+        "E011" => (
+            "Duplicate definition",
+            "A variable, constant, parameter, struct, enum, or function was declared more than once in the same scope.",
+            "let x = 1\nlet x = 2",
+            "Use distinct names or `var x = 1` followed by `x = 2`.",
+        ),
+        "E012" => (
+            "Mutability violation",
+            "Attempted to reassign a `let`/`const` binding or pass an immutable binding where `var` is required (e.g. push/sort).",
+            "let count = 1\ncount = 2",
+            "var count = 1\ncount = 2",
+        ),
+        "E013" => (
+            "Unknown function or wrong callable",
+            "Called a function name that is neither a user `fn` nor a DOG built-in.",
+            "prnit(\"hi\")",
+            "say(\"hi\")",
+        ),
+        "E014" => (
+            "Function arity mismatch",
+            "Passed too few or too many arguments to a function or built-in.",
+            "fn add(a: number, b: number) -> number ... end\nadd(1)",
+            "Pass all required parameters or define a default value: `b: number = 0`.",
+        ),
+        "E021" => (
+            "Strict type mismatch",
+            "DOG forbids implicit coercion between incompatible types such as `text + number`.",
+            "say(\"Age: \" + 42)",
+            "say(\"Age: \" + text(42)) or say($\"Age: {42}\")",
+        ),
+        "E022" | "E023" => (
+            "Non-boolean condition or logical operand",
+            "`if`, `while`, `and`, `or`, and `not` require explicit `bool` values.",
+            "if 1\n    say(\"yes\")\nend",
+            "if 1 == 1\n    say(\"yes\")\nend",
+        ),
+        "E024" => (
+            "Empty collection requires type annotation",
+            "An empty `[]` or `{}` needs an explicit `: list<T>` or `: map<K, V>` type.",
+            "var items = []",
+            "var items: list<text> = []",
+        ),
+        "E025" => (
+            "Control flow outside valid context",
+            "`return` used outside a function, or `break`/`continue` used outside a loop.",
+            "break",
+            "Use `break`/`continue` inside `while`, `for`, or `repeat` loops only.",
+        ),
+        "E026" => (
+            "Missing return path in function",
+            "A function with a non-void return type has an execution path that finishes without returning a value.",
+            "fn f(ok: bool) -> number\n    if ok\n        return 1\n    end\nend",
+            "Ensure every branch (including `otherwise`) returns a value.",
+        ),
+        "E030" => (
+            "Runtime conversion / value domain error",
+            "`number(...)` or `decimal(...)` received non-numeric text, or negative repeat count.",
+            "number(\"abc\")",
+            "Validate input inside `try ... catch err ... end`.",
+        ),
+        "E031" => (
+            "Division or modulo by zero",
+            "Denominator evaluated to 0 or 0.0 at runtime.",
+            "let q = 10 / 0",
+            "if d != 0\n    let q = 10 / d\nend",
+        ),
+        "E032" => (
+            "Call stack overflow",
+            "Recursion exceeded MAX_CALL_DEPTH (256 frames).",
+            "fn loop_forever() -> void\n    loop_forever()\nend",
+            "Add a terminating base case to recursive functions.",
+        ),
+        "E033" => (
+            "Assertion failure",
+            "`assert(cond, msg)` evaluated to false.",
+            "assert(2 + 2 == 5, \"bad math\")",
+            "Verify the condition or input invariants.",
+        ),
+        "E034" => (
+            "Index out of bounds",
+            "Attempted to read or write an index < 0 or >= len(collection).",
+            "let xs = [1, 2]\nsay(xs[5])",
+            "Check `idx >= 0 and idx < len(xs)` before indexing.",
+        ),
+        "E035" => (
+            "Explicit runtime failure (`fail()`)",
+            "Raised by `fail(reason)` or uncaught error.",
+            "fail(\"missing config\")",
+            "Wrap fallible calls in `try ... catch err ... end`.",
+        ),
+        "E040" => (
+            "I/O, network, or module load error",
+            "File not found, invalid `std.*` module name, socket error, or HTTP/WS failure.",
+            "use \"std.unknown\"",
+            "Check file paths, permissions, or `dog docs std` for valid modules.",
+        ),
+        "E041" => (
+            "Circular module import",
+            "Module A `use`s Module B which directly or indirectly `use`s Module A.",
+            "a.dg -> use \"b.dg\"; b.dg -> use \"a.dg\"",
+            "Extract shared definitions into a third `common.dg` module.",
+        ),
+        _ => return None,
+    };
+
+    Some(format!(
+        "DOG Error Reference: {code} — {title}\n\
+         ------------------------------------------\n\
+         Cause  : {cause}\n\
+         Invalid: {example_bad}\n\
+         Fix    : {example_fix}"
+    ))
 }

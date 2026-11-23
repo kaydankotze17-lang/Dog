@@ -6,7 +6,7 @@ use crate::doctor::run_doctor;
 use crate::editor::launch_editor;
 use crate::formatter::format_source;
 use crate::hub::{
-    handle_info, handle_list, handle_search, install_package_live, remove_package_live,
+    handle_info, handle_list, handle_search, install_package_live, remove_package_live, DogPack,
 };
 use crate::interpreter::{check_source, run_source_with_io, Interpreter};
 use crate::lexer::Lexer;
@@ -16,12 +16,13 @@ use crate::sdu::handle_sdu;
 use crate::stdlib::{StdIo, StdIoWithArgs};
 use crate::studio::launch_studio;
 use crate::sys::{
-    handle_bench, handle_clean, handle_docs, handle_env, handle_eval_with_io, handle_forge,
-    handle_inspect, handle_lint, handle_logs, handle_permissions, handle_process, handle_profile,
-    handle_server, handle_status, handle_system, handle_update,
+    handle_bench, handle_clean, handle_debug, handle_docs, handle_env, handle_eval_with_io,
+    handle_explain, handle_forge, handle_graph, handle_inspect, handle_learn, handle_lint,
+    handle_logs, handle_permissions, handle_process, handle_profile, handle_server,
+    handle_status, handle_system, handle_update, handle_watch,
 };
 use crate::term::{InstallStyle, TermTheme};
-use crate::tester::run_tests;
+use crate::tester::{run_coverage, run_tests};
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, Write};
@@ -179,7 +180,7 @@ pub fn run() {
                 }
             }
         }
-        "bench" => {
+        "bench" | "benchmark" => {
             let mut target: Option<&str> = None;
             let mut runs: usize = 100;
             for arg in &args[1..] {
@@ -248,6 +249,123 @@ pub fn run() {
                 }
             }
         }
+        "coverage" => {
+            let target = args.get(1).map(String::as_str);
+            match run_coverage(target, config.personality) {
+                Ok(report) => {
+                    println!("{}", report.report_text);
+                    if report.tests_failed > 0 {
+                        process::exit(1);
+                    }
+                }
+                Err(err) => {
+                    messenger.error(&err);
+                    process::exit(1);
+                }
+            }
+        }
+        "debug" => {
+            let Some(path) = args.get(1) else {
+                eprintln!("Usage: dog debug <file.dg>");
+                process::exit(2);
+            };
+            if let Err(err) = handle_debug(path, config.personality) {
+                eprintln!("{err}");
+                process::exit(1);
+            }
+        }
+        "watch" => {
+            if let Err(err) = handle_watch(&args[1..], config.personality) {
+                messenger.error(&err);
+                process::exit(1);
+            }
+        }
+        "graph" => {
+            let target = args.get(1).map(String::as_str);
+            match handle_graph(target) {
+                Ok(out) => println!("{out}"),
+                Err(err) => {
+                    messenger.error(&err);
+                    process::exit(1);
+                }
+            }
+        }
+        "explain" => {
+            let Some(target) = args.get(1) else {
+                eprintln!("Usage: dog explain <E001-E041 | file.dg>");
+                process::exit(2);
+            };
+            match handle_explain(target) {
+                Ok(out) => println!("{out}"),
+                Err(err) => {
+                    messenger.error(&err);
+                    process::exit(1);
+                }
+            }
+        }
+        "package" => {
+            let mut input_path: Option<String> = None;
+            let mut out_path: Option<String> = None;
+            let mut i = 1usize;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--out" | "-o" => {
+                        if let Some(v) = args.get(i + 1) {
+                            out_path = Some(v.clone());
+                            i += 1;
+                        } else {
+                            eprintln!("Missing output path after --out");
+                            process::exit(2);
+                        }
+                    }
+                    a if !a.starts_with('-') => {
+                        if input_path.is_none() && a.ends_with(".dg") {
+                            input_path = Some(a.to_string());
+                        } else if out_path.is_none() {
+                            out_path = Some(a.to_string());
+                        } else {
+                            eprintln!("Unexpected package argument '{a}'.");
+                            process::exit(2);
+                        }
+                    }
+                    other => {
+                        eprintln!("Unknown option '{other}'. Usage: dog package [file.dg] [out.dgb]");
+                        process::exit(2);
+                    }
+                }
+                i += 1;
+            }
+            if input_path.is_none() && std::path::Path::new("dog.pack").is_file() {
+                if let Ok(pack) = DogPack::load(std::path::Path::new("dog.pack")) {
+                    input_path = Some(pack.entry.clone());
+                    if out_path.is_none() {
+                        out_path = Some(format!("{}-{}.dgb", pack.name, pack.version));
+                    }
+                }
+            }
+            let Some(entry) = input_path else {
+                eprintln!("Usage: dog package [file.dg] [out.dgb] (or run inside a dog.pack project)");
+                process::exit(2);
+            };
+            match build_bundle(&entry, out_path.as_deref()) {
+                Ok((out, bundle)) => messenger.success(&format!(
+                    "Packaged DOG archive: {} (sha256:{})",
+                    out.display(),
+                    &bundle.sha256[..16]
+                )),
+                Err(e) => {
+                    messenger.error(&e);
+                    process::exit(1);
+                }
+            }
+        }
+        "playground" => {
+            let target = args.get(1).map(String::as_str);
+            if launch_editor(target, config.personality).is_err() {
+                config.record_run();
+                run_repl(&config);
+            }
+        }
         "doctor" => run_doctor(),
         "edit" | "editor" => {
             let target = args.get(1).map(String::as_str);
@@ -296,6 +414,21 @@ pub fn run() {
         }
         "docs" => {
             println!("{}", handle_docs(args.get(1).map(String::as_str)));
+        }
+        "learn" => {
+            let run_demo = args.iter().skip(1).any(|a| a == "--run" || a == "-r");
+            let topic = args
+                .iter()
+                .skip(1)
+                .find(|a| !a.starts_with('-'))
+                .map(String::as_str);
+            match handle_learn(topic, run_demo, config.personality) {
+                Ok(out) => println!("{out}"),
+                Err(e) => {
+                    messenger.error(&e);
+                    process::exit(2);
+                }
+            }
         }
         "forge" => match handle_forge(&args[1..]) {
             Ok(out) => messenger.success(&out),
@@ -406,11 +539,13 @@ pub fn run() {
         },
         unknown => {
             const COMMANDS: &[&str] = &[
-                "run", "eval", "build", "check", "lint", "bench", "format", "fmt", "test",
+                "run", "eval", "build", "check", "lint", "bench", "benchmark", "format", "fmt",
+                "test", "coverage", "debug", "watch", "graph", "explain", "package", "playground",
                 "doctor", "edit", "editor", "studio", "config", "repl", "inspect", "profile",
-                "docs", "forge", "new", "init", "prompt", "completions", "server", "system",
-                "status", "env", "process", "permissions", "update", "upgrade", "clean", "logs",
-                "add", "remove", "search", "list", "info", "sdu", "version", "help",
+                "docs", "learn", "forge", "new", "init", "prompt", "completions", "server",
+                "system", "status", "env", "process", "permissions", "update", "upgrade",
+                "clean", "logs", "add", "remove", "search", "list", "info", "sdu", "version",
+                "help",
             ];
             if let Some(hint) = suggest_similar(unknown, COMMANDS.iter().copied()) {
                 eprintln!(
@@ -490,7 +625,18 @@ fn run_repl(config: &DogConfig) {
                     .unwrap_or("");
                 if matches!(
                     lead,
-                    "if" | "match" | "try" | "while" | "repeat" | "for" | "fn" | "struct" | "enum"
+                    "if" | "unless"
+                        | "match"
+                        | "try"
+                        | "while"
+                        | "until"
+                        | "repeat"
+                        | "for"
+                        | "fn"
+                        | "define"
+                        | "function"
+                        | "struct"
+                        | "enum"
                 ) {
                     block_depth += 1;
                 } else if lead == "end" {
@@ -684,16 +830,22 @@ Core Language & Tooling:
   dog run <file.dg | file.dgb>      Execute a .dg program or compiled .dgb bundle
   dog eval "<expr | stmt>"          Evaluate inline DOG code/expression immediately
   dog build <file.dg> [--native]    Compile to .dgb bundle (or native binary via rustc)
+  dog package [file.dg] [out.dgb]   Package entry or dog.pack project into .dgb archive
   dog check <file.dg>               Type-check a .dg program without running it
   dog lint [--strict] <file.dg>     Static analysis (unused bindings, empty catch, style)
-  dog bench <file.dg> [runs]        Benchmark execution latency (min/p50/avg/p95/max)
+  dog bench <file.dg> [runs]        Benchmark execution latency (alias: benchmark)
   dog format [--check] <file.dg>    Format a .dg file with 4-space indentation (alias: fmt)
   dog test [path]                   Run *_test.dg test files
+  dog coverage [path]               Measure statement line coverage across tests
+  dog debug <file.dg>               Interactive step/breakpoint/variable debugger
+  dog watch <file.dg> [--test]      Watch .dg files & imports and auto-rerun on save
+  dog graph [target]                Visualize module, std.*, and dog.pack dependencies
+  dog explain <E-code | file.dg>    Explain error codes or summarize a .dg module
   dog inspect <file.dg>             Print tokens, AST outline, and checked symbols
   dog profile <file.dg>             Measure lex, parse, check, and runtime timings
 
 Interactive, Prompt & Workspace IDEs:
-  dog repl                          Stateful interactive DOG terminal
+  dog repl | dog playground         Interactive DOG terminal or scratchpad editor
   dog edit [file.dg]                Polished 256-color DOG code editor
   dog studio [dir]                  Split-pane DOG Studio terminal IDE
   dog prompt <install|status|...>   Add/remove Kali-style DOG shell prompt & completions
@@ -708,7 +860,8 @@ Packages (DOG Hub & dog.pack):
   dog info [pkg]                    Inspect project or cached package metadata
 
 System, Server, CLI Themes, Docs & SDU:
-  dog docs [topic]                  Offline language/stdlib/network/cli/hub/sdu docs
+  dog learn [lesson] [--run]        Interactive beginner lessons & English syntax guide
+  dog docs [std | topic | fn]       Offline std.*, syntax, english, network, CLI & SDU docs
   dog server [dir] [port] [--host]  Multi-threaded static HTTP file server
   dog doctor                        Inspect environment, Termux, rustc, capabilities & config
   dog system | status | env         Inspect host, project state, and masked env

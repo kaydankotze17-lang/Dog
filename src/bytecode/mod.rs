@@ -6,7 +6,7 @@ use crate::interpreter::{check_source, resolve_program, Interpreter};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::stdlib::InterpreterIo;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -225,6 +225,20 @@ fn flatten_recursive(
     let mut out = String::new();
     for stmt in &program.statements {
         if let Stmt::Use { path, span } = stmt {
+            if path.starts_with("std.") {
+                if crate::stdlib::modules::is_std_module(path) {
+                    continue;
+                }
+                return Err(DogDiagnostic::new(
+                    "E040",
+                    format!("Unknown standard library module '{path}'."),
+                    span.clone(),
+                    format!("'{path}' is not a built-in DOG standard library module."),
+                    "Inspect built-in modules with `dog docs std`.",
+                    "Available std modules: std.io, std.text, std.math, std.files, std.net, std.system, std.data, std.crypto, std.cli, std.collections.",
+                    "Missing standard module.",
+                ));
+            }
             let target = base_dir.join(path);
             let canonical = fs::canonicalize(&target).unwrap_or_else(|_| target.clone());
             if active.contains(&canonical) {
@@ -307,7 +321,7 @@ fn read_str(bytes: &[u8], pos: &mut usize) -> Result<String, String> {
     Ok(s)
 }
 
-fn transpile_program_to_rust(program: &Program) -> Result<String, String> {
+pub fn transpile_program_to_rust(program: &Program) -> Result<String, String> {
     let mut out = String::new();
     out.push_str("use std::io::{self, BufRead, Write};\n");
     out.push_str("use std::collections::BTreeMap;\n\n");
@@ -341,6 +355,16 @@ fn transpile_program_to_rust(program: &Program) -> Result<String, String> {
     out.push_str("    let _ = io::stdin().lock().read_line(&mut buf);\n");
     out.push_str("    buf.trim_end_matches(&['\\r', '\\n'][..]).to_string()\n");
     out.push_str("}\n\n");
+
+    let mut fn_defaults: HashMap<String, Vec<Option<Expr>>> = HashMap::new();
+    for stmt in &program.statements {
+        if let Stmt::FnDef { name, params, .. } = stmt {
+            fn_defaults.insert(
+                name.clone(),
+                params.iter().map(|p| p.default.clone()).collect(),
+            );
+        }
+    }
 
     let mut top_stmts = Vec::new();
     for stmt in &program.statements {
@@ -385,7 +409,7 @@ fn transpile_program_to_rust(program: &Program) -> Result<String, String> {
                 };
                 out.push_str(&format!("fn {name}({}){ret} {{\n", p_strs.join(", ")));
                 for s in body {
-                    emit_stmt(&mut out, s, 1)?;
+                    emit_stmt(&mut out, s, 1, &fn_defaults)?;
                 }
                 out.push_str("}\n\n");
             }
@@ -395,7 +419,7 @@ fn transpile_program_to_rust(program: &Program) -> Result<String, String> {
 
     out.push_str("fn main() {\n");
     for s in top_stmts {
-        emit_stmt(&mut out, s, 1)?;
+        emit_stmt(&mut out, s, 1, &fn_defaults)?;
     }
     out.push_str("}\n");
     Ok(out)
@@ -418,7 +442,12 @@ fn type_ref_to_rust(tr: &TypeRef) -> Result<String, String> {
     }
 }
 
-fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String> {
+fn emit_stmt(
+    out: &mut String,
+    stmt: &Stmt,
+    indent: usize,
+    fn_defaults: &HashMap<String, Vec<Option<Expr>>>,
+) -> Result<(), String> {
     let pad = "    ".repeat(indent);
     match stmt {
         Stmt::Use { .. } | Stmt::StructDef { .. } | Stmt::EnumDef { .. } | Stmt::FnDef { .. } => {
@@ -431,17 +460,23 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String>
                 BindingKind::Var => "let mut",
                 BindingKind::Let | BindingKind::Const => "let",
             };
-            out.push_str(&format!("{pad}{mut_kw} {name} = {};\n", emit_expr(value)?));
+            out.push_str(&format!(
+                "{pad}{mut_kw} {name} = {};\n",
+                emit_expr(value, fn_defaults)?
+            ));
             Ok(())
         }
         Stmt::Assign { name, value, .. } => {
-            out.push_str(&format!("{pad}{name} = {};\n", emit_expr(value)?));
+            out.push_str(&format!(
+                "{pad}{name} = {};\n",
+                emit_expr(value, fn_defaults)?
+            ));
             Ok(())
         }
         Stmt::CompoundAssign {
             name, op, value, ..
         } => {
-            let rhs = emit_expr(value)?;
+            let rhs = emit_expr(value, fn_defaults)?;
             match op {
                 BinOp::Add => out.push_str(&format!("{pad}{name}.dog_add_assign({rhs});\n")),
                 BinOp::Sub => out.push_str(&format!("{pad}{name} -= {rhs};\n")),
@@ -458,7 +493,10 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String>
             value,
             ..
         } => {
-            out.push_str(&format!("{pad}{target}.{field} = {};\n", emit_expr(value)?));
+            out.push_str(&format!(
+                "{pad}{target}.{field} = {};\n",
+                emit_expr(value, fn_defaults)?
+            ));
             Ok(())
         }
         Stmt::IndexAssign {
@@ -469,8 +507,8 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String>
         } => {
             out.push_str(&format!(
                 "{pad}{target}[({}) as usize] = {};\n",
-                emit_expr(index)?,
-                emit_expr(value)?
+                emit_expr(index, fn_defaults)?,
+                emit_expr(value, fn_defaults)?
             ));
             Ok(())
         }
@@ -480,14 +518,14 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String>
             otherwise_branch,
             ..
         } => {
-            out.push_str(&format!("{pad}if {} {{\n", emit_expr(condition)?));
+            out.push_str(&format!("{pad}if {} {{\n", emit_expr(condition, fn_defaults)?));
             for s in then_branch {
-                emit_stmt(out, s, indent + 1)?;
+                emit_stmt(out, s, indent + 1, fn_defaults)?;
             }
             if let Some(else_stmts) = otherwise_branch {
                 out.push_str(&format!("{pad}}} else {{\n"));
                 for s in else_stmts {
-                    emit_stmt(out, s, indent + 1)?;
+                    emit_stmt(out, s, indent + 1, fn_defaults)?;
                 }
             }
             out.push_str(&format!("{pad}}}\n"));
@@ -496,17 +534,17 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String>
         Stmt::While {
             condition, body, ..
         } => {
-            out.push_str(&format!("{pad}while {} {{\n", emit_expr(condition)?));
+            out.push_str(&format!("{pad}while {} {{\n", emit_expr(condition, fn_defaults)?));
             for s in body {
-                emit_stmt(out, s, indent + 1)?;
+                emit_stmt(out, s, indent + 1, fn_defaults)?;
             }
             out.push_str(&format!("{pad}}}\n"));
             Ok(())
         }
         Stmt::Repeat { count, body, .. } => {
-            out.push_str(&format!("{pad}for _ in 0..{} {{\n", emit_expr(count)?));
+            out.push_str(&format!("{pad}for _ in 0..{} {{\n", emit_expr(count, fn_defaults)?));
             for s in body {
-                emit_stmt(out, s, indent + 1)?;
+                emit_stmt(out, s, indent + 1, fn_defaults)?;
             }
             out.push_str(&format!("{pad}}}\n"));
             Ok(())
@@ -519,10 +557,10 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String>
         } => {
             out.push_str(&format!(
                 "{pad}for {var_name} in {}.into_iter() {{\n",
-                emit_expr(iterable)?
+                emit_expr(iterable, fn_defaults)?
             ));
             for s in body {
-                emit_stmt(out, s, indent + 1)?;
+                emit_stmt(out, s, indent + 1, fn_defaults)?;
             }
             out.push_str(&format!("{pad}}}\n"));
             Ok(())
@@ -533,27 +571,30 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String>
             otherwise_branch,
             ..
         } => {
-            out.push_str(&format!("{pad}let __dog_match = {};\n", emit_expr(subject)?));
+            out.push_str(&format!(
+                "{pad}let __dog_match = {};\n",
+                emit_expr(subject, fn_defaults)?
+            ));
             for (idx, c) in cases.iter().enumerate() {
                 let kw = if idx == 0 { "if" } else { "} else if" };
                 out.push_str(&format!(
                     "{pad}{kw} __dog_match == {} {{\n",
-                    emit_expr(&c.pattern)?
+                    emit_expr(&c.pattern, fn_defaults)?
                 ));
                 for s in &c.body {
-                    emit_stmt(out, s, indent + 1)?;
+                    emit_stmt(out, s, indent + 1, fn_defaults)?;
                 }
             }
             if let Some(else_stmts) = otherwise_branch {
                 if cases.is_empty() {
                     for s in else_stmts {
-                        emit_stmt(out, s, indent)?;
+                        emit_stmt(out, s, indent, fn_defaults)?;
                     }
                     return Ok(());
                 } else {
                     out.push_str(&format!("{pad}}} else {{\n"));
                     for s in else_stmts {
-                        emit_stmt(out, s, indent + 1)?;
+                        emit_stmt(out, s, indent + 1, fn_defaults)?;
                     }
                 }
             }
@@ -564,7 +605,7 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String>
         }
         Stmt::Return { value, .. } => {
             if let Some(v) = value {
-                out.push_str(&format!("{pad}return {};\n", emit_expr(v)?));
+                out.push_str(&format!("{pad}return {};\n", emit_expr(v, fn_defaults)?));
             } else {
                 out.push_str(&format!("{pad}return;\n"));
             }
@@ -579,7 +620,7 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String>
             Ok(())
         }
         Stmt::ExprStmt { expr, .. } => {
-            out.push_str(&format!("{pad}{};\n", emit_expr(expr)?));
+            out.push_str(&format!("{pad}{};\n", emit_expr(expr, fn_defaults)?));
             Ok(())
         }
         Stmt::TryCatch { .. } => Err(
@@ -588,7 +629,10 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String>
     }
 }
 
-fn emit_expr(expr: &Expr) -> Result<String, String> {
+fn emit_expr(
+    expr: &Expr,
+    fn_defaults: &HashMap<String, Vec<Option<Expr>>>,
+) -> Result<String, String> {
     match expr {
         Expr::StringLit { value, .. } => {
             let escaped = value
@@ -613,7 +657,10 @@ fn emit_expr(expr: &Expr) -> Result<String, String> {
                         body.push_str(&format!("__s.push_str(\"{escaped}\"); "));
                     }
                     InterpPart::Expr(e) => {
-                        body.push_str(&format!("__s.push_str(&({}).dog_print()); ", emit_expr(e)?));
+                        body.push_str(&format!(
+                            "__s.push_str(&({}).dog_print()); ",
+                            emit_expr(e, fn_defaults)?
+                        ));
                     }
                 }
             }
@@ -627,14 +674,18 @@ fn emit_expr(expr: &Expr) -> Result<String, String> {
         Expr::ListLit { elements, .. } => {
             let mut items = Vec::new();
             for e in elements {
-                items.push(emit_expr(e)?);
+                items.push(emit_expr(e, fn_defaults)?);
             }
             Ok(format!("vec![{}]", items.join(", ")))
         }
         Expr::MapLit { entries, .. } => {
             let mut body = String::from("{ let mut __m = BTreeMap::new(); ");
             for (k, v) in entries {
-                body.push_str(&format!("__m.insert({}, {}); ", emit_expr(k)?, emit_expr(v)?));
+                body.push_str(&format!(
+                    "__m.insert({}, {}); ",
+                    emit_expr(k, fn_defaults)?,
+                    emit_expr(v, fn_defaults)?
+                ));
             }
             body.push_str("__m }");
             Ok(body)
@@ -642,7 +693,7 @@ fn emit_expr(expr: &Expr) -> Result<String, String> {
         Expr::StructInit { name, fields, .. } => {
             let mut parts = Vec::new();
             for (k, v) in fields {
-                parts.push(format!("{k}: {}", emit_expr(v)?));
+                parts.push(format!("{k}: {}", emit_expr(v, fn_defaults)?));
             }
             Ok(format!("{name} {{ {} }}", parts.join(", ")))
         }
@@ -652,22 +703,25 @@ fn emit_expr(expr: &Expr) -> Result<String, String> {
                     return Ok(format!("{name}::{field}"));
                 }
             }
-            Ok(format!("{}.{field}.clone()", emit_expr(target)?))
+            Ok(format!(
+                "{}.{field}.clone()",
+                emit_expr(target, fn_defaults)?
+            ))
         }
         Expr::Index { target, index, .. } => Ok(format!(
             "{}[({}) as usize].clone()",
-            emit_expr(target)?,
-            emit_expr(index)?
+            emit_expr(target, fn_defaults)?,
+            emit_expr(index, fn_defaults)?
         )),
         Expr::Unary { op, expr, .. } => match op {
-            UnaryOp::Neg => Ok(format!("(-({}))", emit_expr(expr)?)),
-            UnaryOp::Not => Ok(format!("(!({}))", emit_expr(expr)?)),
+            UnaryOp::Neg => Ok(format!("(-({}))", emit_expr(expr, fn_defaults)?)),
+            UnaryOp::Not => Ok(format!("(!({}))", emit_expr(expr, fn_defaults)?)),
         },
         Expr::Binary {
             left, op, right, ..
         } => {
-            let l = emit_expr(left)?;
-            let r = emit_expr(right)?;
+            let l = emit_expr(left, fn_defaults)?;
+            let r = emit_expr(right, fn_defaults)?;
             match op {
                 BinOp::Add => Ok(format!("({l} + &{r})")),
                 BinOp::Sub => Ok(format!("({l} - {r})")),
@@ -684,188 +738,272 @@ fn emit_expr(expr: &Expr) -> Result<String, String> {
                 BinOp::Or => Ok(format!("({l} || {r})")),
             }
         }
-        Expr::Call { callee, args, .. } => match callee.as_str() {
-            "say" => Ok(format!(
-                "println!(\"{{}}\", ({}).dog_print())",
-                emit_expr(&args[0])?
-            )),
-            "answer" => {
-                if args.is_empty() {
-                    Ok("dog_answer(\"\")".to_string())
-                } else {
-                    Ok(format!("dog_answer(&{})", emit_expr(&args[0])?))
+        Expr::Call { callee, args, .. } => emit_call_expr(callee, args, fn_defaults),
+        Expr::NamespaceCall {
+            module, func, args, ..
+        } => {
+            let canonical = crate::stdlib::modules::resolve_std_call(module, func)?;
+            emit_call_expr(canonical, args, fn_defaults)
+        }
+    }
+}
+
+fn emit_call_expr(
+    callee: &str,
+    args: &[Expr],
+    fn_defaults: &HashMap<String, Vec<Option<Expr>>>,
+) -> Result<String, String> {
+    match callee {
+        "say" | "print" => Ok(format!(
+            "println!(\"{{}}\", ({}).dog_print())",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "answer" | "ask" => {
+            if args.is_empty() {
+                Ok("dog_answer(\"\")".to_string())
+            } else {
+                Ok(format!(
+                    "dog_answer(&{})",
+                    emit_expr(&args[0], fn_defaults)?
+                ))
+            }
+        }
+        "clear" => {
+            if args.is_empty() {
+                Ok("{ print!(\"\\x1b[2J\\x1b[H\"); let _ = io::stdout().flush(); }".to_string())
+            } else if let Expr::Identifier { name, .. } = &args[0] {
+                Ok(format!("{name}.clear()"))
+            } else {
+                Err("Expected variable in clear()".to_string())
+            }
+        }
+        "lower" => Ok(format!(
+            "({}).to_lowercase()",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "upper" => Ok(format!(
+            "({}).to_uppercase()",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "trim" => Ok(format!(
+            "({}).trim().to_string()",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "contains" => Ok(format!(
+            "({}).contains(&({}))",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?
+        )),
+        "len" => Ok(format!(
+            "(({}).len() as i64)",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "text" => Ok(format!("({}).dog_print()", emit_expr(&args[0], fn_defaults)?)),
+        "number" => Ok(format!(
+            "({}).dog_to_number()",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "decimal" => Ok(format!(
+            "({}).dog_to_decimal()",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "abs" => Ok(format!("({}).abs()", emit_expr(&args[0], fn_defaults)?)),
+        "min" => Ok(format!(
+            "({}).min({})",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?
+        )),
+        "max" => Ok(format!(
+            "({}).max({})",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?
+        )),
+        "assert" => {
+            if args.len() == 2 {
+                Ok(format!(
+                    "assert!({}, \"{{}}\", {})",
+                    emit_expr(&args[0], fn_defaults)?,
+                    emit_expr(&args[1], fn_defaults)?
+                ))
+            } else {
+                Ok(format!("assert!({})", emit_expr(&args[0], fn_defaults)?))
+            }
+        }
+        "push" => {
+            if let Expr::Identifier { name, .. } = &args[0] {
+                Ok(format!(
+                    "{name}.push({})",
+                    emit_expr(&args[1], fn_defaults)?
+                ))
+            } else {
+                Err("Expected variable in push()".to_string())
+            }
+        }
+        "pop" => {
+            if let Expr::Identifier { name, .. } = &args[0] {
+                Ok(format!("{name}.pop().expect(\"pop() on empty list\")"))
+            } else {
+                Err("Expected variable in pop()".to_string())
+            }
+        }
+        "replace" => Ok(format!(
+            "({}).replace(&({}), &({}))",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?,
+            emit_expr(&args[2], fn_defaults)?
+        )),
+        "starts_with" => Ok(format!(
+            "({}).starts_with(&({}))",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?
+        )),
+        "ends_with" => Ok(format!(
+            "({}).ends_with(&({}))",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?
+        )),
+        "round" => Ok(format!(
+            "(({}) as f64).round() as i64",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "floor" => Ok(format!(
+            "(({}) as f64).floor() as i64",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "ceil" => Ok(format!(
+            "(({}) as f64).ceil() as i64",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "sqrt" => Ok(format!(
+            "(({}) as f64).sqrt()",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "sin" => Ok(format!(
+            "(({}) as f64).sin()",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "cos" => Ok(format!(
+            "(({}) as f64).cos()",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "log" => Ok(format!(
+            "(({}) as f64).ln()",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "str_repeat" => Ok(format!(
+            "({}).repeat(({}).max(0) as usize)",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?
+        )),
+        "clamp" => Ok(format!(
+            "({}).clamp({}, {})",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?,
+            emit_expr(&args[2], fn_defaults)?
+        )),
+        "pow" => Ok(format!(
+            "(({}) as f64).powf(({}) as f64)",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?
+        )),
+        "cwd" => Ok(
+            "std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default()"
+                .to_string(),
+        ),
+        "mkdir" => Ok(format!(
+            "std::fs::create_dir_all(&({})).expect(\"mkdir failed\")",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "range" => Ok(format!(
+            "(({})..({})).collect::<Vec<i64>>()",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?
+        )),
+        "tan" => Ok(format!(
+            "(({}) as f64).tan()",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "atan2" => Ok(format!(
+            "(({}) as f64).atan2(({}) as f64)",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?
+        )),
+        "exp" => Ok(format!(
+            "(({}) as f64).exp()",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "log10" => Ok(format!(
+            "(({}) as f64).log10()",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "pow_int" => Ok(format!(
+            "({}).saturating_pow(({}).max(0) as u32)",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?
+        )),
+        "sign" => Ok(format!(
+            "{{ let __v = ({}) as f64; if __v > 0.0 {{ 1i64 }} else if __v < 0.0 {{ -1i64 }} else {{ 0i64 }} }}",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "math_pi" => Ok("std::f64::consts::PI".to_string()),
+        "math_e" => Ok("std::f64::consts::E".to_string()),
+        "gcd" => Ok(format!(
+            "{{ let (mut __a, mut __b) = (({}).abs(), ({}).abs()); while __b != 0 {{ let __t = __a % __b; __a = __b; __b = __t; }} __a }}",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?
+        )),
+        "lcm" => Ok(format!(
+            "{{ let (__x, __y) = (({}).abs(), ({}).abs()); if __x == 0 || __y == 0 {{ 0i64 }} else {{ let (mut __a, mut __b) = (__x, __y); while __b != 0 {{ let __t = __a % __b; __a = __b; __b = __t; }} (__x / __a).saturating_mul(__y) }} }}",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?
+        )),
+        "reverse_text" => Ok(format!(
+            "({}).chars().rev().collect::<String>()",
+            emit_expr(&args[0], fn_defaults)?
+        )),
+        "count_matches" => Ok(format!(
+            "{{ let (__h, __n) = ({}, {}); if __n.is_empty() {{ 0i64 }} else {{ __h.matches(&__n).count() as i64 }} }}",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?
+        )),
+        "remove_prefix" => Ok(format!(
+            "{{ let (__s, __p) = ({}, {}); __s.strip_prefix(&__p).map(|v| v.to_string()).unwrap_or(__s) }}",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?
+        )),
+        "remove_suffix" => Ok(format!(
+            "{{ let (__s, __p) = ({}, {}); __s.strip_suffix(&__p).map(|v| v.to_string()).unwrap_or(__s) }}",
+            emit_expr(&args[0], fn_defaults)?,
+            emit_expr(&args[1], fn_defaults)?
+        )),
+        "temp_dir" => Ok("std::env::temp_dir().display().to_string()".to_string()),
+        "sort" => {
+            if let Expr::Identifier { name, .. } = &args[0] {
+                Ok(format!("{name}.sort()"))
+            } else {
+                Err("Expected variable in sort()".to_string())
+            }
+        }
+        "reverse" => {
+            if let Expr::Identifier { name, .. } = &args[0] {
+                Ok(format!("{name}.reverse()"))
+            } else {
+                Err("Expected variable in reverse()".to_string())
+            }
+        }
+        other => {
+            let mut parts = Vec::new();
+            for a in args {
+                parts.push(emit_expr(a, fn_defaults)?);
+            }
+            if let Some(defaults) = fn_defaults.get(other) {
+                for def_opt in defaults.iter().skip(args.len()) {
+                    if let Some(def_expr) = def_opt {
+                        parts.push(emit_expr(def_expr, fn_defaults)?);
+                    }
                 }
             }
-            "lower" => Ok(format!("({}).to_lowercase()", emit_expr(&args[0])?)),
-            "upper" => Ok(format!("({}).to_uppercase()", emit_expr(&args[0])?)),
-            "trim" => Ok(format!("({}).trim().to_string()", emit_expr(&args[0])?)),
-            "contains" => Ok(format!(
-                "({}).contains(&({}))",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?
-            )),
-            "len" => Ok(format!("(({}).len() as i64)", emit_expr(&args[0])?)),
-            "text" => Ok(format!("({}).dog_print()", emit_expr(&args[0])?)),
-            "number" => Ok(format!("({}).dog_to_number()", emit_expr(&args[0])?)),
-            "decimal" => Ok(format!("({}).dog_to_decimal()", emit_expr(&args[0])?)),
-            "abs" => Ok(format!("({}).abs()", emit_expr(&args[0])?)),
-            "min" => Ok(format!(
-                "({}).min({})",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?
-            )),
-            "max" => Ok(format!(
-                "({}).max({})",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?
-            )),
-            "assert" => {
-                if args.len() == 2 {
-                    Ok(format!(
-                        "assert!({}, \"{{}}\", {})",
-                        emit_expr(&args[0])?,
-                        emit_expr(&args[1])?
-                    ))
-                } else {
-                    Ok(format!("assert!({})", emit_expr(&args[0])?))
-                }
-            }
-            "push" => {
-                if let Expr::Identifier { name, .. } = &args[0] {
-                    Ok(format!("{name}.push({})", emit_expr(&args[1])?))
-                } else {
-                    Err("Expected variable in push()".to_string())
-                }
-            }
-            "pop" => {
-                if let Expr::Identifier { name, .. } = &args[0] {
-                    Ok(format!("{name}.pop().expect(\"pop() on empty list\")"))
-                } else {
-                    Err("Expected variable in pop()".to_string())
-                }
-            }
-            "replace" => Ok(format!(
-                "({}).replace(&({}), &({}))",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?,
-                emit_expr(&args[2])?
-            )),
-            "starts_with" => Ok(format!(
-                "({}).starts_with(&({}))",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?
-            )),
-            "ends_with" => Ok(format!(
-                "({}).ends_with(&({}))",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?
-            )),
-            "round" => Ok(format!("(({}) as f64).round() as i64", emit_expr(&args[0])?)),
-            "floor" => Ok(format!("(({}) as f64).floor() as i64", emit_expr(&args[0])?)),
-            "ceil" => Ok(format!("(({}) as f64).ceil() as i64", emit_expr(&args[0])?)),
-            "sqrt" => Ok(format!("(({}) as f64).sqrt()", emit_expr(&args[0])?)),
-            "sin" => Ok(format!("(({}) as f64).sin()", emit_expr(&args[0])?)),
-            "cos" => Ok(format!("(({}) as f64).cos()", emit_expr(&args[0])?)),
-            "log" => Ok(format!("(({}) as f64).ln()", emit_expr(&args[0])?)),
-            "str_repeat" => Ok(format!(
-                "({}).repeat(({}).max(0) as usize)",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?
-            )),
-            "clamp" => Ok(format!(
-                "({}).clamp({}, {})",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?,
-                emit_expr(&args[2])?
-            )),
-            "pow" => Ok(format!(
-                "(({}) as f64).powf(({}) as f64)",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?
-            )),
-            "cwd" => Ok(
-                "std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default()"
-                    .to_string(),
-            ),
-            "mkdir" => Ok(format!(
-                "std::fs::create_dir_all(&({})).expect(\"mkdir failed\")",
-                emit_expr(&args[0])?
-            )),
-            "range" => Ok(format!(
-                "(({})..({})).collect::<Vec<i64>>()",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?
-            )),
-            "tan" => Ok(format!("(({}) as f64).tan()", emit_expr(&args[0])?)),
-            "atan2" => Ok(format!(
-                "(({}) as f64).atan2(({}) as f64)",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?
-            )),
-            "exp" => Ok(format!("(({}) as f64).exp()", emit_expr(&args[0])?)),
-            "log10" => Ok(format!("(({}) as f64).log10()", emit_expr(&args[0])?)),
-            "pow_int" => Ok(format!(
-                "({}).saturating_pow(({}).max(0) as u32)",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?
-            )),
-            "sign" => Ok(format!(
-                "{{ let __v = ({}) as f64; if __v > 0.0 {{ 1i64 }} else if __v < 0.0 {{ -1i64 }} else {{ 0i64 }} }}",
-                emit_expr(&args[0])?
-            )),
-            "math_pi" => Ok("std::f64::consts::PI".to_string()),
-            "math_e" => Ok("std::f64::consts::E".to_string()),
-            "gcd" => Ok(format!(
-                "{{ let (mut __a, mut __b) = (({}).abs(), ({}).abs()); while __b != 0 {{ let __t = __a % __b; __a = __b; __b = __t; }} __a }}",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?
-            )),
-            "lcm" => Ok(format!(
-                "{{ let (__x, __y) = (({}).abs(), ({}).abs()); if __x == 0 || __y == 0 {{ 0i64 }} else {{ let (mut __a, mut __b) = (__x, __y); while __b != 0 {{ let __t = __a % __b; __a = __b; __b = __t; }} (__x / __a).saturating_mul(__y) }} }}",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?
-            )),
-            "reverse_text" => Ok(format!(
-                "({}).chars().rev().collect::<String>()",
-                emit_expr(&args[0])?
-            )),
-            "count_matches" => Ok(format!(
-                "{{ let (__h, __n) = ({}, {}); if __n.is_empty() {{ 0i64 }} else {{ __h.matches(&__n).count() as i64 }} }}",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?
-            )),
-            "remove_prefix" => Ok(format!(
-                "{{ let (__s, __p) = ({}, {}); __s.strip_prefix(&__p).map(|v| v.to_string()).unwrap_or(__s) }}",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?
-            )),
-            "remove_suffix" => Ok(format!(
-                "{{ let (__s, __p) = ({}, {}); __s.strip_suffix(&__p).map(|v| v.to_string()).unwrap_or(__s) }}",
-                emit_expr(&args[0])?,
-                emit_expr(&args[1])?
-            )),
-            "temp_dir" => Ok("std::env::temp_dir().display().to_string()".to_string()),
-            "sort" => {
-                if let Expr::Identifier { name, .. } = &args[0] {
-                    Ok(format!("{name}.sort()"))
-                } else {
-                    Err("Expected variable in sort()".to_string())
-                }
-            }
-            "reverse" => {
-                if let Expr::Identifier { name, .. } = &args[0] {
-                    Ok(format!("{name}.reverse()"))
-                } else {
-                    Err("Expected variable in reverse()".to_string())
-                }
-            }
-            other => {
-                let mut parts = Vec::new();
-                for a in args {
-                    parts.push(emit_expr(a)?);
-                }
-                Ok(format!("{other}({})", parts.join(", ")))
-            }
-        },
+            Ok(format!("{other}({})", parts.join(", ")))
+        }
     }
 }

@@ -1,3 +1,5 @@
+pub mod modules;
+
 use crate::ast::Span;
 use crate::crypto::{
     base64_decode, base64_encode, base64_url_decode, base64_url_encode, hex_decode, hex_encode,
@@ -8,7 +10,8 @@ use crate::json::{parse_json, JsonValue};
 use crate::runtime::Value;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Read, Write};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -18,6 +21,16 @@ pub trait InterpreterIo {
     fn write_stdout(&mut self, text: &str);
     fn writeln_stdout(&mut self, text: &str);
     fn read_line(&mut self) -> Result<String, String>;
+    fn read_password(&mut self) -> Result<String, String> {
+        self.read_line()
+    }
+    fn read_key(&mut self) -> Result<String, String> {
+        let line = self.read_line()?;
+        Ok(line.chars().next().map(|c| c.to_string()).unwrap_or_default())
+    }
+    fn clear_screen(&mut self) {
+        self.write_stdout("\x1b[2J\x1b[H");
+    }
     fn script_args(&self) -> Vec<String> {
         Vec::new()
     }
@@ -43,6 +56,116 @@ impl InterpreterIo for StdIo {
             .map_err(|e| e.to_string())?;
         Ok(buf.trim_end_matches(&['\r', '\n'][..]).to_string())
     }
+
+    fn read_password(&mut self) -> Result<String, String> {
+        if io::stdin().is_terminal() {
+            let _guard = SttyGuard::new(&["-echo"]);
+            let res = self.read_line();
+            println!();
+            res
+        } else {
+            self.read_line()
+        }
+    }
+
+    fn read_key(&mut self) -> Result<String, String> {
+        if io::stdin().is_terminal() {
+            let guard = SttyGuard::new(&["raw", "-echo"]);
+            if guard.is_some() {
+                return read_single_terminal_key();
+            }
+        }
+        let line = self.read_line()?;
+        Ok(line.chars().next().map(|c| c.to_string()).unwrap_or_default())
+    }
+}
+
+struct SttyGuard {
+    restore_args: Vec<&'static str>,
+}
+
+impl SttyGuard {
+    fn new(args: &[&'static str]) -> Option<Self> {
+        let ok = Command::new("stty")
+            .args(args)
+            .stdin(Stdio::inherit())
+            .status()
+            .is_ok_and(|s| s.success());
+        if !ok {
+            return None;
+        }
+        let restore_args = if args.contains(&"raw") {
+            vec!["-raw", "echo"]
+        } else {
+            vec!["echo"]
+        };
+        Some(Self { restore_args })
+    }
+}
+
+impl Drop for SttyGuard {
+    fn drop(&mut self) {
+        let _ = Command::new("stty")
+            .args(&self.restore_args)
+            .stdin(Stdio::inherit())
+            .status();
+    }
+}
+
+fn read_single_terminal_key() -> Result<String, String> {
+    let mut stdin = io::stdin().lock();
+    let mut b = [0u8; 1];
+    stdin.read_exact(&mut b).map_err(|e| e.to_string())?;
+    let key = match b[0] {
+        0x1b => {
+            let mut b1 = [0u8; 1];
+            if stdin.read_exact(&mut b1).is_err() {
+                "Esc".to_string()
+            } else if b1[0] == b'[' {
+                let mut b2 = [0u8; 1];
+                if stdin.read_exact(&mut b2).is_err() {
+                    "Esc".to_string()
+                } else {
+                    match b2[0] {
+                        b'A' => "Up".to_string(),
+                        b'B' => "Down".to_string(),
+                        b'C' => "Right".to_string(),
+                        b'D' => "Left".to_string(),
+                        b'H' => "Home".to_string(),
+                        b'F' => "End".to_string(),
+                        _ => "Esc".to_string(),
+                    }
+                }
+            } else {
+                "Esc".to_string()
+            }
+        }
+        b'\r' | b'\n' => "Enter".to_string(),
+        b'\t' => "Tab".to_string(),
+        127 | 8 => "Backspace".to_string(),
+        b' ' => "Space".to_string(),
+        1..=26 => format!("Ctrl+{}", (b[0] + b'a' - 1) as char),
+        first => {
+            let width = if first & 0b1000_0000 == 0 {
+                1
+            } else if first & 0b1110_0000 == 0b1100_0000 {
+                2
+            } else if first & 0b1111_0000 == 0b1110_0000 {
+                3
+            } else {
+                4
+            };
+            let mut bytes = vec![first];
+            for _ in 1..width {
+                let mut next = [0u8; 1];
+                if stdin.read_exact(&mut next).is_ok() {
+                    bytes.push(next[0]);
+                }
+            }
+            String::from_utf8_lossy(&bytes).into_owned()
+        }
+    };
+    Ok(key)
 }
 
 pub struct StdIoWithArgs {
@@ -62,6 +185,14 @@ impl InterpreterIo for StdIoWithArgs {
         StdIo.read_line()
     }
 
+    fn read_password(&mut self) -> Result<String, String> {
+        StdIo.read_password()
+    }
+
+    fn read_key(&mut self) -> Result<String, String> {
+        StdIo.read_key()
+    }
+
     fn script_args(&self) -> Vec<String> {
         self.args.clone()
     }
@@ -74,19 +205,19 @@ pub fn call_builtin(
     io_host: &mut dyn InterpreterIo,
 ) -> Result<Value, DogDiagnostic> {
     match name {
-        "say" => {
+        "say" | "print" => {
             let val = args.into_iter().next().unwrap_or(Value::Void);
             io_host.writeln_stdout(&val.to_string());
             Ok(Value::Void)
         }
-        "answer" => {
+        "answer" | "ask" => {
             if let Some(Value::Text(prompt)) = args.into_iter().next() {
                 io_host.write_stdout(&prompt);
             }
             let line = io_host.read_line().map_err(|err| {
                 DogDiagnostic::new(
                     "E040",
-                    "Failed to read input via answer().",
+                    format!("Failed to read input via {name}()."),
                     span.clone(),
                     format!("Standard input returned an I/O error: {err}"),
                     "Ensure standard input is readable when running interactive scripts.",
@@ -95,6 +226,130 @@ pub fn call_builtin(
                 )
             })?;
             Ok(Value::Text(line))
+        }
+        "confirm" => {
+            let Some(Value::Text(prompt)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            io_host.write_stdout(&format!("{prompt} (y/n): "));
+            let line = io_host.read_line().map_err(|err| {
+                DogDiagnostic::new(
+                    "E040",
+                    "Failed to read confirmation via confirm().",
+                    span.clone(),
+                    format!("Standard input returned an I/O error: {err}"),
+                    "Provide input via terminal or stdin.",
+                    "Type 'y' or 'yes' to confirm.",
+                    "Did you nod or shake your head?",
+                )
+            })?;
+            let norm = line.trim().to_ascii_lowercase();
+            Ok(Value::Bool(matches!(norm.as_str(), "y" | "yes" | "true" | "1")))
+        }
+        "choose" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(prompt)), Some(Value::List(raw_opts))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            let opts: Vec<String> = raw_opts.into_iter().map(|v| v.to_string()).collect();
+            if opts.is_empty() {
+                return Err(DogDiagnostic::new(
+                    "E034",
+                    "choose() requires at least one option.",
+                    span.clone(),
+                    "Passed an empty list<text> to choose().",
+                    "Provide a non-empty list such as [\"dev\", \"prod\"].",
+                    "Check len(options) > 0 before calling choose().",
+                    "Hard to pick from nothing.",
+                ));
+            }
+            io_host.writeln_stdout(&prompt);
+            for (idx, opt) in opts.iter().enumerate() {
+                io_host.writeln_stdout(&format!("  {}) {opt}", idx + 1));
+            }
+            io_host.write_stdout(&format!("Select [1-{}] (default 1): ", opts.len()));
+            let raw = io_host.read_line().map_err(|err| {
+                DogDiagnostic::new(
+                    "E040",
+                    "Failed to read menu selection in choose().",
+                    span.clone(),
+                    format!("Standard input returned an I/O error: {err}"),
+                    "Provide a choice number or option text.",
+                    "Press Enter for option 1.",
+                    "Menu closed early.",
+                )
+            })?;
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Ok(Value::Text(opts[0].clone()));
+            }
+            if let Ok(num) = trimmed.parse::<usize>() {
+                if num >= 1 && num <= opts.len() {
+                    return Ok(Value::Text(opts[num - 1].clone()));
+                }
+            }
+            if let Some(exact) = opts.iter().find(|o| o.eq_ignore_ascii_case(trimmed)) {
+                return Ok(Value::Text(exact.clone()));
+            }
+            Err(DogDiagnostic::new(
+                "E030",
+                format!("Invalid choice '{trimmed}' in choose()."),
+                span.clone(),
+                format!("Expected a number 1..={} or an option label.", opts.len()),
+                "Enter one of the displayed option numbers.",
+                "choose() validates user selections strictly.",
+                "That option wasn't on the menu.",
+            ))
+        }
+        "password" => {
+            if let Some(Value::Text(prompt)) = args.into_iter().next() {
+                io_host.write_stdout(&prompt);
+            }
+            let secret = io_host.read_password().map_err(|err| {
+                DogDiagnostic::new(
+                    "E040",
+                    "Failed to read hidden input via password().",
+                    span.clone(),
+                    format!("Terminal input error: {err}"),
+                    "Run inside a terminal or pipe input.",
+                    "password() hides echoed keystrokes on POSIX terminals.",
+                    "Secret stayed too secret.",
+                )
+            })?;
+            Ok(Value::Text(secret))
+        }
+        "read_key" => {
+            let key = io_host.read_key().map_err(|err| {
+                DogDiagnostic::new(
+                    "E040",
+                    "Failed to read key via read_key().",
+                    span.clone(),
+                    format!("Terminal input error: {err}"),
+                    "Ensure standard input is readable.",
+                    "Returns key labels like \"Up\", \"Enter\", or \"a\".",
+                    "No key pressed.",
+                )
+            })?;
+            Ok(Value::Text(key))
+        }
+        "table" => {
+            let mut it = args.into_iter();
+            let (Some(Value::List(hdr_vals)), Some(Value::List(row_vals))) = (it.next(), it.next())
+            else {
+                unreachable!();
+            };
+            let headers: Vec<String> = hdr_vals.into_iter().map(|v| v.to_string()).collect();
+            let rows: Vec<Vec<String>> = row_vals
+                .into_iter()
+                .map(|r| match r {
+                    Value::List(cols) => cols.into_iter().map(|c| c.to_string()).collect(),
+                    other => vec![other.to_string()],
+                })
+                .collect();
+            let rendered = render_terminal_table(&headers, &rows);
+            io_host.writeln_stdout(&rendered);
+            Ok(Value::Void)
         }
         "lower" => match args.into_iter().next() {
             Some(Value::Text(s)) => Ok(Value::Text(s.to_lowercase())),
@@ -1070,7 +1325,7 @@ pub fn call_builtin(
             }
             Ok(Value::Void)
         }
-        "cli_progress" => {
+        "cli_progress" | "progress" => {
             let mut it = args.into_iter();
             let (Some(Value::Text(label)), Some(Value::Number(cur)), Some(Value::Number(tot))) =
                 (it.next(), it.next(), it.next())
@@ -2204,6 +2459,127 @@ pub fn call_builtin(
             };
             Ok(Value::Text(crate::net::http_status_text(code).to_string()))
         }
+        "json_read" => {
+            let Some(Value::Text(path)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let raw = fs::read_to_string(&path).map_err(|e| {
+                DogDiagnostic::new(
+                    "E040",
+                    format!("Failed to read JSON file '{path}'."),
+                    span.clone(),
+                    format!("Filesystem error: {e}"),
+                    "Verify the file path exists and is readable.",
+                    "Wrap file I/O in `try ... catch err ... end`.",
+                    "Could not dig up that JSON file.",
+                )
+            })?;
+            let parsed = parse_json(&raw).map_err(|e| {
+                DogDiagnostic::new(
+                    "E030",
+                    format!("Invalid JSON in '{path}'."),
+                    span.clone(),
+                    e,
+                    "Ensure the file contains a valid JSON object `{ ... }`.",
+                    "Validate JSON formatting.",
+                    "Malformed JSON inside that file.",
+                )
+            })?;
+            let JsonValue::Object(obj) = parsed else {
+                return Err(DogDiagnostic::new(
+                    "E030",
+                    format!("json_read('{path}') expected a top-level JSON object."),
+                    span.clone(),
+                    "Top-level JSON value was not `{ ... }`.",
+                    "json_read() returns `map<text, text>`.",
+                    "Use json_parse() for custom inspection.",
+                    "Expected `{ ... }` at the file root.",
+                ));
+            };
+            let entries = obj
+                .into_iter()
+                .map(|(k, v)| {
+                    let s = match v {
+                        JsonValue::Str(x) => x,
+                        other => other.stringify(),
+                    };
+                    (Value::Text(k), Value::Text(s))
+                })
+                .collect();
+            Ok(Value::Map(entries))
+        }
+        "json_write" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Text(path)), Some(val)) = (it.next(), it.next()) else {
+                unreachable!();
+            };
+            let jv = value_to_json(&val);
+            let formatted = format!("{}\n", format_json_pretty(&jv, 0));
+            fs::write(&path, formatted).map_err(|e| {
+                DogDiagnostic::new(
+                    "E040",
+                    format!("Failed to write JSON file '{path}'."),
+                    span.clone(),
+                    format!("Filesystem error: {e}"),
+                    "Verify parent directory exists and permissions allow writing.",
+                    "Use `mkdir()` first if writing into a new folder.",
+                    "Disk refused that JSON.",
+                )
+            })?;
+            Ok(Value::Void)
+        }
+        "toml_parse" => {
+            let Some(Value::Text(raw)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let map = parse_toml_flat(&raw).map_err(|e| {
+                DogDiagnostic::new(
+                    "E030",
+                    "Failed to parse TOML in toml_parse().",
+                    span.clone(),
+                    e,
+                    "Pass valid TOML `[section]` / `key = value` content.",
+                    "Section keys are stored as `section.key` in the returned map.",
+                    "That TOML syntax got tangled.",
+                )
+            })?;
+            Ok(Value::Map(
+                map.into_iter()
+                    .map(|(k, v)| (Value::Text(k), Value::Text(v)))
+                    .collect(),
+            ))
+        }
+        "time_format" => {
+            let mut it = args.into_iter();
+            let (Some(Value::Number(ms)), Some(Value::Text(fmt))) = (it.next(), it.next()) else {
+                unreachable!();
+            };
+            Ok(Value::Text(format_epoch_ms_pattern(ms, &fmt)))
+        }
+        "env_load" => {
+            let Some(Value::Text(path)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            let raw = fs::read_to_string(&path).map_err(|e| {
+                DogDiagnostic::new(
+                    "E040",
+                    format!("Failed to read .env file '{path}'."),
+                    span.clone(),
+                    format!("Filesystem error: {e}"),
+                    "Verify the `.env` file path exists.",
+                    "env_load() parses `KEY=VALUE` lines and sets environment variables.",
+                    "Missing `.env` file.",
+                )
+            })?;
+            let count = apply_dotenv(&raw);
+            Ok(Value::Number(count as i64))
+        }
+        "cookie_parse" => {
+            let Some(Value::Text(header)) = args.into_iter().next() else {
+                unreachable!();
+            };
+            Ok(Value::Map(parse_cookie_header(&header)))
+        }
         _ => unreachable!("Type checker validates built-in function names"),
     }
 }
@@ -2346,4 +2722,204 @@ fn value_to_json(val: &Value) -> JsonValue {
         Value::Enum { type_name, variant } => JsonValue::Str(format!("{type_name}.{variant}")),
         Value::Void => JsonValue::Null,
     }
+}
+
+pub fn render_terminal_table(headers: &[String], rows: &[Vec<String>]) -> String {
+    let cols = headers
+        .len()
+        .max(rows.iter().map(Vec::len).max().unwrap_or(0));
+    if cols == 0 {
+        return String::new();
+    }
+    let mut widths = vec![1usize; cols];
+    for (i, h) in headers.iter().enumerate() {
+        widths[i] = widths[i].max(h.chars().count());
+    }
+    for row in rows {
+        for (i, cell) in row.iter().enumerate() {
+            widths[i] = widths[i].max(cell.chars().count());
+        }
+    }
+    let unicode = crate::term::TermCapabilities::detect().unicode;
+    let (h_ch, v_ch, tl, tm, tr, ml, mm, mr, bl, bm, br) = if unicode {
+        ('─', '│', '┌', '┬', '┐', '├', '┼', '┤', '└', '┴', '┘')
+    } else {
+        ('-', '|', '+', '+', '+', '+', '+', '+', '+', '+', '+')
+    };
+
+    let border_line = |left: char, mid: char, right: char| -> String {
+        let mut s = String::new();
+        s.push(left);
+        for (idx, &w) in widths.iter().enumerate() {
+            if idx > 0 {
+                s.push(mid);
+            }
+            for _ in 0..(w + 2) {
+                s.push(h_ch);
+            }
+        }
+        s.push(right);
+        s
+    };
+
+    let row_line = |cells: &[String]| -> String {
+        let mut s = String::new();
+        s.push(v_ch);
+        for (idx, &w) in widths.iter().enumerate() {
+            let val = cells.get(idx).map(String::as_str).unwrap_or("");
+            let char_len = val.chars().count();
+            let pad = w.saturating_sub(char_len);
+            s.push(' ');
+            s.push_str(val);
+            for _ in 0..(pad + 1) {
+                s.push(' ');
+            }
+            s.push(v_ch);
+        }
+        s
+    };
+
+    let mut out = Vec::new();
+    out.push(border_line(tl, tm, tr));
+    if !headers.is_empty() {
+        out.push(row_line(headers));
+        out.push(border_line(ml, mm, mr));
+    }
+    for r in rows {
+        out.push(row_line(r));
+    }
+    out.push(border_line(bl, bm, br));
+    out.join("\n")
+}
+
+pub fn parse_toml_flat(raw: &str) -> Result<BTreeMap<String, String>, String> {
+    let mut map = BTreeMap::new();
+    let mut section = String::new();
+    for (idx, raw_line) in raw.lines().enumerate() {
+        let line = strip_toml_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line[1..line.len() - 1].trim().to_string();
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else {
+            return Err(format!("Line {}: expected `key = value`, found '{line}'", idx + 1));
+        };
+        let key = k.trim().trim_matches('"').trim_matches('\'');
+        let mut val = v.trim();
+        if (val.starts_with('"') && val.ends_with('"') && val.len() >= 2)
+            || (val.starts_with('\'') && val.ends_with('\'') && val.len() >= 2)
+        {
+            val = &val[1..val.len() - 1];
+        }
+        let full_key = if section.is_empty() {
+            key.to_string()
+        } else {
+            format!("{section}.{key}")
+        };
+        map.insert(full_key, val.to_string());
+    }
+    Ok(map)
+}
+
+fn strip_toml_comment(line: &str) -> &str {
+    let mut in_dq = false;
+    let mut in_sq = false;
+    let mut escaped = false;
+    for (idx, ch) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if in_dq => escaped = true,
+            '"' if !in_sq => in_dq = !in_dq,
+            '\'' if !in_dq => in_sq = !in_sq,
+            '#' if !in_dq && !in_sq => return &line[..idx],
+            _ => {}
+        }
+    }
+    line
+}
+
+pub fn format_epoch_ms_pattern(ms: i64, fmt: &str) -> String {
+    let secs = ms.div_euclid(1_000);
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400) as u64;
+    let hour = rem / 3_600;
+    let min = (rem % 3_600) / 60;
+    let sec = rem % 60;
+
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = y + i64::from(m <= 2);
+
+    let y_s = format!("{year:04}");
+    let m_s = format!("{m:02}");
+    let d_s = format!("{d:02}");
+    let h_s = format!("{hour:02}");
+    let min_s = format!("{min:02}");
+    let s_s = format!("{sec:02}");
+
+    fmt.replace("%F", &format!("{y_s}-{m_s}-{d_s}"))
+        .replace("%T", &format!("{h_s}:{min_s}:{s_s}"))
+        .replace("%Y", &y_s)
+        .replace("%m", &m_s)
+        .replace("%d", &d_s)
+        .replace("%H", &h_s)
+        .replace("%M", &min_s)
+        .replace("%S", &s_s)
+}
+
+pub fn apply_dotenv(raw: &str) -> usize {
+    let mut loaded = 0usize;
+    for raw_line in raw.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let body = trimmed.strip_prefix("export ").unwrap_or(trimmed).trim();
+        let Some((k, v)) = body.split_once('=') else {
+            continue;
+        };
+        let key = k.trim();
+        if key.is_empty() {
+            continue;
+        }
+        let mut val = v.trim();
+        if (val.starts_with('"') && val.ends_with('"') && val.len() >= 2)
+            || (val.starts_with('\'') && val.ends_with('\'') && val.len() >= 2)
+        {
+            val = &val[1..val.len() - 1];
+        }
+        std::env::set_var(key, val);
+        loaded += 1;
+    }
+    loaded
+}
+
+fn parse_cookie_header(header: &str) -> Vec<(Value, Value)> {
+    let mut out = Vec::new();
+    for part in header.split(';') {
+        let trimmed = part.trim();
+        if let Some((k, v)) = trimmed.split_once('=') {
+            let key = Value::Text(k.trim().to_string());
+            let val = Value::Text(v.trim().to_string());
+            if let Some((_, slot)) = out.iter_mut().find(|(ek, _)| ek == &key) {
+                *slot = val;
+            } else {
+                out.push((key, val));
+            }
+        }
+    }
+    out
 }
