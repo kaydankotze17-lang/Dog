@@ -1105,7 +1105,7 @@ function emitJsFromNode(node) {
         css_media: () => `__dogWeb.cssMedia(${a[0]}, ${a[1]})`,
         css_keyframes: () => `__dogWeb.cssKeyframes(${a[0]}, ${a[1]})`,
         css_theme: () => `__dogWeb.cssTheme(${a[0]}, ${a[1]}, ${a[2]}, ${a[3]}, ${a[4]})`,
-        css_bundle: () => `(${a[0]}).join("\\n\\n")`,
+        css_bundle: () => (a.length === 0 ? "__dogWeb.cssBundle()" : `(${a[0]}).join("\\n\\n")`),
         html_el: () => `__dogWeb.htmlEl(${a[0]}, ${a[1]}, ${a[2]})`,
         html_page: () => `__dogWeb.htmlPage(${a[0]}, ${a[1]}, ${a[2]})`,
         web_nav: () => `__dogWeb.webNav(${a[0]}, ${a[1]})`,
@@ -1202,6 +1202,121 @@ export function compileDogSourceToJs(source) {
     if (text.startsWith("return ")) {
       const node = parseExprNode(text.slice(7).trim(), line, envTypes);
       return `return ${emitJsFromNode(node)};`;
+    }
+
+    // Inline DOG CSS block: style theme ... end | style ".card" ... end
+    if (text === "style" || text.startsWith("style ")) {
+      const targetRaw = text.slice(5).trim();
+      if (!targetRaw) {
+        throw new DogWebDiagnostic({
+          code: "E004",
+          title: 'Expected selector or `theme` after `style`.',
+          line,
+          why: "A `style` block needs a CSS selector string or `theme` keyword.",
+          fix: 'Write e.g. `style ".card"` or `style theme`.',
+        });
+      }
+      const isTheme = targetRaw === "theme" || targetRaw === "root" || targetRaw === "vars";
+      const selJs = isTheme
+        ? '":root"'
+        : emitJsFromNode(parseExprNode(targetRaw, line, envTypes));
+
+      const baseProps = [];
+      const variantBlocks = [];
+
+      function parseStyleVariantTrigger(vText) {
+        const clean = vText.replace(/^on\s+/, "").trim();
+        const direct = {
+          hover: ":hover",
+          focus: ":focus",
+          active: ":active",
+          mobile: "@media (max-width: 640px)",
+          tablet: "@media (max-width: 960px)",
+          desktop: "@media (min-width: 1024px)",
+          dark: "@media (prefers-color-scheme: dark)",
+        };
+        if (!vText.includes(":") && direct[clean]) return direct[clean];
+        const m = vText.match(/^media\s+"([^"]+)"$/);
+        if (m) return `@media ${m[1]}`;
+        return null;
+      }
+
+      function parseStylePropLine(sText, sLine) {
+        const cleaned = sText.replace(/,\s*$/, "").trim();
+        const colonIdx = cleaned.indexOf(":");
+        if (colonIdx <= 0) {
+          throw new DogWebDiagnostic({
+            code: "E004",
+            title: `Expected \`property: value\` inside \`style\` block, found \`${sText}\`.`,
+            line: sLine,
+            why: "Style declarations use `prop: expr` (e.g. `bg: \"#FFFFFF\"` or `pad: \"16px\"`).",
+            fix: 'Write e.g. `bg: "#FFFFFF"` or close the block with `end`.',
+          });
+        }
+        const prop = cleaned.slice(0, colonIdx).trim();
+        const valRaw = cleaned.slice(colonIdx + 1).trim();
+        const valNode = parseExprNode(valRaw, sLine, envTypes);
+        return { prop, valJs: emitJsFromNode(valNode) };
+      }
+
+      while (cursor < lines.length && lines[cursor].text !== "end") {
+        const inner = lines[cursor++];
+        const trig = parseStyleVariantTrigger(inner.text);
+        if (trig) {
+          const vRules = [];
+          while (cursor < lines.length && lines[cursor].text !== "end") {
+            const vLine = lines[cursor++];
+            vRules.push(parseStylePropLine(vLine.text, vLine.line));
+          }
+          if (lines[cursor]?.text !== "end") {
+            throw new DogWebDiagnostic({
+              code: "E005",
+              title: "Missing `end` for style variant block.",
+              line: inner.line,
+              why: "Nested `on hover` / `on mobile` blocks inside `style` must close with `end`.",
+              fix: "Add `end` on its own line.",
+            });
+          }
+          cursor++;
+          variantBlocks.push({ trig, rules: vRules });
+        } else {
+          baseProps.push(parseStylePropLine(inner.text, inner.line));
+        }
+      }
+
+      if (lines[cursor]?.text !== "end") {
+        throw new DogWebDiagnostic({
+          code: "E005",
+          title: "Missing `end` closing `style` block.",
+          line,
+          why: 'Every `style "<selector>" ... end` block must end with `end`.',
+          fix: "Add `end` after your style rules.",
+        });
+      }
+      cursor++;
+
+      const emitRuleCall = (mediaExpr, sJs, propList) => {
+        if (propList.length === 0) return "";
+        const obj = `{ ${propList.map((p) => `${JSON.stringify(p.prop)}: __dogWeb.toText(${p.valJs})`).join(", ")} }`;
+        if (mediaExpr) {
+          return `__dogWeb.styleMedia(${JSON.stringify(mediaExpr)}, ${sJs}, ${obj});`;
+        }
+        return `__dogWeb.styleRule(${sJs}, ${obj});`;
+      };
+
+      const calls = [];
+      if (baseProps.length > 0) {
+        calls.push(emitRuleCall(null, selJs, baseProps));
+      }
+      for (const vb of variantBlocks) {
+        if (vb.trig.startsWith(":")) {
+          calls.push(emitRuleCall(null, `(${selJs}) + ${JSON.stringify(vb.trig)}`, vb.rules));
+        } else {
+          const q = vb.trig.replace(/^@media\s*/, "").trim();
+          calls.push(emitRuleCall(q, selJs, vb.rules));
+        }
+      }
+      return calls.join("\n");
     }
 
     // Bindings: let / var / const
@@ -1401,6 +1516,8 @@ export function compileDogSourceToJs(source) {
 const RUNTIME_HEADER = `"use strict";
 const __dogFns = Object.create(null);
 const __dogStorageFallback = Object.create(null);
+const __dogCssVars = [];
+const __dogStyleRules = [];
 function __dogQ(sel) {
   if (typeof document === "undefined") return null;
   return document.querySelector(sel) || document.getElementById(String(sel).replace(/^#/, ""));
@@ -1408,16 +1525,127 @@ function __dogQ(sel) {
 function __dogEscape(s) {
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 }
+function __dogExpandVarRefs(raw) {
+  return String(raw).replace(/\\$([a-zA-Z_][a-zA-Z0-9_-]*)/g, "var(--$1)");
+}
+function __dogExpandDecl(rawKey, rawVal) {
+  const prop = String(rawKey).trim().toLowerCase();
+  const val = __dogExpandVarRefs(String(rawVal).trim());
+  switch (prop) {
+    case "bg": return [["background", val]];
+    case "ink": case "fg": case "text": return [["color", val]];
+    case "pad": case "p": return [["padding", val]];
+    case "px": case "pad-x": return [["padding-inline", val]];
+    case "py": case "pad-y": return [["padding-block", val]];
+    case "m": return [["margin", val]];
+    case "mx": case "margin-x": return [["margin-inline", val]];
+    case "my": case "margin-y": return [["margin-block", val]];
+    case "w": return [["width", val]];
+    case "h": return [["height", val]];
+    case "max-w": return [["max-width", val]];
+    case "min-w": return [["min-width", val]];
+    case "max-h": return [["max-height", val]];
+    case "min-h": return [["min-height", val]];
+    case "radius": case "round": return [["border-radius", val]];
+    case "size": return [["font-size", val]];
+    case "weight": return [["font-weight", val]];
+    case "font": return [["font-family", val]];
+    case "leading": return [["line-height", val]];
+    case "ease": return [["transition", val]];
+    case "align": return [["align-items", val]];
+    case "justify": return [["justify-content", val]];
+    case "cols": return [["display", "grid"], ["grid-template-columns", /^\\d+$/.test(val) ? "repeat(" + val + ", minmax(0, 1fr))" : val]];
+    case "grid": return [["display", "grid"], ["grid-template-columns", val]];
+    case "flex": {
+      const l = val.toLowerCase();
+      if (l === "row") return [["display", "flex"], ["flex-direction", "row"]];
+      if (l === "col" || l === "column") return [["display", "flex"], ["flex-direction", "column"]];
+      return [["flex", val]];
+    }
+    case "center": {
+      const l = val.toLowerCase();
+      if (l === "true" || l === "all" || l === "yes") return [["display", "flex"], ["align-items", "center"], ["justify-content", "center"]];
+      return [["text-align", "center"]];
+    }
+    case "shadow": {
+      const p = { sm: "0 1px 3px rgba(24,26,31,0.08)", md: "0 6px 20px rgba(24,26,31,0.08)", lg: "0 16px 36px rgba(24,26,31,0.12)" };
+      return [["box-shadow", p[val.toLowerCase()] || val]];
+    }
+    default: return [[prop, val]];
+  }
+}
+function __dogExpandMedia(q) {
+  const map = { mobile: "(max-width: 640px)", tablet: "(max-width: 960px)", desktop: "(min-width: 1024px)", dark: "(prefers-color-scheme: dark)" };
+  return map[String(q).toLowerCase()] || (String(q).startsWith("(") ? String(q) : "(" + q + ")");
+}
+function __dogBuildInlineCss() {
+  const chunks = [];
+  if (__dogCssVars.length) {
+    chunks.push(":root {\\n" + __dogCssVars.map(([k, v]) => "  " + k + ": " + v + ";").join("\\n") + "\\n}");
+  }
+  for (const r of __dogStyleRules) {
+    const body = r.decls.map(([p, v]) => "  " + p + ": " + v + ";").join("\\n");
+    const block = r.selector + " {\\n" + body + "\\n}";
+    chunks.push(r.media ? "@media " + __dogExpandMedia(r.media) + " {\\n" + block + "\\n}" : block);
+  }
+  return chunks.join("\\n\\n");
+}
+function __dogFlushStyles() {
+  if (typeof document === "undefined" || (!__dogCssVars.length && !__dogStyleRules.length)) return;
+  let el = document.getElementById("dog-inline-styles");
+  if (!el) {
+    el = document.createElement("style");
+    el.id = "dog-inline-styles";
+    (document.head || document.documentElement).appendChild(el);
+  }
+  el.textContent = __dogBuildInlineCss();
+}
 const __dogWeb = {
+  toText(v) {
+    return (typeof v === "object" && v !== null) ? JSON.stringify(v) : String(v);
+  },
   print(v) {
-    const line = (typeof v === "object" && v !== null) ? JSON.stringify(v) : String(v);
+    const line = __dogWeb.toText(v);
     console.log(line);
     if (typeof window !== "undefined" && window.parent && window.parent !== window) {
       try { window.parent.postMessage({ source: "dog-web-preview", type: "log", line }, "*"); } catch {}
     }
   },
+  styleVar(name, val) {
+    const key = "--" + String(name).trim().replace(/^--+/, "");
+    const v = __dogExpandVarRefs(String(val).trim());
+    const found = __dogCssVars.find((p) => p[0] === key);
+    if (found) found[1] = v;
+    else __dogCssVars.push([key, v]);
+    __dogFlushStyles();
+  },
+  styleRule(selector, props) {
+    const raw = String(selector).trim();
+    const sel = raw === "theme" || raw === "root" ? ":root" : raw;
+    const decls = [];
+    for (const [k, v] of Object.entries(props || {})) {
+      if (sel === ":root" && !String(k).trim().startsWith("--")) {
+        __dogWeb.styleVar(k, v);
+      } else {
+        for (const pair of __dogExpandDecl(k, v)) decls.push(pair);
+      }
+    }
+    if (decls.length) __dogStyleRules.push({ media: null, selector: sel, decls });
+    __dogFlushStyles();
+  },
+  styleMedia(query, selector, props) {
+    const sel = String(selector).trim();
+    const decls = [];
+    for (const [k, v] of Object.entries(props || {})) {
+      for (const pair of __dogExpandDecl(k, v)) decls.push(pair);
+    }
+    if (decls.length) __dogStyleRules.push({ media: String(query).trim(), selector: sel, decls });
+    __dogFlushStyles();
+  },
+  cssBundle() {
+    return __dogBuildInlineCss();
+  },
   dogCss(dsl) {
-    const map = { bg:"background", ink:"color", fg:"color", pad:"padding", p:"padding", px:"padding-inline", py:"padding-block", m:"margin", mx:"margin-inline", my:"margin-block", w:"width", h:"height", "max-w":"max-width", "min-h":"min-height", radius:"border-radius", round:"border-radius", size:"font-size", weight:"font-weight", font:"font-family", leading:"line-height", ease:"transition", align:"align-items", justify:"justify-content" };
     const out = []; let mode = null; let sel = ""; let decls = [];
     for (const raw of String(dsl || "").split(/\\r?\\n/)) {
       const ln = raw.trim(); if (!ln || ln.startsWith("#") || ln.startsWith("//")) continue;
@@ -1425,10 +1653,9 @@ const __dogWeb = {
       if (ln === "vars") { mode = "vars"; decls = []; continue; }
       if (ln.startsWith("rule ")) { mode = "rule"; sel = ln.slice(5).trim(); decls = []; continue; }
       const idx = ln.indexOf(":"); if (idx > 0 && mode) {
-        const k = ln.slice(0, idx).trim(); const v = ln.slice(idx + 1).trim().replace(/\\$([a-zA-Z_][a-zA-Z0-9_-]*)/g, "var(--$1)");
-        if (mode === "vars") decls.push("  --" + k.replace(/^--/, "") + ": " + v + ";");
-        else if (k === "cols") { decls.push("  display: grid;"); decls.push("  grid-template-columns: repeat(" + v + ", minmax(0, 1fr));"); }
-        else decls.push("  " + (map[k] || k) + ": " + v + ";");
+        const k = ln.slice(0, idx).trim(); const v = __dogExpandVarRefs(ln.slice(idx + 1).trim());
+        if (mode === "vars") decls.push("  --" + k.replace(/^--+/, "") + ": " + v + ";");
+        else { for (const [ek, ev] of __dogExpandDecl(k, v)) decls.push("  " + ek + ": " + ev + ";"); }
       }
     }
     return out.join("\\n\\n");
@@ -1437,14 +1664,17 @@ const __dogWeb = {
     return ":root{--bg:" + bg + ";--surface:" + surface + ";--ink:" + ink + ";--accent:" + accent + ";--font:" + font + ";}*{box-sizing:border-box;}body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);line-height:1.6;}.dg-nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 24px;background:var(--surface);border-bottom:1px solid rgba(128,128,128,0.2);}.dg-nav-links{display:flex;gap:18px;flex-wrap:wrap;}.dg-nav a{color:inherit;text-decoration:none;font-weight:500;}.dg-card{background:var(--surface);border:1px solid rgba(128,128,128,0.22);border-radius:10px;padding:20px;}.dg-grid{display:grid;gap:18px;}.dg-btn{cursor:pointer;border:none;border-radius:6px;padding:10px 16px;font-weight:600;background:var(--accent);color:#fff;}.dg-input{width:100%;padding:10px 12px;border-radius:6px;border:1px solid rgba(128,128,128,0.35);background:var(--surface);color:var(--ink);}";
   },
   cssRule(sel, props) {
-    const lines = Object.entries(props || {}).map(([k, v]) => "  " + k + ": " + v + ";");
+    const lines = [];
+    for (const [k, v] of Object.entries(props || {})) {
+      for (const [ek, ev] of __dogExpandDecl(k, v)) lines.push("  " + ek + ": " + ev + ";");
+    }
     return sel + " {\\n" + lines.join("\\n") + "\\n}";
   },
   cssVars(vars) {
     const lines = Object.entries(vars || {}).map(([k, v]) => "  --" + String(k).replace(/^--/, "") + ": " + v + ";");
     return ":root {\\n" + lines.join("\\n") + "\\n}";
   },
-  cssMedia(q, css) { return "@media " + (q.startsWith("(") ? q : "(" + q + ")") + " {\\n" + css + "\\n}"; },
+  cssMedia(q, css) { return "@media " + __dogExpandMedia(q) + " {\\n" + css + "\\n}"; },
   cssKeyframes(name, steps) { return "@keyframes " + name + " {" + Object.entries(steps || {}).map(([s, d]) => s + "{" + d + "}").join(" ") + "}"; },
   htmlEl(tag, attrs, content) {
     const a = Object.entries(attrs || {}).map(([k, v]) => " " + k + '=\\"' + __dogEscape(v) + '\\"').join("");
@@ -1495,9 +1725,30 @@ function escapeHtml(s) {
 
 export function compileDogWebsite({ code, css = "", title = "DOG Web App" }) {
   try {
-    const compiledCss = css.trim() ? compileDogCss(css) : "";
+    const dgssCss = css.trim() ? compileDogCss(css) : "";
     const userJs = compileDogSourceToJs(code);
-    const fullJs = `${RUNTIME_HEADER}\n\n${userJs}`;
+    const fullJs = `${RUNTIME_HEADER}\n\n${userJs}\n__dogFlushStyles();`;
+
+    // Also harvest any inline `style ... end` rules produced at top level in an isolated scope
+    // (shadowing browser globals so compiling never mutates the host studio page).
+    let inlineCss = "";
+    try {
+      const collectFn = new Function(
+        "document",
+        "window",
+        "location",
+        "localStorage",
+        "console",
+        `${RUNTIME_HEADER}\n${userJs}\nreturn __dogBuildInlineCss();`
+      );
+      const noopConsole = { log() {}, warn() {}, error() {}, info() {}, clear() {} };
+      const memStorage = { getItem() { return null; }, setItem() {} };
+      inlineCss = String(collectFn(undefined, undefined, undefined, memStorage, noopConsole) || "");
+    } catch {
+      inlineCss = "";
+    }
+
+    const compiledCss = [dgssCss, inlineCss].filter((s) => s && s.trim().length > 0).join("\n\n");
     const safeJs = fullJs.replace(/<\/script/gi, "<\\/script");
     const indexHtml = `<!doctype html>
 <html lang="en">
@@ -1505,7 +1756,7 @@ export function compileDogWebsite({ code, css = "", title = "DOG Web App" }) {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${escapeHtml(title)}</title>
-  <style>
+  <style id="dog-style-sheet">
 ${compiledCss}
   </style>
 </head>

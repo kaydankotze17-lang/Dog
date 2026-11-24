@@ -208,14 +208,3 @@ fn is_style_variant_line(trimmed: &str) -> bool {
         "hover" | "focus" | "active" | "mobile" | "tablet" | "desktop" | "dark"
     ) || trimmed.starts_with("media ")
 }
-
-fn is_style_variant_line(trimmed: &str) -> bool {
-    if trimmed.contains(':') {
-        return false;
-    }
-    let clean = trimmed.strip_prefix("on ").unwrap_or(trimmed).trim();
-    matches!(
-        clean,
-        "hover" | "focus" | "active" | "mobile" | "tablet" | "desktop" | "dark"
-    ) || trimmed.starts_with("media ")
-}

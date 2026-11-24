@@ -24,4 +24,3 @@ pub mod term;
 pub mod tester;
 pub mod types;
 pub mod web;
-pub mod web;

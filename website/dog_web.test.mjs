@@ -154,3 +154,37 @@ test("compileDogWebsite catches strict typing E021 on text + number", () => {
   assert.equal(res.ok, false);
   assert.equal(res.errorCode, "E021");
 });
+
+test("compileDogWebsite compiles inline style theme, hover, and mobile blocks + css_bundle()", () => {
+  const dg = `
+use "std.web"
+
+style theme
+    bg: "#F7F6F2"
+    accent: "#C85A11"
+end
+
+style ".dg-card"
+    bg: "$bg"
+    pad: "20px"
+    radius: "10px"
+    shadow: "sm"
+    on hover
+        shadow: "md"
+    end
+    on mobile
+        pad: "12px"
+    end
+end
+
+let compiled = css_bundle()
+print(compiled)
+`;
+  const res = compileDogWebsite({ code: dg, css: "", title: "Inline Style App" });
+  assert.equal(res.ok, true);
+  assert.match(res.css, /:root \{\s+--bg: #F7F6F2;\s+--accent: #C85A11;\s+\}/);
+  assert.match(res.css, /\.dg-card \{\s+background: var\(--bg\);\s+padding: 20px;/);
+  assert.match(res.css, /\.dg-card:hover \{/);
+  assert.match(res.css, /@media \(max-width: 640px\) \{\s+\.dg-card \{\s+padding: 12px;/);
+  assert.match(res.indexHtml, /<style id="dog-style-sheet">/);
+});

@@ -1959,7 +1959,7 @@ define bump()
     dom_set_text("#out", $"Clicks: {clicks}")
 end
 
-dom_mount("#app", web_card("Inline Style", "Zero raw CSS/JS", web_button("go", "Go")))
+dom_mount("#app", web_card("Inline Style", $"Zero raw CSS/JS {web_button("go", "Go")}"))
 dom_on("#go", "click", "bump")
 assert(contains(css_bundle(), ".panel:hover"), "inline style rules populate css_bundle()")
 "#;

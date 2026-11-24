@@ -912,6 +912,35 @@ function callNamespaceOrBuiltin(rawName, args, ctx, lineNum) {
       return undefined;
     case "fail":
       throw new DogRuntimeError({ code: "E035", title: String(args[0] || "Explicit failure"), line: lineNum });
+    case "html_escape":
+      return String(args[0] || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    case "web_nav":
+      return `<header class="dg-nav"><strong>${args[0]}</strong></header>`;
+    case "web_card":
+      return `<article class="dg-card"><h3>${args[0]}</h3><div>${args[1]}</div></article>`;
+    case "web_grid":
+      return `<div class="dg-grid">${(args[1] || []).join("")}</div>`;
+    case "web_button":
+      return `<button id="${args[0]}" class="dg-btn">${args[1]}</button>`;
+    case "web_input":
+      return `<input id="${args[0]}" placeholder="${args[1] || ""}" value="${args[2] || ""}" />`;
+    case "html_el":
+      return `<${args[0]}>${args[2] || ""}</${args[0]}>`;
+    case "dom_mount":
+      ctx.output.push(`[dom_mount] ${args[0]} <- ${String(args[1] || "").slice(0, 96)}`);
+      return undefined;
+    case "dom_set_text":
+      ctx.output.push(`[dom_set_text] ${args[0]} = ${formatDogValue(args[1])}`);
+      return undefined;
+    case "dom_on":
+      ctx.output.push(`[dom_on] ${args[0]} (${args[1]}) -> ${args[2]}()`);
+      return undefined;
+    case "css_bundle":
+      return Array.isArray(args[0]) ? args[0].join("\n\n") : ctx.output.filter((l) => l.startsWith("[style]")).join("\n");
     default:
       throw new DogRuntimeError({
         code: "E013",
@@ -1151,6 +1180,63 @@ function parseStatements(lines, startIdx = 0, stopTokens = []) {
       continue;
     }
 
+    if (lead === "style" && (trimmed === "style" || trimmed.startsWith("style "))) {
+      const header = trimmed.slice(5).trim();
+      if (!header) {
+        throw new DogRuntimeError({
+          code: "E004",
+          title: "Expected selector or 'theme' after 'style'.",
+          line: item.line,
+          fix: 'Write `style ".card"` or `style theme`.',
+        });
+      }
+      let cursor = i + 1;
+      const rules = [];
+      let closed = false;
+      while (cursor < lines.length) {
+        const inner = lines[cursor].text;
+        if (!inner) {
+          cursor++;
+          continue;
+        }
+        if (inner === "end") {
+          closed = true;
+          cursor++;
+          break;
+        }
+        if (/^(?:on\s+)?(?:hover|focus|active|mobile|tablet|desktop|dark)$/.test(inner) || /^media\s+"[^"]+"$/.test(inner)) {
+          const vLine = lines[cursor].line;
+          cursor++;
+          let vClosed = false;
+          while (cursor < lines.length) {
+            const vTxt = lines[cursor].text;
+            if (!vTxt) {
+              cursor++;
+              continue;
+            }
+            if (vTxt === "end") {
+              vClosed = true;
+              cursor++;
+              break;
+            }
+            cursor++;
+          }
+          if (!vClosed) {
+            throw new DogRuntimeError({ code: "E005", title: "Missing 'end' for style variant block.", line: vLine });
+          }
+          continue;
+        }
+        rules.push(inner);
+        cursor++;
+      }
+      if (!closed) {
+        throw new DogRuntimeError({ code: "E005", title: "Missing 'end' for 'style' block.", line: item.line });
+      }
+      stmts.push({ kind: "style", header, rulesCount: rules.length, line: item.line });
+      i = cursor;
+      continue;
+    }
+
     if (/^use\s+"/.test(trimmed)) {
       stmts.push({ kind: "use", path: trimmed, line: item.line });
       i++;
@@ -1176,6 +1262,10 @@ function execBlock(stmts, ctx) {
       });
     }
     if (st.kind === "use") continue;
+    if (st.kind === "style") {
+      ctx.astSummary.push(`style ${st.header} (${st.rulesCount} rules)`);
+      continue;
+    }
     if (st.kind === "fndef") {
       ctx.functions.set(st.name, st);
       ctx.astSummary.push(`fn ${st.name}(${st.params.map((p) => p.name).join(", ")})`);

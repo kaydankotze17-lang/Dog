@@ -12,7 +12,7 @@ import { compileDogWebsite } from "./dog_web.js";
 const KEYWORDS = new Set([
   "let", "var", "const", "set", "to", "increase", "decrease", "by",
   "if", "then", "otherwise", "else", "elif", "unless", "match", "case",
-  "try", "catch", "struct", "enum", "use", "end", "or", "and", "not",
+  "try", "catch", "struct", "enum", "use", "style", "end", "or", "and", "not",
   "is", "equals", "equal", "greater", "less", "than", "at", "least",
   "most", "over", "under", "fn", "define", "function", "returns",
   "return", "while", "until", "repeat", "times", "for", "each", "from",

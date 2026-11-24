@@ -34,14 +34,6 @@ pub fn reset_headless_web() {
     });
 }
 
-pub fn reset_headless_web() {
-    HEADLESS_WEB.with(|cell| {
-        let mut s = crate::web::HeadlessWebState::default();
-        s.route = "/".to_string();
-        *cell.borrow_mut() = s;
-    });
-}
-
 pub trait InterpreterIo {
     fn write_stdout(&mut self, text: &str);
     fn writeln_stdout(&mut self, text: &str);
@@ -2681,6 +2673,9 @@ pub fn call_builtin(
             )))
         }
         "css_bundle" => {
+            if args.is_empty() {
+                return Ok(Value::Text(crate::web::build_compiled_css()));
+            }
             let Some(Value::List(parts)) = args.into_iter().next() else {
                 unreachable!();
             };

@@ -1,6 +1,5 @@
 use crate::bytecode::{build_bundle, build_native, is_dgb_path, run_bundle_with_io};
 use crate::web::build_web_bundle_to_disk;
-use crate::web::build_web_bundle_to_disk;
 use crate::checker::TypeChecker;
 use crate::config::{parse_bool_flag, DogConfig, Personality};
 use crate::diagnostics::{achievement_for_runs, suggest_similar, welcome_banner};
@@ -21,7 +20,7 @@ use crate::sys::{
     handle_bench, handle_clean, handle_debug, handle_docs, handle_env, handle_eval_with_io,
     handle_explain, handle_forge, handle_graph, handle_inspect, handle_learn, handle_lint,
     handle_logs, handle_permissions, handle_process, handle_profile, handle_server,
-    handle_status, handle_system, handle_update, handle_watch, handle_web,
+    handle_status, handle_system, handle_update_exec, handle_watch, handle_web,
 };
 use crate::term::{InstallStyle, TermTheme};
 use crate::tester::{run_coverage, run_tests};
@@ -515,7 +514,13 @@ pub fn run() {
         "env" => print!("{}", handle_env()),
         "process" => println!("{}", handle_process()),
         "permissions" => println!("{}", handle_permissions()),
-        "update" | "upgrade" => println!("{}", handle_update()),
+        "update" | "upgrade" => match handle_update_exec(&args[1..]) {
+            Ok(out) => println!("{out}"),
+            Err(err) => {
+                messenger.error(&err);
+                process::exit(1);
+            }
+        },
         "clean" => println!("{}", handle_clean()),
         "logs" => match handle_logs(&args[1..]) {
             Ok(out) => print!("{out}"),
@@ -898,7 +903,8 @@ System, Server, CLI Themes, Docs & SDU:
   dog doctor                        Inspect environment, Termux, rustc, capabilities & config
   dog system | status | env         Inspect host, project state, and masked env
   dog process | permissions         Inspect PID/memory and filesystem privileges
-  dog logs [sdu] | clean | update   View logs, remove .dgb artifacts, check version
+  dog update [--check|--force]    Check version and auto-upgrade DOG (alias: upgrade)
+  dog logs [sdu] | clean          View logs or remove temporary .dgb artifacts
   dog config <setting> [value]      Configure theme, timestamps, prefix, personality & style
   dog sdu <subcommand>              Super Dog User status, scoped auth, and audit logs
   dog version | help                Print version or this help message"

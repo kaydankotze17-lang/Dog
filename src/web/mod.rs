@@ -841,7 +841,7 @@ pub fn build_web_bundle(
     let css = css_parts.join("\n\n");
     let escaped_title = crate::net::html_escape(title);
     let index_html = format!(
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>{escaped_title}</title>\n  <link rel=\"stylesheet\" href=\"./styles.css\" />\n</head>\n<body>\n  <div id=\"app\"></div>\n  <script src=\"./app.js\"></script>\n</body>\n</html>\n"
+        "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>{escaped_title}</title>\n  <style id=\"dog-style-sheet\">\n{css}\n  </style>\n</head>\n<body>\n  <div id=\"app\"></div>\n  <script src=\"./app.js\"></script>\n</body>\n</html>\n"
     );
 
     Ok(WebBundle {
@@ -1070,7 +1070,7 @@ fn emit_js_variant(
 ) -> Result<(), String> {
     if v.condition.starts_with(':') {
         let suffix = escape_js_str(&v.condition);
-        let derived_sel = format!("`\\${{{sel_js}}}{suffix}`");
+        let derived_sel = format!("`${{{sel_js}}}{suffix}`");
         emit_js_style_rules(out, pad, None, &derived_sel, &v.rules, fn_defaults)
     } else {
         let q = v
@@ -1536,7 +1536,13 @@ fn emit_js_call(
             "__dogWeb.cssTheme({}, {}, {}, {}, {})",
             jargs[0], jargs[1], jargs[2], jargs[3], jargs[4]
         )),
-        "css_bundle" => Ok(format!("({}).map(__dog_text).join(\"\\n\\n\")", jargs[0])),
+        "css_bundle" => {
+            if jargs.is_empty() {
+                Ok("__dogWeb.cssBundle()".to_string())
+            } else {
+                Ok(format!("({}).map(__dog_text).join(\"\\n\\n\")", jargs[0]))
+            }
+        }
         "html_el" => Ok(format!("__dogWeb.htmlEl({}, {}, {})", jargs[0], jargs[1], jargs[2])),
         "html_page" => Ok(format!("__dogWeb.htmlPage({}, {}, {})", jargs[0], jargs[1], jargs[2])),
         "web_nav" => Ok(format!("__dogWeb.webNav({}, {})", jargs[0], jargs[1])),
@@ -1563,7 +1569,7 @@ fn emit_js_call(
     }
 }
 
-const JS_WEB_RUNTIME: &str = r#""use strict";
+const JS_WEB_RUNTIME: &str = r##""use strict";
 const __dogFns = Object.create(null);
 const __dogStorageFallback = Object.create(null);
 const __dogCssVars = [];
@@ -1705,14 +1711,8 @@ function __dog_expand_media(raw) {
   return map[q.toLowerCase()] || (q.startsWith("(") ? q : `(${q})`);
 }
 
-function __dog_flush_styles() {
-  if (typeof document === "undefined" || (!__dogCssVars.length && !__dogStyleRules.length)) return;
-  let el = document.getElementById("dog-inline-styles");
-  if (!el) {
-    el = document.createElement("style");
-    el.id = "dog-inline-styles";
-    (document.head || document.documentElement).appendChild(el);
-  }
+function __dog_build_css() {
+  if (!__dogCssVars.length && !__dogStyleRules.length) return "";
   const chunks = [];
   if (__dogCssVars.length) {
     chunks.push(`:root {\n${__dogCssVars.map(([k, v]) => `  ${k}: ${v};`).join("\n")}\n}`);
@@ -1722,7 +1722,18 @@ function __dog_flush_styles() {
     const block = `${r.selector} {\n${body}\n}`;
     chunks.push(r.media ? `@media ${__dog_expand_media(r.media)} {\n${block}\n}` : block);
   }
-  el.textContent = chunks.join("\n\n");
+  return chunks.join("\n\n");
+}
+
+function __dog_flush_styles() {
+  if (typeof document === "undefined" || (!__dogCssVars.length && !__dogStyleRules.length)) return;
+  let el = document.getElementById("dog-inline-styles");
+  if (!el) {
+    el = document.createElement("style");
+    el.id = "dog-inline-styles";
+    (document.head || document.documentElement).appendChild(el);
+  }
+  el.textContent = __dog_build_css();
 }
 
 const __dogWeb = {
@@ -1815,6 +1826,7 @@ const __dogWeb = {
   cssTheme(bg, surface, ink, accent, font) {
     return `:root{--bg:${bg};--surface:${surface};--ink:${ink};--accent:${accent};--font:${font};}*{box-sizing:border-box;}body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);line-height:1.6;}.dg-nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 24px;background:var(--surface);border-bottom:1px solid rgba(128,128,128,0.2);}.dg-nav-links{display:flex;gap:18px;flex-wrap:wrap;}.dg-nav a{color:inherit;text-decoration:none;font-weight:500;}.dg-card{background:var(--surface);border:1px solid rgba(128,128,128,0.22);border-radius:10px;padding:20px;}.dg-grid{display:grid;gap:18px;}.dg-btn{cursor:pointer;border:none;border-radius:6px;padding:10px 16px;font-weight:600;background:var(--accent);color:#fff;}.dg-input{width:100%;padding:10px 12px;border-radius:6px;border:1px solid rgba(128,128,128,0.35);background:var(--surface);color:var(--ink);}`;
   },
+  cssBundle() { return __dog_build_css(); },
   htmlEl(tag, attrs, content) {
     const cleanTag = String(tag || "div").replace(/[^a-zA-Z0-9_-]/g, "") || "div";
     const a = Object.entries(attrs || {}).map(([k, v]) => " " + k + '="' + __dog_html_escape(v) + '"').join("");
@@ -1882,4 +1894,4 @@ const __dogWeb = {
   webRoute() { return typeof location !== "undefined" ? (location.hash || location.pathname || "/") : "/"; },
   webNavigate(p) { if (typeof location !== "undefined") location.hash = String(p).startsWith("#") ? String(p) : "#" + String(p); }
 };
-"#;
+"##;

@@ -248,6 +248,75 @@ for step in range(1, 4)
     say($"Countdown step {step}")
 end`,
   },
+  web_css: {
+    label: "Website & CSS",
+    file: "examples/web_css_site.dg",
+    notes: [
+      "Define theme tokens and scoped styles inline with `style theme ... end` or `style \".card\" ... end`—no raw CSS files required.",
+      "Attach nested interactive states (`on hover ... end`) and responsive breakpoints (`on mobile ... end`) directly inside DOG.",
+      "Mount XSS-escaped UI components with `dom_mount()` and bind DOG functions to DOM clicks with `dom_on()`.",
+    ],
+    englishCode: `use "std.web"
+
+style theme
+    bg: "#F7F6F2"
+    surface: "#FFFFFF"
+    accent: "#C85A11"
+end
+
+style ".dg-card"
+    bg: "$surface"
+    pad: "20px"
+    radius: "10px"
+    shadow: "sm"
+    on hover
+        shadow: "md"
+    end
+    on mobile
+        pad: "14px"
+    end
+end
+
+var clicks = 0
+define greet_click() returns void
+    increase clicks by 1
+    dom_set_text("#status", $"Clicked {clicks} time(s) in pure DOG!")
+end
+
+let card = web_card("Hero", $"Built natively in DOG! {web_button("hi-btn", "Say Hi")}")
+dom_mount("#app", card)
+dom_on("#hi-btn", "click", "greet_click")`,
+    classicCode: `use "std.web"
+
+style ":root"
+    bg: "#F7F6F2"
+    surface: "#FFFFFF"
+    accent: "#C85A11"
+end
+
+style ".dg-card"
+    bg: "$surface"
+    pad: "20px"
+    radius: "10px"
+    shadow: "sm"
+    hover
+        shadow: "md"
+    end
+    mobile
+        pad: "14px"
+    end
+end
+
+var clicks = 0
+fn greet_click() -> void
+    clicks += 1
+    dom_set_text("#status", $"Clicked {clicks} time(s) in pure DOG!")
+end
+
+let card = web_card("Hero", $"Built natively in DOG! {web_button("hi-btn", "Say Hi")}")
+dom_mount("#app", card)
+dom_on("#hi-btn", "click", "greet_click")`,
+  },
   web: {
     label: "Local Web Server",
     file: "examples/web_server.dg",
@@ -435,14 +504,15 @@ print("Age: " + age)`,
 export const INSTALL_METHODS = [
   {
     id: "termux_apt",
-    label: "Android Termux (APT)",
-    subtitle: "Prebuilt .deb packages for aarch64, arm (ARMv7), and x86_64 via GitHub Pages APT repository.",
-    commands: `curl -sSL https://raw.githubusercontent.com/kaydankotze17-lang/Dog/main/packaging/termux/setup-apt.sh | bash
-dog learn
-dog run examples/english_basics.dg`,
-    altLabel: "Or add the repository manually:",
-    altCommands: `echo "deb [trusted=yes] https://kaydankotze17-lang.github.io/Dog termux main" > $PREFIX/etc/apt/sources.list.d/dog.list
-pkg update && pkg install -y dog`,
+    label: "Android Termux (APT & Updater)",
+    subtitle: "Zero-error Termux install & upgrade script (bypasses broken Termux mirrors, clears APT cache, and auto-installs the newest .deb).",
+    commands: `curl -sSL https://kaydankotze17-lang.github.io/Dog/update.sh | bash
+dog --version
+dog learn`,
+    altLabel: "Once installed, upgrade anytime straight from DOG (or check GitHub vs APT):",
+    altCommands: `dog update
+dog update --check
+dog update --force`,
   },
   {
     id: "termux_source",
@@ -452,9 +522,9 @@ pkg update && pkg install -y dog`,
 git clone https://github.com/kaydankotze17-lang/Dog.git
 cd Dog
 cargo test
-cargo install --path .`,
-    altLabel: "Start interactive lessons & mobile editor immediately:",
-    altCommands: `dog learn english --run
+cargo install --path . --force`,
+    altLabel: "Pull newest main commits and rebuild anytime:",
+    altCommands: `dog update --from-source
 dog studio .`,
   },
   {
@@ -464,22 +534,23 @@ dog studio .`,
     commands: `git clone https://github.com/kaydankotze17-lang/Dog.git
 cd Dog
 cargo build --release
-cargo install --path .
+cargo install --path . --force
 dog --version`,
-    altLabel: "Compile standalone bundles or native executables:",
-    altCommands: `dog build examples/web_server.dg --out dist/server.dgb
-dog build examples/hello.dg --native`,
+    altLabel: "Compile standalone websites, bundles, or update automatically:",
+    altCommands: `dog web build examples/web_site.dg --out dist_web
+dog build examples/hello.dg --native
+dog update`,
   },
 ];
 
 export const CLI_COMMANDS = [
+  { cmd: "dog update [--check|--force]", desc: "Compare installed CLI vs GitHub main & Termux APT, then upgrade cleanly with cache-free .deb fallback." },
   { cmd: "dog learn [topic] [--run]", desc: "7 interactive beginner lessons with live execution (`basics`, `english`, `input`, `functions`, `data`, `errors`, `web`)." },
-  { cmd: "dog web <build|css|serve>", desc: "Compile `.dg` browser apps + `.dgss` DOG CSS stylesheets into standalone HTML/CSS/JS websites." },
+  { cmd: "dog web <build|css|serve>", desc: "Compile `.dg` browser apps + inline `style` / `.dgss` DOG CSS stylesheets into standalone HTML/CSS/JS websites." },
   { cmd: "dog run <file.dg | file.dgb>", desc: "Run scripts or SHA-256 verified bytecode bundles with stack traces." },
   { cmd: "dog studio [dir]", desc: "Split-pane terminal IDE with live IntelliSense, auto soft word-wrap (<72 cols), and Explorer." },
   { cmd: "dog edit [file.dg]", desc: "256-color mobile-friendly editor with contextual suggestions, snippets, and formatting." },
   { cmd: "dog debug <file.dg>", desc: "Interactive step, breakpoint, and variable-inspector debugger (`n`, `c`, `b <line>`, `p`)." },
-  { cmd: "dog watch <file.dg>", desc: "Monitor entry script and transitive `use` dependencies and auto-rerun on changes." },
   { cmd: "dog server [dir] [port]", desc: "Multi-threaded static HTTP file server for local and LAN hosting." },
 ];
 
@@ -733,5 +804,69 @@ on mobile
         cols: 1
     end
 end`,
+  },
+  {
+    id: "inline_style_site",
+    label: "Single-File Inline CSS (.dg only)",
+    title: "Inline DOG Style Site",
+    code: `# Zero separate .dgss needed — write style "..." directly inside .dg!
+use "std.web"
+
+style theme
+    bg: "#F7F6F2"
+    surface: "#FFFFFF"
+    ink: "#181A1F"
+    accent: "#C85A11"
+end
+
+style "body"
+    m: "0"
+    bg: "$bg"
+    ink: "$ink"
+    font: "system-ui, sans-serif"
+end
+
+style ".dg-shell"
+    max-w: "640px"
+    mx: "auto"
+    pad: "20px"
+    flex: "col"
+    gap: "14px"
+end
+
+style ".dg-card"
+    bg: "$surface"
+    border: "1px solid #E2DFD7"
+    radius: "10px"
+    pad: "18px"
+    shadow: "sm"
+    on hover
+        shadow: "md"
+    end
+end
+
+style ".dg-btn"
+    bg: "$accent"
+    ink: "#FFFFFF"
+    border: "none"
+    radius: "6px"
+    py: "9px"
+    px: "14px"
+    weight: "600"
+    cursor: "pointer"
+end
+
+var likes = 0
+
+define add_like() returns void
+    increase likes by 1
+    dom_set_text("#like-count", text(likes))
+    print($"Likes = {likes}")
+end
+
+let card = web_card("Styled Inline in DOG", $"Votes: <strong id=\\"like-count\\">{likes}</strong><div style=\\"margin-top:12px\\">{web_button("like-btn", "Upvote")}</div>")
+dom_mount("#app", html_el("main", {"class": "dg-shell"}, card))
+dom_on("#like-btn", "click", "add_like")`,
+    css: "",
   },
 ];

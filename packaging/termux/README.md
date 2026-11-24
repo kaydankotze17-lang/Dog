@@ -1,34 +1,42 @@
-# Termux Package & `pkg install dog` Guide
+# Termux Package & `dog update` Guide
 
-This directory contains everything needed to distribute `dog` as a real Termux `.deb` package and APT repository for `https://github.com/kaydankotze17-lang/Dog`.
+This directory contains everything needed to distribute `dog` as a Termux `.deb` package and APT repository for `https://github.com/kaydankotze17-lang/Dog`.
 
-## 1. Enable `pkg install dog` via GitHub Pages APT Repo
+## 1. Easiest Install & Zero-Error Upgrade (Recommended)
 
-1. Push this repository to `https://github.com/kaydankotze17-lang/Dog` (`main` branch).
-2. Wait for the **Build Termux APT Repository & Release** GitHub Action (`.github/workflows/termux-apt.yml`) to finish — it cross-compiles `dog` for `aarch64`, `arm` (ARMv7), and `x86_64`, generates `.deb` archives, and pushes an APT repository to the `gh-pages` branch.
-3. In GitHub repo **Settings → Pages → Source: `Deploy from a branch` → Branch: `gh-pages` (`/root`)**.
-4. In Termux on Android, register your APT repo once and install `dog`:
-   ```bash
-   echo "deb [trusted=yes] https://kaydankotze17-lang.github.io/Dog termux main" > $PREFIX/etc/apt/sources.list.d/dog.list
-   pkg update && pkg install -y dog
-   ```
-   Or run the one-line helper script:
-   ```bash
-   curl -sSL https://raw.githubusercontent.com/kaydankotze17-lang/Dog/main/packaging/termux/setup-apt.sh | bash
-   ```
-   From then on, `pkg upgrade` automatically updates `dog` whenever you push to `main`!
+Run the standalone DOG updater (it syncs ONLY DOG's APT index with caching disabled so broken Termux mirrors never cause errors, and falls back directly to `latest/dog_latest_<arch>.deb` if APT serves a stale version):
 
-## 2. Direct `.deb` Install (No APT Repo Needed)
-
-Push a version tag (`git tag v0.1.0 && git push origin v0.1.0`). GitHub Actions attaches `dog_0.1.0_aarch64.deb`, `dog_0.1.0_arm.deb`, and `dog_0.1.0_x86_64.deb` to the Release:
 ```bash
-curl -LO https://github.com/kaydankotze17-lang/Dog/releases/latest/download/dog_0.1.0_aarch64.deb
-pkg install ./dog_0.1.0_aarch64.deb
+curl -sSL https://kaydankotze17-lang.github.io/Dog/update.sh | bash
 ```
 
-## 3. Built-In Official `pkg install dog` (Upstream Termux)
+Once installed, upgrade anytime straight from DOG itself:
 
-Once you have a tagged release on GitHub:
+```bash
+dog update          # check GitHub/APT and install newest version
+dog update --check  # compare installed vs GitHub main & Termux APT
+dog update --force  # reinstall latest package even if versions match
+```
+
+## 2. Manual APT Repo Setup
+
+```bash
+echo "deb [trusted=yes] https://kaydankotze17-lang.github.io/Dog termux main" > $PREFIX/etc/apt/sources.list.d/dog.list
+apt-get update -o Dir::Etc::sourcelist="sources.list.d/dog.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" -o Acquire::http::No-Cache=true
+apt-get install -y --reinstall dog
+```
+
+## 3. Direct `.deb` Install (No APT Repo Needed)
+
+```bash
+curl -fsSL https://kaydankotze17-lang.github.io/Dog/latest/dog_latest_aarch64.deb -o dog.deb
+dpkg -i ./dog.deb
+```
+*(Replace `aarch64` with `arm` for 32-bit ARMv7 or `x86_64` for emulators/Chromebooks.)*
+
+## 4. Built-In Official `pkg install dog` (Upstream Termux)
+
+Once a version tag (`v0.3.0`) is pushed on GitHub:
 1. Fork [`termux/termux-packages`](https://github.com/termux/termux-packages).
-2. Copy `packaging/termux/build.sh` into `packages/dog/build.sh` and fill in `TERMUX_PKG_SHA256` for the `v0.1.0.tar.gz` release archive.
-3. Open a pull request to `termux/termux-packages`. Once merged, every Termux user can run `pkg install dog` directly with zero extra setup.
+2. Copy `packaging/termux/build.sh` into `packages/dog/build.sh` and fill in `TERMUX_PKG_SHA256` for the `v0.3.0.tar.gz` release archive.
+3. Open a pull request to `termux/termux-packages`.

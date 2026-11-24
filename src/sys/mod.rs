@@ -238,13 +238,6 @@ pub fn handle_docs(topic: Option<&str>) -> String {
                        dom_set_text(), dom_set_html(), dom_get_value(), dom_set_value(),\n\
                        dom_add_class(), dom_remove_class(), dom_toggle_class(), dom_set_style(),\n\
                        dom_on()\n\
-             Web/CSS : dog_css(), css_rule(), css_vars(), css_media(), css_keyframes(),\n\
-                       css_theme(), css_bundle(), html_el(), html_page(), web_nav(), web_card(),\n\
-                       web_grid(), web_button(), web_input(), web_title(), web_route(),\n\
-                       web_navigate(), web_storage_get(), web_storage_set(), dom_mount(),\n\
-                       dom_set_text(), dom_set_html(), dom_get_value(), dom_set_value(),\n\
-                       dom_add_class(), dom_remove_class(), dom_toggle_class(), dom_set_style(),\n\
-                       dom_on()\n\
              Errors  : assert(), fail()"
                 .to_string()
         }
@@ -800,22 +793,6 @@ fn collect_stmt_reads(stmt: &Stmt, used: &mut HashSet<String>) {
             }
             for s in body {
                 collect_stmt_reads(s, used);
-            }
-        }
-        Stmt::StyleDef {
-            selector,
-            rules,
-            variants,
-            ..
-        } => {
-            collect_expr_reads(selector, used);
-            for r in rules {
-                collect_expr_reads(&r.value, used);
-            }
-            for v in variants {
-                for r in &v.rules {
-                    collect_expr_reads(&r.value, used);
-                }
             }
         }
         Stmt::StyleDef {
@@ -1459,27 +1436,374 @@ pub fn handle_permissions() -> String {
     )
 }
 
+const GITHUB_CARGO_URL: &str =
+    "https://raw.githubusercontent.com/kaydankotze17-lang/Dog/main/Cargo.toml";
+const TERMUX_APT_BASE_URL: &str = "https://kaydankotze17-lang.github.io/Dog";
+
+fn parse_cargo_toml_version(raw: &str) -> Option<String> {
+    let mut in_package = false;
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_package = trimmed == "[package]";
+            continue;
+        }
+        if in_package && trimmed.starts_with("version") {
+            if let Some((_, rhs)) = trimmed.split_once('=') {
+                let cleaned = rhs.trim().trim_matches('"').trim_matches('\'');
+                if !cleaned.is_empty() {
+                    return Some(cleaned.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn parse_version_json(raw: &str) -> (Option<String>, Option<String>) {
+    if let Ok(crate::json::JsonValue::Object(map)) = crate::json::parse_json(raw) {
+        let ver = match map.get("version") {
+            Some(crate::json::JsonValue::Str(s)) => Some(s.clone()),
+            _ => None,
+        };
+        let deb = match map.get("deb_version") {
+            Some(crate::json::JsonValue::Str(s)) => Some(s.clone()),
+            _ => None,
+        };
+        return (ver, deb);
+    }
+    (None, None)
+}
+
+fn parse_semver_tuple(v: &str) -> (u64, u64, u64) {
+    let core = v
+        .trim()
+        .trim_start_matches('v')
+        .split(['-', '+'])
+        .next()
+        .unwrap_or("0.0.0");
+    let mut parts = core
+        .split('.')
+        .map(|s| s.parse::<u64>().unwrap_or(0));
+    (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    )
+}
+
+fn compare_semver(a: &str, b: &str) -> std::cmp::Ordering {
+    parse_semver_tuple(a).cmp(&parse_semver_tuple(b))
+}
+
+fn fetch_remote_text(url: &str) -> Result<String, String> {
+    let resp = crate::net::http_client_request_with_timeout("GET", url, &[], "", 8_000)?;
+    if resp.status >= 200 && resp.status < 300 {
+        Ok(resp.body)
+    } else {
+        Err(format!("HTTP {} from {url}", resp.status))
+    }
+}
+
+fn detect_termux_prefix() -> Option<String> {
+    if let Ok(prefix) = env::var("PREFIX") {
+        if prefix.contains("com.termux") {
+            return Some(prefix);
+        }
+    }
+    if Path::new("/data/data/com.termux/files/usr").is_dir() {
+        return Some("/data/data/com.termux/files/usr".to_string());
+    }
+    None
+}
+
+fn detect_termux_arch() -> &'static str {
+    if let Ok(out) = Command::new("dpkg").arg("--print-architecture").output() {
+        if out.status.success() {
+            let arch = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            return match arch.as_str() {
+                "aarch64" | "arm64" => "aarch64",
+                "arm" | "armhf" | "armv7l" => "arm",
+                "x86_64" | "amd64" => "x86_64",
+                _ => "aarch64",
+            };
+        }
+    }
+    match env::consts::ARCH {
+        "aarch64" => "aarch64",
+        "arm" => "arm",
+        "x86_64" => "x86_64",
+        _ => "aarch64",
+    }
+}
+
+fn read_installed_dog_version() -> Option<String> {
+    let out = Command::new("dog").arg("--version").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.split_whitespace().last().map(|s| s.to_string())
+}
+
+fn format_command_failure(label: &str, out: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() { stderr } else { stdout };
+    format!("{label} failed (exit {:?}): {detail}", out.status.code())
+}
+
+fn ensure_termux_apt_source(prefix: &str) -> Result<(), String> {
+    let list_dir = Path::new(prefix).join("etc").join("apt").join("sources.list.d");
+    fs::create_dir_all(&list_dir)
+        .map_err(|e| format!("Failed creating '{}': {e}", list_dir.display()))?;
+    let list_file = list_dir.join("dog.list");
+    let expected = format!("deb [trusted=yes] {TERMUX_APT_BASE_URL} termux main\n");
+    let current = fs::read_to_string(&list_file).unwrap_or_default();
+    if current != expected {
+        fs::write(&list_file, expected)
+            .map_err(|e| format!("Failed writing '{}': {e}", list_file.display()))?;
+    }
+    Ok(())
+}
+
+fn upgrade_via_termux_deb_direct(arch: &str, epoch: u64) -> Result<String, String> {
+    let url = format!("{TERMUX_APT_BASE_URL}/latest/dog_latest_{arch}.deb?t={epoch}");
+    let tmp_dir = env::var("TMPDIR")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(env::temp_dir);
+    let _ = fs::create_dir_all(&tmp_dir);
+    let deb_path = tmp_dir.join(format!("dog_latest_{arch}.deb"));
+
+    let bytes = match crate::net::http_download_bytes(&url, |_| {}) {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            let status = Command::new("curl")
+                .args(["-fsSL", &url, "-o"])
+                .arg(&deb_path)
+                .status()
+                .map_err(|e| format!("Failed downloading latest .deb ({url}): {e}"))?;
+            if !status.success() {
+                return Err(format!("Failed downloading latest .deb from {url}"));
+            }
+            fs::read(&deb_path)
+                .map_err(|e| format!("Failed reading downloaded .deb '{}': {e}", deb_path.display()))?
+        }
+    };
+
+    fs::write(&deb_path, &bytes)
+        .map_err(|e| format!("Failed writing '{}': {e}", deb_path.display()))?;
+
+    let dpkg_out = Command::new("dpkg")
+        .arg("-i")
+        .arg(&deb_path)
+        .output()
+        .map_err(|e| format!("Failed running dpkg -i: {e}"))?;
+    let _ = fs::remove_file(&deb_path);
+    if !dpkg_out.status.success() {
+        let _ = Command::new("apt-get").args(["install", "-f", "-y"]).status();
+        return Err(format_command_failure("dpkg -i", &dpkg_out));
+    }
+
+    let now_ver = read_installed_dog_version().unwrap_or_else(|| "updated".to_string());
+    Ok(format!("Installed latest Termux .deb directly ({arch}) -> dog {now_ver}"))
+}
+
 pub fn handle_update() -> String {
-    let version = env!("CARGO_PKG_VERSION");
-    let is_termux = env::var("PREFIX").is_ok_and(|p| p.contains("com.termux"));
-    let mut msg = format!("Current DOG CLI version: {version}\n");
-    if is_termux {
-        msg.push_str(
-            "Termux APT update : pkg update && pkg upgrade -y dog\n\
-             Direct DOG upgrade (bypasses syncing Termux mirrors):\n\
-               apt-get update -o Dir::Etc::sourcelist=\"sources.list.d/dog.list\" -o Dir::Etc::sourceparts=\"-\" -o APT::Get::List-Cleanup=\"0\" && apt-get install --only-upgrade -y dog\n",
+    match handle_update_exec(&["--check".to_string()]) {
+        Ok(s) => s,
+        Err(e) => e,
+    }
+}
+
+pub fn handle_update_exec(args: &[String]) -> Result<String, String> {
+    let check_only = args.iter().any(|a| a == "--check" || a == "-c");
+    let force = args.iter().any(|a| a == "--force" || a == "-f");
+    let from_source = args.iter().any(|a| a == "--from-source" || a == "--source");
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        return Ok(
+            "DOG Updater\n\
+             -----------\n\
+             Usage:\n\
+               dog update              Check GitHub/APT and install the newest version\n\
+               dog update --check      Compare installed version vs GitHub main & Termux APT\n\
+               dog update --force      Reinstall the latest package even if versions match\n\
+               dog update --from-source Build & install directly from source with Cargo"
+                .to_string(),
         );
     }
-    if Path::new(".git").exists() {
-        if let Ok(out) = Command::new("git").args(["status", "-sb"]).output() {
-            let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            msg.push_str(&format!("Local git checkout : {branch}\n"));
+
+    let installed = env!("CARGO_PKG_VERSION");
+    let epoch = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let github_ver = fetch_remote_text(GITHUB_CARGO_URL)
+        .ok()
+        .and_then(|s| parse_cargo_toml_version(&s));
+    let version_json_url = format!("{TERMUX_APT_BASE_URL}/version.json?t={epoch}");
+    let (pages_ver, pages_deb) = fetch_remote_text(&version_json_url)
+        .ok()
+        .map(|s| parse_version_json(&s))
+        .unwrap_or((None, None));
+
+    let termux_prefix = detect_termux_prefix();
+    let arch = detect_termux_arch();
+
+    let mut report = format!(
+        "DOG Version Check\n\
+         -----------------\n\
+         Installed     : {installed}\n\
+         GitHub main   : {}\n\
+         Termux APT    : {}\n",
+        github_ver.as_deref().unwrap_or("(offline / unreachable)"),
+        match (&pages_ver, &pages_deb) {
+            (Some(v), Some(d)) => format!("{v} (deb {d})"),
+            (Some(v), None) => v.clone(),
+            _ => "(waiting for gh-pages / unreachable)".to_string(),
         }
-        msg.push_str("To update from source: git pull && cargo install --path .");
-    } else if !is_termux {
-        msg.push_str("Update from source: `git pull && cargo install --path .`");
+    );
+
+    let remote_newest = github_ver
+        .as_deref()
+        .or(pages_ver.as_deref());
+    let has_newer = remote_newest
+        .is_some_and(|rv| compare_semver(rv, installed).is_gt())
+        || pages_ver
+            .as_deref()
+            .is_some_and(|pv| compare_semver(pv, installed).is_gt());
+
+    if check_only {
+        if has_newer {
+            report.push_str("\nUpdate available! Run `dog update` to upgrade automatically.");
+        } else {
+            report.push_str(&format!(
+                "\nYou are on {installed}. Run `dog update --force` to reinstall the latest build."
+            ));
+        }
+        return Ok(report);
     }
-    msg
+
+    if !force && !has_newer && (github_ver.is_some() || pages_ver.is_some()) {
+        report.push_str(&format!(
+            "\nDOG is already up to date (v{installed}). Run `dog update --force` to reinstall."
+        ));
+        return Ok(report);
+    }
+
+    if let Some(prefix) = termux_prefix {
+        if !from_source {
+            ensure_termux_apt_source(&prefix)?;
+            // Sync ONLY dog.list with caching disabled so slow/broken upstream Termux mirrors never error out.
+            let apt_update = Command::new("apt-get")
+                .args([
+                    "update",
+                    "-o",
+                    "Dir::Etc::sourcelist=sources.list.d/dog.list",
+                    "-o",
+                    "Dir::Etc::sourceparts=-",
+                    "-o",
+                    "APT::Get::List-Cleanup=0",
+                    "-o",
+                    "Acquire::http::No-Cache=true",
+                    "-o",
+                    "Acquire::Https::No-Cache=true",
+                ])
+                .output();
+
+            let mut apt_upgraded = false;
+            if let Ok(up) = apt_update {
+                if up.status.success() {
+                    if let Ok(inst) = Command::new("apt-get")
+                        .args([
+                            "install",
+                            "-y",
+                            "--reinstall",
+                            "--allow-downgrades",
+                            "-o",
+                            "Acquire::http::No-Cache=true",
+                            "-o",
+                            "Acquire::Https::No-Cache=true",
+                            "dog",
+                        ])
+                        .output()
+                    {
+                        if inst.status.success() {
+                            let after = read_installed_dog_version().unwrap_or_default();
+                            let stale_vs_pages = pages_ver
+                                .as_deref()
+                                .is_some_and(|pv| !after.is_empty() && compare_semver(pv, &after).is_gt());
+                            if !stale_vs_pages {
+                                apt_upgraded = true;
+                                report.push_str(&format!(
+                                    "\nUpgraded via isolated DOG Termux APT (no upstream mirror errors) -> dog {after}\n"
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !apt_upgraded {
+                match upgrade_via_termux_deb_direct(arch, epoch) {
+                    Ok(line) => report.push_str(&format!("\n{line}\n")),
+                    Err(deb_err) => {
+                        return Err(format!(
+                            "{report}\nAutomatic Termux upgrade failed: {deb_err}\n\
+                             One-line installer fallback:\n  curl -sSL {TERMUX_APT_BASE_URL}/update.sh | bash"
+                        ));
+                    }
+                }
+            }
+
+            if let (Some(gv), Some(pv)) = (&github_ver, &pages_ver) {
+                if compare_semver(gv, pv).is_gt() {
+                    report.push_str(&format!(
+                        "\nNote: GitHub main is at v{gv}, while Termux APT currently hosts v{pv}.\n\
+                         Wait ~2 minutes for GitHub Actions to publish v{gv}, or run `dog update --from-source`."
+                    ));
+                }
+            }
+            return Ok(report);
+        }
+    }
+
+    // Source upgrade path (local git repo or Cargo git install)
+    if Path::new("Cargo.toml").is_file() && Path::new(".git").exists() {
+        let pull = Command::new("git")
+            .args(["pull", "--ff-only"])
+            .output()
+            .map_err(|e| format!("{report}\nFailed running `git pull`: {e}"))?;
+        if !pull.status.success() {
+            return Err(format!("{report}\n{}", format_command_failure("git pull --ff-only", &pull)));
+        }
+        let cargo = Command::new("cargo")
+            .args(["install", "--path", ".", "--force"])
+            .output()
+            .map_err(|e| format!("{report}\nFailed running `cargo install`: {e}"))?;
+        if !cargo.status.success() {
+            return Err(format!("{report}\n{}", format_command_failure("cargo install --path . --force", &cargo)));
+        }
+    } else {
+        let cargo = Command::new("cargo")
+            .args([
+                "install",
+                "--git",
+                "https://github.com/kaydankotze17-lang/Dog.git",
+                "--force",
+            ])
+            .output()
+            .map_err(|e| format!("{report}\nFailed running `cargo install`: {e}"))?;
+        if !cargo.status.success() {
+            return Err(format!("{report}\n{}", format_command_failure("cargo install --git", &cargo)));
+        }
+    }
+
+    let now_ver = read_installed_dog_version().unwrap_or_else(|| "latest".to_string());
+    report.push_str(&format!("\nUpdated from source -> dog {now_ver}"));
+    Ok(report)
 }
 
 pub fn handle_clean() -> String {
@@ -2021,22 +2345,6 @@ fn collect_std_namespaces_in_stmt(stmt: &Stmt, out: &mut BTreeSet<String>) {
                 }
             }
         }
-        Stmt::StyleDef {
-            selector,
-            rules,
-            variants,
-            ..
-        } => {
-            collect_std_namespaces_in_expr(selector, out);
-            for r in rules {
-                collect_std_namespaces_in_expr(&r.value, out);
-            }
-            for v in variants {
-                for r in &v.rules {
-                    collect_std_namespaces_in_expr(&r.value, out);
-                }
-            }
-        }
         Stmt::Return { value: Some(e), .. } | Stmt::ExprStmt { expr: e, .. } => {
             collect_std_namespaces_in_expr(e, out);
         }
@@ -2178,9 +2486,6 @@ pub fn handle_explain(target: &str) -> Result<String, String> {
     }
     if source.contains("exec_cmd") {
         caps.push("Subprocess Execution");
-    }
-    if source.contains("dom_") || source.contains("html_") || source.contains("web_") || source.contains("style \"") || source.contains("css_") {
-        caps.push("DOG Web & CSS UI");
     }
     if source.contains("dom_") || source.contains("html_") || source.contains("web_") || source.contains("style \"") || source.contains("css_") {
         caps.push("DOG Web & CSS UI");

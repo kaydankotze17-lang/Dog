@@ -25,6 +25,7 @@ jobs:
         run: |
           CARGO_VER=$(grep '^version =' Cargo.toml | head -n1 | cut -d'"' -f2)
           DEB_VER="${CARGO_VER}-${{ github.run_number }}"
+          echo "cargo_version=${CARGO_VER}" >> "$GITHUB_OUTPUT"
           echo "version=${DEB_VER}" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust & Android targets
@@ -45,7 +46,7 @@ jobs:
           set -euo pipefail
           NDK_BIN="${ANDROID_NDK_LATEST_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
           chmod +x packaging/termux/build-deb.sh
-          mkdir -p apt-repo/pool/main/d/dog
+          mkdir -p apt-repo/pool/main/d/dog apt-repo/latest
 
           # 1. aarch64 (64-bit ARM Android)
           CC_aarch64_linux_android="${NDK_BIN}/aarch64-linux-android24-clang" \
@@ -55,6 +56,8 @@ jobs:
           ./packaging/termux/build-deb.sh aarch64 "${{ steps.meta.outputs.version }}" \
             target/aarch64-linux-android/release/dog \
             "apt-repo/pool/main/d/dog/dog_${{ steps.meta.outputs.version }}_aarch64.deb"
+          cp "apt-repo/pool/main/d/dog/dog_${{ steps.meta.outputs.version }}_aarch64.deb" \
+            "apt-repo/latest/dog_latest_aarch64.deb"
 
           # 2. arm (32-bit ARMv7 Android)
           CC_armv7_linux_androideabi="${NDK_BIN}/armv7a-linux-androideabi24-clang" \
@@ -64,6 +67,8 @@ jobs:
           ./packaging/termux/build-deb.sh arm "${{ steps.meta.outputs.version }}" \
             target/armv7-linux-androideabi/release/dog \
             "apt-repo/pool/main/d/dog/dog_${{ steps.meta.outputs.version }}_arm.deb"
+          cp "apt-repo/pool/main/d/dog/dog_${{ steps.meta.outputs.version }}_arm.deb" \
+            "apt-repo/latest/dog_latest_arm.deb"
 
           # 3. x86_64 (Android emulators / Chromebooks)
           CC_x86_64_linux_android="${NDK_BIN}/x86_64-linux-android24-clang" \
@@ -73,10 +78,23 @@ jobs:
           ./packaging/termux/build-deb.sh x86_64 "${{ steps.meta.outputs.version }}" \
             target/x86_64-linux-android/release/dog \
             "apt-repo/pool/main/d/dog/dog_${{ steps.meta.outputs.version }}_x86_64.deb"
+          cp "apt-repo/pool/main/d/dog/dog_${{ steps.meta.outputs.version }}_x86_64.deb" \
+            "apt-repo/latest/dog_latest_x86_64.deb"
 
-      - name: Generate Termux APT Repository Index
+      - name: Generate Termux APT Repository Index & Updater Metadata
         run: |
           set -euo pipefail
+          cp packaging/termux/setup-apt.sh apt-repo/update.sh
+          chmod +x apt-repo/update.sh
+
+          cat > apt-repo/version.json <<EOF
+          {
+            "version": "${{ steps.meta.outputs.cargo_version }}",
+            "deb_version": "${{ steps.meta.outputs.version }}",
+            "sha": "${{ github.sha }}"
+          }
+          EOF
+
           cd apt-repo
           for arch in aarch64 arm x86_64; do
             mkdir -p "dists/termux/main/binary-${arch}"
@@ -96,9 +114,11 @@ jobs:
           cat > index.html <<EOF
           <!doctype html>
           <html><body>
-          <h1>DOG Language Termux APT Repository</h1>
-          <pre>echo "deb [trusted=yes] https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }} termux main" &gt; \$PREFIX/etc/apt/sources.list.d/dog.list
-          pkg update &amp;&amp; pkg install -y dog</pre>
+          <h1>DOG Language Termux APT Repository (v${{ steps.meta.outputs.cargo_version }})</h1>
+          <p>Install or force-upgrade cleanly without upstream mirror errors:</p>
+          <pre>curl -sSL https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/update.sh | bash</pre>
+          <p>Or once installed, run:</p>
+          <pre>dog update</pre>
           </body></html>
           EOF
 

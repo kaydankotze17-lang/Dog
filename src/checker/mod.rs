@@ -885,59 +885,6 @@ impl TypeChecker {
                 }
                 Ok(())
             }
-            Stmt::StyleDef {
-                selector,
-                rules,
-                variants,
-                span,
-            } => {
-                let sel_ty = self.check_expr(selector)?;
-                if sel_ty != DogType::Text {
-                    return Err(DogDiagnostic::new(
-                        "E021",
-                        "CSS selector in 'style' block must be text.",
-                        span.clone(),
-                        format!("Expected 'text' selector, got '{sel_ty}'."),
-                        "Write e.g. `style \".card\" ... end` or `style \"#hero\" ... end`.",
-                        "Style selectors identify DOM targets using CSS selector strings.",
-                        "A CSS selector needs to be text.",
-                    )
-                    .with_types("text", sel_ty.label()));
-                }
-                for rule in rules {
-                    let val_ty = self.check_expr(&rule.value)?;
-                    if val_ty == DogType::Void {
-                        return Err(DogDiagnostic::new(
-                            "E021",
-                            format!("Style property '{}' cannot use a 'void' expression.", rule.prop),
-                            rule.span.clone(),
-                            "Every style rule value must produce a concrete printable value.",
-                            "Provide a text, number, decimal, or bool value.",
-                            "Example: `bg: \"#FFFFFF\"`.",
-                            "Cannot paint pixels with void.",
-                        )
-                        .with_types("value", "void"));
-                    }
-                }
-                for var in variants {
-                    for rule in &var.rules {
-                        let val_ty = self.check_expr(&rule.value)?;
-                        if val_ty == DogType::Void {
-                            return Err(DogDiagnostic::new(
-                                "E021",
-                                format!("Style property '{}' cannot use a 'void' expression.", rule.prop),
-                                rule.span.clone(),
-                                "Every style rule value must produce a concrete printable value.",
-                                "Provide a text, number, decimal, or bool value.",
-                                "Example: `bg: \"#F8FAFC\"`.",
-                                "Cannot paint pixels with void.",
-                            )
-                            .with_types("value", "void"));
-                        }
-                    }
-                }
-                Ok(())
-            }
             Stmt::Return { value, span } => {
                 let Some(expected) = self.current_return_type.clone() else {
                     return Err(DogDiagnostic::new(
@@ -3532,17 +3479,19 @@ impl TypeChecker {
                 Ok(DogType::Text)
             }
             "css_bundle" => {
-                if arg_types.len() != 1 {
+                if arg_types.len() > 1 {
                     return Err(arity_error(callee, 1, arg_types.len(), span));
                 }
-                let expected = DogType::List(Box::new(DogType::Text));
-                if arg_types[0] != expected {
-                    return Err(type_err(
-                        "list<text>",
-                        &arg_types[0].label(),
-                        span,
-                        "css_bundle() expects list<text>.",
-                    ));
+                if arg_types.len() == 1 {
+                    let expected = DogType::List(Box::new(DogType::Text));
+                    if arg_types[0] != expected {
+                        return Err(type_err(
+                            "list<text>",
+                            &arg_types[0].label(),
+                            span,
+                            "css_bundle() expects 0 arguments or list<text>.",
+                        ));
+                    }
                 }
                 Ok(DogType::Text)
             }
