@@ -40,6 +40,12 @@ pub struct DogPack {
 }
 
 impl DogPack {
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let raw = fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read '{}': {e}", path.display()))?;
+        Self::parse(&raw)
+    }
+
     pub fn parse(raw: &str) -> Result<Self, String> {
         let mut pack = Self {
             name: "dog-app".to_string(),

@@ -429,7 +429,7 @@ pub fn http_status_text(code: i64) -> &'static str {
         410 => "Gone",
         413 => "Payload Too Large",
         415 => "Unsupported Media Type",
-        418 => "I'm a Teapot",
+        418 => "I'm a teapot",
         422 => "Unprocessable Entity",
         429 => "Too Many Requests",
         500 => "Internal Server Error",

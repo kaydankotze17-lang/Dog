@@ -1752,7 +1752,7 @@ pub fn handle_update_exec(args: &[String]) -> Result<String, String> {
                     Err(deb_err) => {
                         return Err(format!(
                             "{report}\nAutomatic Termux upgrade failed: {deb_err}\n\
-                             One-line installer fallback:\n  curl -sSL {TERMUX_APT_BASE_URL}/update.sh | bash"
+                             One-line installer fallback:\n  curl -fsSL {TERMUX_APT_BASE_URL}/update.sh | bash"
                         ));
                     }
                 }

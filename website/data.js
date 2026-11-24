@@ -506,7 +506,7 @@ export const INSTALL_METHODS = [
     id: "termux_apt",
     label: "Android Termux (APT & Updater)",
     subtitle: "Zero-error Termux install & upgrade script (bypasses broken Termux mirrors, clears APT cache, and auto-installs the newest .deb).",
-    commands: `curl -sSL https://kaydankotze17-lang.github.io/Dog/update.sh | bash
+    commands: `curl -fsSL https://kaydankotze17-lang.github.io/Dog/update.sh | bash
 dog --version
 dog learn`,
     altLabel: "Once installed, upgrade anytime straight from DOG (or check GitHub vs APT):",

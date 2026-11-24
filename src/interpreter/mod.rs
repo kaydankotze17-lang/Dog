@@ -398,7 +398,7 @@ impl<'a> Interpreter<'a> {
                     let v = self.eval_expr(&r.value)?.to_string();
                     pairs.push((r.prop.clone(), v));
                 }
-                crate::web::register_style_rule(None, &sel, &pairs);
+                crate::web::register_style_rule(None, &sel, pairs);
                 for var in variants {
                     let mut v_pairs = Vec::with_capacity(var.rules.len());
                     for r in &var.rules {
@@ -406,12 +406,12 @@ impl<'a> Interpreter<'a> {
                         v_pairs.push((r.prop.clone(), v));
                     }
                     if let Some(q) = var.condition.strip_prefix("@media ") {
-                        crate::web::register_style_rule(Some(q), &sel, &v_pairs);
+                        crate::web::register_style_rule(Some(q.to_string()), &sel, v_pairs);
                     } else if var.condition.starts_with(':') {
                         let target_sel = format!("{sel}{}", var.condition);
-                        crate::web::register_style_rule(None, &target_sel, &v_pairs);
+                        crate::web::register_style_rule(None, &target_sel, v_pairs);
                     } else {
-                        crate::web::register_style_rule(None, &sel, &v_pairs);
+                        crate::web::register_style_rule(None, &sel, v_pairs);
                     }
                 }
                 Ok(ExecFlow::Next)

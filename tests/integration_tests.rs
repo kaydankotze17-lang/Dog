@@ -1979,17 +1979,21 @@ assert(contains(css_bundle(), ".panel:hover"), "inline style rules populate css_
     assert!(bundle.js.contains("__dogWeb.styleMedia(\"(max-width: 640px)\", \".panel\""));
     assert!(bundle.index_html.contains("var(--bg)"));
 
-    let out_dir = temp_file("dog_web_disk_dist");
-    let dg_path = temp_file("dog_web_disk_app.dg");
+    let dir = env::temp_dir().join("dog_web_disk_test");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let out_dir = dir.join("dist");
+    let dg_path = dir.join("app.dg");
     fs::write(&dg_path, src).expect("write temp dg");
-    let art = dog_lang::web::build_web_bundle_to_disk(
+    let (written_dir, art) = dog_lang::web::build_web_bundle_to_disk(
         dg_path.to_str().unwrap(),
         Some(out_dir.to_str().unwrap()),
     )
     .expect("build_web_bundle_to_disk writes dist files");
-    assert!(art.index_html_path.exists());
-    assert!(art.css_path.exists());
-    assert!(art.js_path.exists());
-    let _ = fs::remove_dir_all(&out_dir);
-    let _ = fs::remove_file(&dg_path);
+    assert_eq!(written_dir, out_dir);
+    assert!(out_dir.join("index.html").exists());
+    assert!(out_dir.join("styles.css").exists());
+    assert!(out_dir.join("app.js").exists());
+    assert!(!art.index_html.is_empty() && !art.styles_css.is_empty() && !art.app_js.is_empty());
+    let _ = fs::remove_dir_all(&dir);
 }

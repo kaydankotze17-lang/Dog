@@ -4,7 +4,7 @@ set -euo pipefail
 # One-step Termux installer & cache-free updater for DOG (`dog`).
 # Syncs ONLY the DOG APT list first (avoiding slow/broken upstream Termux mirrors)
 # and falls back to downloading latest/dog_latest_<arch>.deb directly if APT is stale.
-# Usage: curl -sSL https://kaydankotze17-lang.github.io/Dog/update.sh | bash
+# Usage: curl -fsSL https://kaydankotze17-lang.github.io/Dog/update.sh | bash
 
 GH_USER="${1:-kaydankotze17-lang}"
 GH_REPO="${2:-Dog}"

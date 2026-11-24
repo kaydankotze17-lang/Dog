@@ -128,12 +128,27 @@ pub fn run() {
             }
             if web {
                 match build_web_bundle_to_disk(input, out_path) {
-                    Ok(art) => messenger.success(&format!(
-                        "Built DOG web bundle: {} (+ {}, {})",
-                        art.index_html_path.display(),
-                        art.css_path.display(),
-                        art.js_path.display()
-                    )),
+                    Ok((target, _art)) => {
+                        let is_single_html = target
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .is_some_and(|e| {
+                                e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm")
+                            });
+                        if is_single_html {
+                            messenger.success(&format!(
+                                "Built single-file DOG web bundle: {}",
+                                target.display()
+                            ));
+                        } else {
+                            messenger.success(&format!(
+                                "Built DOG web bundle: {} (+ {}, {})",
+                                target.join("index.html").display(),
+                                target.join("styles.css").display(),
+                                target.join("app.js").display()
+                            ));
+                        }
+                    }
                     Err(e) => {
                         messenger.error(&e);
                         process::exit(1);

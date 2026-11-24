@@ -659,7 +659,7 @@ impl EditorBuffer {
                 format!("{pad}        bg: \"#F8FAFC\""),
                 format!("{pad}    end"),
                 format!("{pad}end"),
-                format!("{pad}dom_mount(\"#app\", web_card(\"Hello DOG Web\", \"Built without raw JS or CSS!\", \"<button id=\\\"btn\\\">Click</button>\"))"),
+                format!("{pad}dom_mount(\"#app\", web_card(\"Hello DOG Web\", $\"Built without raw CSS or JS! {{web_button(\\\"btn\\\", \\\"Click\\\")}}\"))"),
             ],
             _ => return false,
         };

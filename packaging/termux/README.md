@@ -7,7 +7,7 @@ This directory contains everything needed to distribute `dog` as a Termux `.deb`
 Run the standalone DOG updater (it syncs ONLY DOG's APT index with caching disabled so broken Termux mirrors never cause errors, and falls back directly to `latest/dog_latest_<arch>.deb` if APT serves a stale version):
 
 ```bash
-curl -sSL https://kaydankotze17-lang.github.io/Dog/update.sh | bash
+curl -fsSL https://kaydankotze17-lang.github.io/Dog/update.sh | bash
 ```
 
 Once installed, upgrade anytime straight from DOG itself:

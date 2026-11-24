@@ -30,8 +30,8 @@ mkdir -p "$STAGE_DIR/DEBIAN" "$TERMUX_BIN_DIR" "$TERMUX_EX_DIR"
 cp "$BIN_PATH" "$TERMUX_BIN_DIR/dog"
 chmod 0755 "$TERMUX_BIN_DIR/dog"
 if [ -d "examples" ]; then
-    cp examples/*.dg "$TERMUX_EX_DIR/" 2>/dev/null || true
-    chmod 0644 "$TERMUX_EX_DIR"/*.dg 2>/dev/null || true
+    cp examples/*.dg examples/*.dgss "$TERMUX_EX_DIR/" 2>/dev/null || true
+    chmod 0644 "$TERMUX_EX_DIR"/*.dg "$TERMUX_EX_DIR"/*.dgss 2>/dev/null || true
 fi
 
 INSTALLED_KB="$(du -sk "$STAGE_DIR/data" | awk '{print $1}')"

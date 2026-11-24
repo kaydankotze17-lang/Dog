@@ -56,7 +56,7 @@ cargo run -- run examples/hello.dg
 Once you push this repo to `https://github.com/kaydankotze17-lang/Dog` and enable **Settings → Pages → Branch: `gh-pages`**, `.github/workflows/termux-apt.yml` automatically cross-compiles `dog` for `aarch64`, `arm` (ARMv7), and `x86_64` into `.deb` packages:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/kaydankotze17-lang/Dog/main/packaging/termux/setup-apt.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kaydankotze17-lang/Dog/main/packaging/termux/setup-apt.sh | bash
 dog run examples/hello.dg
 ```
 
