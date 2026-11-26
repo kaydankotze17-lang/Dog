@@ -1,4 +1,4 @@
-# DOG Standard Library (v0.3.0)
+# DOG Standard Library (v1.0.0)
 
 ## Modular Standard Library (`std.*`)
 DOG organizes all standard functionality into 12 discoverable namespaces while preserving 100% compatibility with flat global built-ins:
@@ -15,12 +15,12 @@ std.io.say($"Hello, {std.text.upper(name)}")
 - `std.files` — Filesystem I/O and path utilities (`read`, `write`, `append`, `exists`, `delete`, `copy`, `move`, `size`, `is_file`, `is_dir`, `list`, `mkdir`, `rmdir`, `join`, `dirname`, `basename`, `ext`, `temp_dir`, `cwd`)
 - `std.net` — HTTP/HTTPS client & server, WebSockets, raw TCP/UDP, DNS, URLs, cookies (`http_*`, `ws_*`, `tcp_*`, `udp_*`, `dns_lookup`, `local_ip`, `port_is_open`, `url_*`, `query_*`, `cookie_parse`)
 - `std.system` — Args, env, `.env` loading, subprocesses, timestamps, UUIDs, assertions (`args`, `env_get`, `env_set`, `env_load`, `exec`, `os_name`, `os_arch`, `time_now_ms`, `time_utc`, `time_format`, `sleep_ms`, `uuid_v4`, `assert`, `fail`)
-- `std.data` — JSON, TOML, CSV parsing/writing, and persistent KV store (`json_parse`, `json_stringify`, `json_pretty`, `json_has_key`, `json_read`, `json_write`, `toml_parse`, `csv_parse`, `csv_stringify`, `kv_*`)
-- `std.crypto` — Hashing, HMAC-SHA256, Hex, Base64/Base64URL, CSPRNG tokens (`hex_*`, `base64_*`, `base64_url_*`, `sha1`, `sha256`, `sha512`, `hmac_sha256`, `hmac_sha256_verify`, `rand_bytes_hex`)
+- `std.data` — JSON, TOML, CSV parsing/writing, embedded SQLite (`db_*`, `query_builder`), and persistent KV store (`json_*`, `toml_parse`, `csv_*`, `kv_*`)
+- `std.crypto` — Hashing, HMAC-SHA256, PBKDF2 password hashing, AES-256-CTR-HMAC, Ed25519 signatures, Hex, Base64/Base64URL, CSPRNG (`sha*`, `hmac_*`, `password_*`, `encrypt_aes256`, `decrypt_aes256`, `ed25519_*`)
 - `std.cli` — Themed CLI messaging, spinners, progress bars, capability detection (`info`, `success`, `warn`, `error`, `debug`, `progress`, `spinner`, `theme`, `prefix`, `timestamps`, `supports_color`, `is_tty`)
-- `std.collections` — Lists, deduplication, reductions, and maps (`push`, `pop`, `insert_at`, `remove_at`, `clear`, `sort`, `reverse`, `list_*`, `range`, `map_*`, `len`)
-- `std.css` — DOG Style Sheets (`.dgss` DSL with `vars`, `rule`, `on hover/mobile`, `animate`, shorthand tokens like `bg:`, `ink:`, `pad:`, `cols:`) and typed CSS builders (`dog_css`, `css_rule`, `css_vars`, `css_media`, `css_keyframes`, `css_theme`, `css_bundle`)
-- `std.web` — Client-side interactive DOM manipulation, events, localStorage, routing, and safe HTML builders (`html_el`, `html_page`, `web_nav`, `web_card`, `web_grid`, `web_button`, `web_input`, `dom_mount`, `dom_set_text`, `dom_set_html`, `dom_get_value`, `dom_set_value`, `dom_add_class`, `dom_remove_class`, `dom_toggle_class`, `dom_set_style`, `dom_on`, `web_title`, `web_storage_set`, `web_storage_get`, `web_route`, `web_navigate`)
+- `std.collections` — Lists, lambdas/closures (`map`, `filter`, `reduce`, `list_find`, `list_any`, `list_all`), slices (`[a..b]`), deduplication, reductions, and maps (`push`, `pop`, `insert_at`, `remove_at`, `clear`, `sort`, `reverse`, `list_*`, `range`, `map_*`, `len`)
+- `std.css` — DOG Style Sheets (`.dgss` DSL with `vars`, `rule`, `extend:`, CSS tree-shaking, `on hover/mobile`, `animate`, shorthands) and typed CSS builders (`dog_css`, `css_rule`, `css_vars`, `css_media`, `css_keyframes`, `css_theme`, `css_bundle`)
+- `std.web` — Client-side interactive DOM manipulation, reactive state/components, event delegation, localStorage, routing, and safe HTML builders (`dom_*`, `web_component`, `web_render_component`, `web_state_*`, `web_on_state`, `dom_delegate`, `web_tabs`, `web_modal`, `web_form`, `web_field`)
 
 Run `dog docs std`, `dog docs std.<module>`, or `dog web build app.dg` from any terminal to browse live exports or compile websites.
 
@@ -154,11 +154,18 @@ Run `dog docs std`, `dog docs std.<module>`, or `dog web build app.dg` from any 
   - `dom_set_style(selector: text, prop: text, val: text) -> void`, `dom_on(selector: text, event: text, handler_fn: text) -> void`
   - `web_title(title: text) -> void`, `web_route() -> text`, `web_navigate(path: text) -> void`
   - `web_storage_set(key: text, val: text) -> void`, `web_storage_get(key: text) -> text`
-- **HTML UI Builders (`std.web`)**:
+- **HTML UI & Reactive Component Builders (`std.web`)**:
   - `html_el(tag: text, attrs: map<text, text>, inner: text) -> text`, `html_page(title: text, css: text, body: text) -> text`
-  - `web_nav(brand: text, links: list<text>) -> text`, `web_card(title: text, body: text, footer: text) -> text`
-  - `web_grid(cols: number, gap: text, items: list<text>) -> text`, `web_button(id: text, label: text, variant: text = "primary") -> text`, `web_input(id: text, placeholder: text, value: text = "") -> text`
+  - `web_nav(brand: text, links: list<text>) -> text`, `web_card(title: text, body: text) -> text`
+  - `web_grid(cols: number, gap: text, items: list<text>) -> text`, `web_button(id: text, label: text) -> text`, `web_input(id: text, placeholder: text, value: text = "") -> text`
+  - `web_component(name: text, fn_name: text) -> void`, `web_render_component(name: text, props: map) -> text`
+  - `web_state_set(key: text, val: any) -> any`, `web_state_get(key: text, fallback?: any) -> any`, `web_on_state(key: text, fn_name: text) -> void`
+  - `dom_delegate(root_sel: text, child_sel: text, event: text, fn_name: text) -> void`, `web_tabs(id: text, tabs: map, active: text) -> text`, `web_modal(id: text, title: text, body: text) -> text`
 - **DOG CSS Functions (`std.css`)**:
-  - `dog_css(dsl: text) -> text`, `css_rule(selector: text, props: map<text, text>) -> text`, `css_vars(vars: map<text, text>) -> text`
+  - `dog_css(dsl: text) -> text` (supports `extend: .rule`, `on hover/mobile`, `vars`, shorthands, and `--tree-shake` optimization), `css_rule(selector: text, props: map<text, text>) -> text`, `css_vars(vars: map<text, text>) -> text`
   - `css_media(query: text, selector: text, props: map<text, text>) -> text`, `css_keyframes(name: text, frames: map<text, text>) -> text`
   - `css_theme(bg: text, ink: text, accent: text) -> text`, `css_bundle() -> text`
+- **SQLite, Concurrency & Extended Crypto (`std.data`, `std.crypto`, `std.net`)**:
+  - SQLite: `db_open(path) -> db`, `db_exec(db, sql, params?) -> number`, `db_query(db, sql, params?) -> list<map>`, `db_insert(db, table, row) -> map`, `db_begin` / `db_commit` / `db_rollback`, `db_tables`, `db_schema`, `db_backup`, `query_builder`
+  - Crypto: `password_hash(pw, salt?) -> text`, `password_verify(pw, hash) -> bool`, `encrypt_aes256(key, plain) -> text`, `decrypt_aes256(key, cipher) -> text`, `ed25519_keypair(seed?) -> map`, `ed25519_sign(priv, msg) -> text`, `ed25519_verify(pub, msg, sig) -> bool`
+  - Tasks & HTTP: `spawn_task(fn, ...args) -> task`, `await_task(id) -> any`, `await_all(ids) -> list`, `channel_create / send / recv`, `atomic_create / add / get`, `http_req`, `http_res`, `http_route_group`, `http_rate_limit_check`, `openapi_spec`

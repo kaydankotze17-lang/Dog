@@ -1,0 +1,46 @@
+# End-to-End DOG Standard Library Showcase (v1.0.0)
+# Exercises std.text, std.math, std.collections, std.crypto, std.data, std.net, std.files, and testing utilities
+
+use "std.text"
+use "std.math"
+use "std.collections"
+use "std.crypto"
+use "std.data"
+use "std.net"
+use "std.files"
+
+type UserId = text
+
+define normalize_tag(raw: text) returns text
+    return lower(trim(raw))
+end
+
+define double_val(n: number) returns number
+    return n * 2
+end
+
+let raw_tag = "  Release-Candidate  "
+let clean_tag = normalize_tag(raw_tag)
+assert_eq(clean_tag, "release-candidate", "text normalization")
+
+let scores = [3, 1, 4, 1, 5]
+let uniq = list_unique(scores)
+let doubled = map(uniq, "double_val")
+assert_eq(list_sum(doubled), 26, "functional map sum after deduplication")
+
+let secret = "dog-signing-key"
+let msg = $"tag={clean_tag}"
+let digest = sha256(msg)
+let sig = hmac_sha256(secret, msg)
+assert(hmac_sha256_verify(secret, msg, sig), "HMAC-SHA256 verification")
+assert(secure_eq(digest, sha256(msg)), "constant-time digest match")
+
+let payload_json = json_stringify({"tag": clean_tag, "digest": digest, "count": len(doubled)})
+assert(json_validate(payload_json, ["tag", "digest", "count"]), "JSON schema required keys check")
+
+let route = http_route_match("/packages/:name/:ver", "/packages/dog/1.0.0")
+assert_eq(map_get(route, "name"), "dog", "route name match")
+assert_eq(path_normalize("/usr/bin/../share/./dog"), "/usr/share/dog", "path normalization")
+
+snapshot_check("v1_showcase_tag", clean_tag, "release-candidate")
+print($"v1 Showcase passed · digest={digest} · doubled={doubled}")

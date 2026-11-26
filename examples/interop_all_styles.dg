@@ -1,0 +1,40 @@
+# All 3 DOG Styles Working Together (English + Classic + Simple Interop)
+# Mix keywords, bindings, functions, loops, conditionals, and lambdas freely!
+
+define calc_eng(base: number, bonus: number = 5) returns number
+    make total = base
+    increase total by bonus
+    give total
+end
+
+fn double_classic(n: number) -> number
+    return n * 2
+end
+
+do add_ten(x) = x + 10
+
+var score = calc_eng(10)
+keep bonus = double_classic(4)
+add bonus to score
+
+if score >= 30 then
+    show $"Elite tier score={score}"
+or when score >= 20
+    say $"Pro tier score={score}"
+elif score >= 10
+    print("Starter tier")
+else
+    print("Keep going")
+end
+
+for step in 1..2
+    bump score
+end
+
+each extra from 1 to 2
+    score += extra
+end
+
+keep piped = score |> add_ten |> do(v) => v * 2
+check piped == 76
+print($"Interop OK! score={score}, piped={piped}")

@@ -1,0 +1,18 @@
+# Reusable DOG Library Template
+use "std.text"
+
+const LIB_VERSION: text = "0.1.0"
+
+define slugify(raw: text) returns text
+    let lower_txt = lower(trim(raw))
+    return replace(lower_txt, " ", "-")
+end
+
+define clamp_score(value: number, lo: number, hi: number) returns number
+    if value < lo then
+        return lo
+    elif value > hi then
+        return hi
+    end
+    return value
+end

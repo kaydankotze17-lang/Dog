@@ -1,0 +1,12 @@
+# Official TDD Project Template
+use "std.math"
+use "std.collections"
+
+define compute_stats(values: list<number>) returns map<text, number>
+    let total = list_sum(values)
+    let count = len(values)
+    return {"total": total, "count": count}
+end
+
+let stats = compute_stats([10, 20, 30])
+print($"Total={map_get(stats, \"total\")}, Count={map_get(stats, \"count\")}")

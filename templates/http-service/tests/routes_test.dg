@@ -1,0 +1,10 @@
+use "std.net"
+use "std.data"
+
+let parsed = url_parse("https://dog-lang.org:8080/api/items?limit=10")
+assert_eq(map_get(parsed, "host"), "dog-lang.org", "url_parse extracts host")
+assert_eq(map_get(parsed, "path"), "/api/items", "url_parse extracts path")
+
+let q = query_parse("limit=10&sort=asc")
+assert_eq(map_get(q, "limit"), "10", "query_parse extracts limit")
+print("http-service route tests passed")

@@ -1,6 +1,6 @@
 [package]
 name = "dog-lang"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2021"
 authors = ["DOG Language Contributors"]
 license = "Apache-2.0"
@@ -13,5 +13,5 @@ name = "dog"
 path = "src/main.rs"
 
 [dependencies]
-# Zero external dependencies in v0.1.0 for maximum portability across
+# Zero external dependencies in v1.0.0 for maximum portability across
 # Linux, macOS, Windows, and Android Termux (ARMv7 32-bit).

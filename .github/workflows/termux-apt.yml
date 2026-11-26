@@ -84,14 +84,35 @@ jobs:
       - name: Generate Termux APT Repository Index & Updater Metadata
         run: |
           set -euo pipefail
+          bash -n packaging/termux/setup-apt.sh
+          for arch in aarch64 arm x86_64; do
+            dpkg-deb -I "apt-repo/latest/dog_latest_${arch}.deb" >/dev/null
+          done
+
           cp packaging/termux/setup-apt.sh apt-repo/update.sh
           chmod +x apt-repo/update.sh
+
+          SHA_AARCH64="$(sha256sum apt-repo/latest/dog_latest_aarch64.deb | awk '{print $1}')"
+          SHA_ARM="$(sha256sum apt-repo/latest/dog_latest_arm.deb | awk '{print $1}')"
+          SHA_X86_64="$(sha256sum apt-repo/latest/dog_latest_x86_64.deb | awk '{print $1}')"
+          UPDATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          (
+            cd apt-repo
+            sha256sum latest/*.deb pool/main/d/dog/*.deb > SHA256SUMS
+          )
 
           cat > apt-repo/version.json <<EOF
           {
             "version": "${{ steps.meta.outputs.cargo_version }}",
             "deb_version": "${{ steps.meta.outputs.version }}",
-            "sha": "${{ github.sha }}"
+            "sha": "${{ github.sha }}",
+            "updated_at": "${UPDATED_AT}",
+            "sha256": {
+              "aarch64": "${SHA_AARCH64}",
+              "arm": "${SHA_ARM}",
+              "x86_64": "${SHA_X86_64}"
+            }
           }
           EOF
 

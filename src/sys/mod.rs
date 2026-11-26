@@ -182,7 +182,7 @@ pub fn handle_docs(topic: Option<&str>) -> String {
                 .to_string()
         }
         "stdlib" => {
-            "DOG Standard Library (v0.3.0 — Modular `std.*` + Global Built-ins)\n\
+            "DOG Standard Library (v1.0.0 — Modular `std.*` + Global Built-ins)\n\
              -----------------------------------------------------------------\n\
              Modules : `dog docs std` for std.io, std.text, std.math, std.files, std.net,\n\
                        std.system, std.data, std.crypto, std.cli, std.collections\n\
@@ -1460,19 +1460,41 @@ fn parse_cargo_toml_version(raw: &str) -> Option<String> {
     None
 }
 
+const GITHUB_RELEASES_API: &str =
+    "https://api.github.com/repos/kaydankotze17-lang/Dog/releases/latest";
+
+#[derive(Default)]
+struct RemoteVersionMeta {
+    version: Option<String>,
+    deb_version: Option<String>,
+    sha256_by_arch: std::collections::BTreeMap<String, String>,
+}
+
+#[allow(dead_code)]
 fn parse_version_json(raw: &str) -> (Option<String>, Option<String>) {
+    let meta = parse_version_metadata(raw);
+    (meta.version, meta.deb_version)
+}
+
+fn parse_version_metadata(raw: &str) -> RemoteVersionMeta {
+    let mut meta = RemoteVersionMeta::default();
     if let Ok(crate::json::JsonValue::Object(map)) = crate::json::parse_json(raw) {
-        let ver = match map.get("version") {
-            Some(crate::json::JsonValue::Str(s)) => Some(s.clone()),
-            _ => None,
-        };
-        let deb = match map.get("deb_version") {
-            Some(crate::json::JsonValue::Str(s)) => Some(s.clone()),
-            _ => None,
-        };
-        return (ver, deb);
+        if let Some(crate::json::JsonValue::Str(s)) = map.get("version") {
+            meta.version = Some(s.clone());
+        }
+        if let Some(crate::json::JsonValue::Str(s)) = map.get("deb_version") {
+            meta.deb_version = Some(s.clone());
+        }
+        if let Some(crate::json::JsonValue::Object(hashes)) = map.get("sha256") {
+            for (k, v) in hashes {
+                if let crate::json::JsonValue::Str(hex) = v {
+                    meta.sha256_by_arch
+                        .insert(k.clone(), hex.trim().to_ascii_lowercase());
+                }
+            }
+        }
     }
-    (None, None)
+    meta
 }
 
 fn parse_semver_tuple(v: &str) -> (u64, u64, u64) {
@@ -1567,47 +1589,248 @@ fn ensure_termux_apt_source(prefix: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn upgrade_via_termux_deb_direct(arch: &str, epoch: u64) -> Result<String, String> {
-    let url = format!("{TERMUX_APT_BASE_URL}/latest/dog_latest_{arch}.deb?t={epoch}");
+fn is_html_payload(bytes: &[u8]) -> bool {
+    let sample_len = bytes.len().min(512);
+    let head = String::from_utf8_lossy(&bytes[..sample_len]).to_ascii_lowercase();
+    head.contains("<!doctype html") || head.contains("<html") || head.contains("<title>404")
+}
+
+fn verify_deb_bytes(bytes: &[u8], expected_sha: Option<&str>) -> Result<(), String> {
+    if bytes.is_empty() {
+        return Err("Downloaded .deb payload is empty.".to_string());
+    }
+    if is_html_payload(bytes) {
+        return Err(
+            "Received HTML error page instead of a .deb package (404 / mirror error)."
+                .to_string(),
+        );
+    }
+    if bytes.len() < 8 || &bytes[..8] != b"!<arch>\n" {
+        return Err("Invalid .deb archive header (expected `!<arch>\\n`).".to_string());
+    }
+    if let Some(expected) = expected_sha {
+        let actual = crate::crypto::sha256_hex(bytes);
+        if !actual.eq_ignore_ascii_case(expected.trim()) {
+            return Err(format!(
+                "SHA-256 verification failed for downloaded .deb (expected {}, got {actual}).",
+                expected.trim()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn download_url_bytes(url: &str, tmp_path: &Path) -> Result<Vec<u8>, String> {
+    if let Ok(b) = crate::net::http_download_bytes(url, |_, _| {}) {
+        if !b.is_empty() && !is_html_payload(&b) {
+            return Ok(b);
+        }
+    }
+    let curl_out = Command::new("curl")
+        .args([
+            "--retry",
+            "3",
+            "--retry-delay",
+            "1",
+            "--connect-timeout",
+            "10",
+            "--max-time",
+            "60",
+            "-fsSL",
+            "-H",
+            "Cache-Control: no-cache",
+            url,
+            "-o",
+        ])
+        .arg(tmp_path)
+        .output();
+    if let Ok(out) = curl_out {
+        if out.status.success() {
+            if let Ok(b) = fs::read(tmp_path) {
+                if !b.is_empty() {
+                    return Ok(b);
+                }
+            }
+        }
+    }
+    let wget_out = Command::new("wget")
+        .args(["-q", "--timeout=30", "--tries=3", "--no-cache", "-O"])
+        .arg(tmp_path)
+        .arg(url)
+        .output();
+    if let Ok(out) = wget_out {
+        if out.status.success() {
+            if let Ok(b) = fs::read(tmp_path) {
+                if !b.is_empty() {
+                    return Ok(b);
+                }
+            }
+        }
+    }
+    Err(format!("Failed downloading package from {url}"))
+}
+
+fn fetch_github_release_deb_url(arch: &str, epoch: u64) -> Option<String> {
+    let api_url = format!("{GITHUB_RELEASES_API}?t={epoch}");
+    let body = fetch_remote_text(&api_url).ok()?;
+    let crate::json::JsonValue::Object(root) = crate::json::parse_json(&body).ok()? else {
+        return None;
+    };
+    let crate::json::JsonValue::Array(assets) = root.get("assets")? else {
+        return None;
+    };
+    let suffix = format!("_{arch}.deb");
+    for item in assets {
+        if let crate::json::JsonValue::Object(asset) = item {
+            if let Some(crate::json::JsonValue::Str(url)) = asset.get("browser_download_url") {
+                if url.ends_with(&suffix) {
+                    return Some(url.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn purge_stale_dog_apt_caches(prefix: &str) {
+    let lists_dir = Path::new(prefix).join("var").join("lib").join("apt").join("lists");
+    for dir in [lists_dir.clone(), lists_dir.join("partial")] {
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+                if name.contains("dog") {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+    let archives_dir = Path::new(prefix)
+        .join("var")
+        .join("cache")
+        .join("apt")
+        .join("archives");
+    if let Ok(entries) = fs::read_dir(&archives_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            if name.starts_with("dog_") && name.ends_with(".deb") {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
+fn repair_dpkg_state() {
+    if let Ok(audit) = Command::new("dpkg").arg("--audit").output() {
+        if !audit.stdout.is_empty() || !audit.stderr.is_empty() {
+            let _ = Command::new("dpkg").args(["--configure", "-a"]).status();
+        }
+    }
+}
+
+fn backup_dog_binary(prefix: &str, tmp_dir: &Path) -> Option<(PathBuf, PathBuf)> {
+    let target = env::current_exe()
+        .ok()
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| Path::new(prefix).join("bin").join("dog"));
+    if !target.is_file() {
+        return None;
+    }
+    let backup = tmp_dir.join("dog.backup");
+    fs::copy(&target, &backup).ok()?;
+    Some((target, backup))
+}
+
+fn restore_dog_binary(pair: Option<&(PathBuf, PathBuf)>) {
+    if let Some((target, backup)) = pair {
+        if backup.is_file() {
+            let _ = fs::copy(backup, target);
+        }
+    }
+}
+
+fn upgrade_via_termux_deb_direct(
+    prefix: &str,
+    arch: &str,
+    epoch: u64,
+    deb_version: Option<&str>,
+    expected_sha: Option<&str>,
+) -> Result<String, String> {
     let tmp_dir = env::var("TMPDIR")
         .ok()
         .map(PathBuf::from)
         .unwrap_or_else(env::temp_dir);
     let _ = fs::create_dir_all(&tmp_dir);
-    let deb_path = tmp_dir.join(format!("dog_latest_{arch}.deb"));
+    let deb_path = tmp_dir.join(format!("dog_candidate_{arch}.deb"));
+    let backup = backup_dog_binary(prefix, &tmp_dir);
 
-    let bytes = match crate::net::http_download_bytes(&url, |_| {}) {
-        Ok(b) if !b.is_empty() => b,
-        _ => {
-            let status = Command::new("curl")
-                .args(["-fsSL", &url, "-o"])
-                .arg(&deb_path)
-                .status()
-                .map_err(|e| format!("Failed downloading latest .deb ({url}): {e}"))?;
-            if !status.success() {
-                return Err(format!("Failed downloading latest .deb from {url}"));
-            }
-            fs::read(&deb_path)
-                .map_err(|e| format!("Failed reading downloaded .deb '{}': {e}", deb_path.display()))?
-        }
-    };
-
-    fs::write(&deb_path, &bytes)
-        .map_err(|e| format!("Failed writing '{}': {e}", deb_path.display()))?;
-
-    let dpkg_out = Command::new("dpkg")
-        .arg("-i")
-        .arg(&deb_path)
-        .output()
-        .map_err(|e| format!("Failed running dpkg -i: {e}"))?;
-    let _ = fs::remove_file(&deb_path);
-    if !dpkg_out.status.success() {
-        let _ = Command::new("apt-get").args(["install", "-f", "-y"]).status();
-        return Err(format_command_failure("dpkg -i", &dpkg_out));
+    let mut candidates: Vec<(String, Option<&str>)> = vec![(
+        format!("{TERMUX_APT_BASE_URL}/latest/dog_latest_{arch}.deb?t={epoch}"),
+        expected_sha,
+    )];
+    if let Some(dv) = deb_version {
+        candidates.push((
+            format!("{TERMUX_APT_BASE_URL}/pool/main/d/dog/dog_{dv}_{arch}.deb?t={epoch}"),
+            expected_sha,
+        ));
+    }
+    if let Some(rel_url) = fetch_github_release_deb_url(arch, epoch) {
+        candidates.push((rel_url, None));
     }
 
-    let now_ver = read_installed_dog_version().unwrap_or_else(|| "updated".to_string());
-    Ok(format!("Installed latest Termux .deb directly ({arch}) -> dog {now_ver}"))
+    let mut errors = Vec::new();
+    for (url, sha_opt) in candidates {
+        let _ = fs::remove_file(&deb_path);
+        match download_url_bytes(&url, &deb_path) {
+            Ok(bytes) => {
+                if let Err(v_err) = verify_deb_bytes(&bytes, sha_opt) {
+                    errors.push(format!("{url}: {v_err}"));
+                    continue;
+                }
+                if let Err(w_err) = fs::write(&deb_path, &bytes) {
+                    errors.push(format!("Failed writing '{}': {w_err}", deb_path.display()));
+                    continue;
+                }
+                if let Ok(deb_check) = Command::new("dpkg-deb").arg("-I").arg(&deb_path).output() {
+                    if !deb_check.status.success() {
+                        errors.push(format!("{url}: {}", format_command_failure("dpkg-deb -I", &deb_check)));
+                        let _ = fs::remove_file(&deb_path);
+                        continue;
+                    }
+                }
+                let dpkg_out = match Command::new("dpkg").arg("-i").arg(&deb_path).output() {
+                    Ok(out) => out,
+                    Err(e) => {
+                        let _ = fs::remove_file(&deb_path);
+                        errors.push(format!("Failed running dpkg -i: {e}"));
+                        continue;
+                    }
+                };
+                let _ = fs::remove_file(&deb_path);
+                if !dpkg_out.status.success() {
+                    let _ = Command::new("apt-get").args(["install", "-f", "-y"]).status();
+                    errors.push(format_command_failure("dpkg -i", &dpkg_out));
+                    continue;
+                }
+                if let Some(now_ver) = read_installed_dog_version() {
+                    if let Some((_, backup_path)) = &backup {
+                        let _ = fs::remove_file(backup_path);
+                    }
+                    return Ok(format!(
+                        "Installed verified Termux .deb ({arch}) -> dog {now_ver}"
+                    ));
+                }
+                errors.push("Installed .deb failed `dog --version` verification.".to_string());
+                restore_dog_binary(backup.as_ref());
+            }
+            Err(e) => errors.push(e),
+        }
+    }
+
+    restore_dog_binary(backup.as_ref());
+    if let Some((_, backup_path)) = &backup {
+        let _ = fs::remove_file(backup_path);
+    }
+    Err(errors.join(" | "))
 }
 
 pub fn handle_update() -> String {
@@ -1644,10 +1867,12 @@ pub fn handle_update_exec(args: &[String]) -> Result<String, String> {
         .ok()
         .and_then(|s| parse_cargo_toml_version(&s));
     let version_json_url = format!("{TERMUX_APT_BASE_URL}/version.json?t={epoch}");
-    let (pages_ver, pages_deb) = fetch_remote_text(&version_json_url)
+    let version_meta = fetch_remote_text(&version_json_url)
         .ok()
-        .map(|s| parse_version_json(&s))
-        .unwrap_or((None, None));
+        .map(|s| parse_version_metadata(&s))
+        .unwrap_or_default();
+    let pages_ver = version_meta.version.clone();
+    let pages_deb = version_meta.deb_version.clone();
 
     let termux_prefix = detect_termux_prefix();
     let arch = detect_termux_arch();
@@ -1696,6 +1921,8 @@ pub fn handle_update_exec(args: &[String]) -> Result<String, String> {
     if let Some(prefix) = termux_prefix {
         if !from_source {
             ensure_termux_apt_source(&prefix)?;
+            repair_dpkg_state();
+            purge_stale_dog_apt_caches(&prefix);
             // Sync ONLY dog.list with caching disabled so slow/broken upstream Termux mirrors never error out.
             let apt_update = Command::new("apt-get")
                 .args([
@@ -1734,11 +1961,11 @@ pub fn handle_update_exec(args: &[String]) -> Result<String, String> {
                             let after = read_installed_dog_version().unwrap_or_default();
                             let stale_vs_pages = pages_ver
                                 .as_deref()
-                                .is_some_and(|pv| !after.is_empty() && compare_semver(pv, &after).is_gt());
+                                .is_some_and(|pv| after.is_empty() || compare_semver(pv, &after).is_gt());
                             if !stale_vs_pages {
                                 apt_upgraded = true;
                                 report.push_str(&format!(
-                                    "\nUpgraded via isolated DOG Termux APT (no upstream mirror errors) -> dog {after}\n"
+                                    "\nUpgraded via isolated DOG Termux APT (cache-free) -> dog {after}\n"
                                 ));
                             }
                         }
@@ -1747,7 +1974,14 @@ pub fn handle_update_exec(args: &[String]) -> Result<String, String> {
             }
 
             if !apt_upgraded {
-                match upgrade_via_termux_deb_direct(arch, epoch) {
+                let expected_sha = version_meta.sha256_by_arch.get(arch).map(String::as_str);
+                match upgrade_via_termux_deb_direct(
+                    &prefix,
+                    arch,
+                    epoch,
+                    pages_deb.as_deref(),
+                    expected_sha,
+                ) {
                     Ok(line) => report.push_str(&format!("\n{line}\n")),
                     Err(deb_err) => {
                         return Err(format!(

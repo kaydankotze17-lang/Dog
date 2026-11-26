@@ -35,6 +35,7 @@ export const STD_MODULES = [
       { name: "udp_bind(addr)", sig: "text -> number", desc: "Bind a UDP datagram socket for peer messaging." },
       { name: "dns_lookup(host)", sig: "text -> list<text>", desc: "Resolve hostnames to IP addresses." },
       { name: "local_ip()", sig: "() -> text", desc: "Detect primary local LAN IPv4 address." },
+      { name: "http_req / http_res / openapi_spec", sig: "... -> map | text", desc: "Typed HTTP builders, route groups, rate limiting, and OpenAPI JSON generation." },
     ],
   },
   {
@@ -85,6 +86,7 @@ export const STD_MODULES = [
       { name: "range(start, end)", sig: "(number, number) -> list<number>", desc: "Generate integer range [start, end)." },
       { name: "map_get(m, key) / map_get_or(m, key, def)", sig: "map<K, V> -> V", desc: "Look up dictionary keys safely." },
       { name: "map_set(var m, key, val)", sig: "(var map<K, V>, K, V) -> void", desc: "Insert or update key in mutable map." },
+      { name: "map / filter / reduce / query_where", sig: "(list<T>, ...) -> list | T", desc: "Functional transforms and map-list equality filtering." },
     ],
   },
   {
@@ -109,11 +111,13 @@ export const STD_MODULES = [
     example: `use "std.data"\n\nlet cfg = std.data.toml_parse("[server]\\nport = 8080")\nstd.data.kv_set(".state.json", "port", map_get(cfg, "server.port"))`,
     functions: [
       { name: "json_parse(raw) / json_read(path)", sig: "text -> map<text, text>", desc: "Parse JSON objects directly from strings or files." },
+      { name: "json_validate(raw, required_keys)", sig: "(text, list<text>) -> bool", desc: "Validate JSON object payloads against required schema keys." },
       { name: "json_stringify(val) / json_pretty(val)", sig: "any -> text", desc: "Serialize DOG maps, lists, or structs to JSON." },
       { name: "json_write(path, val)", sig: "(text, any) -> void", desc: "Pretty-write DOG data structures directly to disk." },
       { name: "toml_parse(raw)", sig: "text -> map<text, text>", desc: "Parse flattened TOML sections and key/value pairs." },
       { name: "csv_parse(raw) / csv_stringify(rows)", sig: "text <-> list<list<text>>", desc: "RFC 4180 CSV parser and serializer." },
       { name: "kv_set(db, k, v) / kv_get(db, k) / kv_keys(db)", sig: "(text, ...) -> ...", desc: "Persistent local JSON-backed key-value storage." },
+      { name: "db_open / db_exec / db_query / db_begin / db_rollback", sig: "(db, sql, params?) -> list | number", desc: "Embedded SQLite engine with prepared `?` params, transactions, and `query_builder`." },
     ],
   },
   {
@@ -124,10 +128,14 @@ export const STD_MODULES = [
     functions: [
       { name: "sha256(s) / sha512(s) / sha1(s)", sig: "text -> text", desc: "Hex-encoded cryptographic digests implemented in pure std Rust." },
       { name: "hmac_sha256(key, msg)", sig: "(text, text) -> text", desc: "Keyed HMAC-SHA256 message authentication code." },
-      { name: "hmac_sha256_verify(key, msg, sig)", sig: "(text, text, text) -> bool", desc: "Constant-time HMAC signature verification." },
+      { name: "hmac_sha256_verify(key, msg, sig) / secure_eq(a, b)", sig: "(text, ...) -> bool", desc: "Constant-time HMAC and secret comparison." },
+      { name: "pbkdf2_sha256(pass, salt, rounds)", sig: "(text, text, number) -> text", desc: "Iterative PBKDF2-HMAC-SHA256 key derivation." },
       { name: "base64_encode(s) / base64_decode(s)", sig: "text -> text", desc: "Standard Base64 and Base64URL encoding/decoding." },
       { name: "hex_encode(s) / hex_decode(h)", sig: "text -> text", desc: "Lowercase hex encoding and validated decoding." },
       { name: "rand_bytes_hex(count)", sig: "number -> text", desc: "Generate cryptographically random hex bytes." },
+      { name: "password_hash / password_verify", sig: "(text, text?) -> text | bool", desc: "Salted PBKDF2-HMAC-SHA256 password hashing and constant-time verification." },
+      { name: "encrypt_aes256 / decrypt_aes256", sig: "(text, text) -> text", desc: "HMAC-authenticated AES-256 symmetric encryption and decryption." },
+      { name: "ed25519_keypair / ed25519_sign / ed25519_verify", sig: "... -> map | text | bool", desc: "RFC 8032 Ed25519 digital keypairs, signatures, and verification." },
     ],
   },
   {
@@ -185,7 +193,10 @@ export const STD_MODULES = [
       { name: "dom_add_class / remove_class / toggle_class", sig: "(text, text) -> void | bool", desc: "Manipulate CSS classes dynamically in response to user actions." },
       { name: "dom_set_style(sel, prop, val)", sig: "(text, text, text) -> void", desc: "Apply inline CSS properties cleanly." },
       { name: "web_nav / web_card / web_grid / web_button / web_input", sig: "... -> text", desc: "Composable, XSS-escaped UI component builders." },
+      { name: "web_form / web_field / web_alert / web_badge", sig: "... -> text", desc: "Accessible form inputs, labels, ARIA alerts, and tone badges." },
+      { name: "web_validate_required / web_validate_email / dom_focus", sig: "text -> bool | void", desc: "Client form validation with aria-invalid + focus management." },
       { name: "web_storage_set(k, v) / web_storage_get(k)", sig: "(text, ...) -> void | text", desc: "Read and persist browser `localStorage` state." },
+      { name: "web_component / web_state_set / dom_delegate", sig: "... -> void | text", desc: "Reusable components, reactive state watchers, event delegation, tabs, and modals." },
     ],
   },
 ];
@@ -246,6 +257,28 @@ end
 
 for step in range(1, 4)
     say($"Countdown step {step}")
+end`,
+    simpleCode: `# Ultra-short Simple Style (zero type noise, same strict safety)
+do greet(name, title = "Friend") = $"Hello, {title} {name}!"
+
+make points = 0
+keep badge = "Starter"
+show greet("Alex")
+
+when badge is "Starter"
+    add 10 to points
+or when badge is "Pro"
+    add 25 to points
+else
+    points = 5
+end
+
+when points >= 10
+    show $"Nice! {points} pts (rank: {badge})"
+end
+
+each step in 1..3
+    show $"Countdown step {step}"
 end`,
   },
   web_css: {
@@ -316,6 +349,33 @@ end
 let card = web_card("Hero", $"Built natively in DOG! {web_button("hi-btn", "Say Hi")}")
 dom_mount("#app", card)
 dom_on("#hi-btn", "click", "greet_click")`,
+    simpleCode: `use "std.web"
+
+style theme
+    bg: "#F7F6F2"
+    surface: "#FFFFFF"
+    accent: "#C85A11"
+end
+
+style ".dg-card"
+    bg: "$surface"
+    pad: "20px"
+    radius: "10px"
+    shadow: "sm"
+    on hover
+        shadow: "md"
+    end
+end
+
+make clicks = 0
+do greet_click()
+    bump clicks
+    dom_set_text("#status", $"Clicked {clicks} time(s) in Simple Style!")
+end
+
+keep card = web_card("Hero", $"Built in Simple DOG! {web_button("hi-btn", "Say Hi")}")
+dom_mount("#app", card)
+dom_on("#hi-btn", "click", "greet_click")`,
   },
   web: {
     label: "Local Web Server",
@@ -357,6 +417,21 @@ while true
         http_reply(req, 404, "text/plain", "Not Found")
     end
 end`,
+    simpleCode: `keep srv = http_listen("127.0.0.1:8080")
+cli_info($"Serving on http://127.0.0.1:{http_port(srv)}")
+
+loop
+    keep req = http_accept(srv)
+    keep path = map_opt(req, "path") ?? "/"
+
+    when path == "/"
+        http_reply(req, 200, "text/html", "<h1>DOG Simple Server</h1>")
+    or when path == "/api/status"
+        http_reply(req, 200, "application/json", json_stringify({"ok": "true", "os": os_name()}))
+    else
+        http_reply(req, 404, "text/plain", "Not Found")
+    end
+end`,
   },
   bot: {
     label: "Discord Bot",
@@ -392,6 +467,19 @@ end
 
 let srv = http_listen("127.0.0.1:8090")
 cli_info("Discord bot local bridge listening on :8090")`,
+    simpleCode: `do handle_command(raw)
+    keep cmd = raw |> trim |> lower
+    when cmd == "!ping"
+        give $"Pong! Alive on {os_name()}/{os_arch()}"
+    or when cmd == "!roll"
+        give $"Rolled a {rand_int(1, 20)} (d20)"
+    else
+        give $"Unknown command: {raw}"
+    end
+end
+
+keep srv = http_listen("127.0.0.1:8090")
+cli_info("Discord bot local bridge listening on :8090")`,
   },
   errors: {
     label: "Strict Diagnostics",
@@ -413,6 +501,13 @@ end`,
     let parsed = number(input_age)
     say($"Next year: {parsed + 1}")
 catch err
+    cli_warn($"Handled safely: {err}")
+end`,
+    simpleCode: `try
+    keep input_age = "not-a-number"
+    keep parsed = number(input_age)
+    show $"Next year: {parsed + 1}"
+oops err
     cli_warn($"Handled safely: {err}")
 end`,
   },
@@ -459,6 +554,88 @@ end
 print($"Done after {retries} retries.")`,
   },
   {
+    id: "simple_tour",
+    label: "Simple Style Tour (Ultra-Short)",
+    code: `# Simple Style: zero type boilerplate, shortest keywords, 100% mixable!
+do greet(name, title = "Friend") = $"Hello, {title} {name}!"
+
+do double(n) = n * 2
+
+make score = 10
+bump score by 15
+keep msg = greet("Maya") |> trim |> upper
+show msg
+
+when score >= 25
+    show $"Level Up! score={score}"
+else
+    show "Keep going"
+end
+
+make sum = 0
+each i in 1..5
+    when i == 2
+        skip
+    end
+    add i to sum
+end
+show $"Range sum (skip 2) = {sum}"
+
+keep doubled = [1, 2, 3, 4] |> list_chunk(2)
+keep cfg = {"mode": "simple"}
+keep port = map_opt(cfg, "port") ?? "8080"
+show $"Chunk0={join(doubled[0], ",")} | Port={port} | 7*2={double(7)}"
+
+try
+    keep _n = number("bad")
+oops err
+    show $"Recovered safely via oops: {err}"
+end`,
+  },
+  {
+    id: "interop_all_styles",
+    label: "All 3 Styles Together (Interop)",
+    code: `# Mix English, Classic, and Simple Style freely in the same file, function, and block!
+define calc_eng(base: number, bonus: number = 5) returns number
+    make total = base
+    increase total by bonus
+    give total
+end
+
+fn double_classic(n: number) -> number
+    return n * 2
+end
+
+do add_ten(x) = x + 10
+
+var score = calc_eng(10)
+keep bonus = double_classic(4)
+add bonus to score
+
+# Single conditional mixing if / or when / elif / otherwise
+if score >= 30 then
+    show $"Elite tier score={score}"
+or when score >= 20
+    say $"Pro tier score={score}"
+elif score >= 10
+    print("Starter tier")
+else
+    print("Keep going")
+end
+
+# Mixed loop styles sharing the same mutable binding
+for step in 1..2
+    bump score
+end
+each extra from 1 to 2
+    score += extra
+end
+
+keep piped = score |> add_ten |> do(v) => v * 2
+check piped == 76
+print($"Interop OK! score={score}, piped={piped}")`,
+  },
+  {
     id: "functions_lists",
     label: "Functions & Collections",
     code: `define score_summary(items: list<number>) returns text
@@ -499,17 +676,122 @@ cli_progress("Verification", 3, 3)`,
 let age = 21
 print("Age: " + age)`,
   },
+  {
+    id: "v1_showcase",
+    label: "v1.0 Showcase (Crypto, Data, Routes & Tests)",
+    code: `# Full v1.0.0 capabilities in one self-contained script!
+type UserId = text
+
+let ids = list_unique(["u-01", "u-02", "u-01"])
+let sig = hmac_sha256("dog-key", "deploy:v1.0.0")
+let verified = hmac_sha256_verify("dog-key", "deploy:v1.0.0", sig)
+assert_eq(verified, true)
+
+let payload = json_stringify({"service": "dog-api", "version": "1.0.0"})
+assert_eq(json_validate(payload, ["service", "version"]), true)
+
+let route = http_route_match("/users/:id", "/users/u-01")
+let target = path_normalize("src/../src/main.dg")
+
+print($"IDs={len(ids)} | HMAC ok={verified} | Route user={map_get(route, "id")}")
+print($"Normalized path: {target}")
+snapshot_check("showcase-ok", $"sha256={sha256("dog")}")`,
+  },
+  {
+    id: "type_aliases_functional",
+    label: "Type Aliases, Destructuring & Functional",
+    code: `# Type aliases, destructuring, inline conditionals, and W001 lint warnings
+type Score = number
+
+define double_num(n: number) returns number
+    return n * 2
+end
+
+define is_high(n: number) returns bool
+    return n >= 80
+end
+
+let [top, runner_up] = [95, 82, 64]
+let raw = [40, 85, 92]
+let passing = filter(raw, "is_high")
+let doubled = map(passing, "double_num")
+let tier = if top >= 90 then "Honors" else "Pass"
+
+print($"Top={top}, Second={runner_up}, Tier={tier}")
+print($"Doubled passing scores: {join(doubled, ", ")}")`,
+  },
+  {
+    id: "structs_enums_match",
+    label: "Structs, Enums, Match & Lambdas",
+    code: `# Structs, algebraic enums, match guards, slices, and arrow lambdas
+struct Endpoint
+    name: text
+    port: number
+end
+
+enum Status
+    Ready(number)
+    Failed(text)
+    Idle
+end
+
+var svc = Endpoint { name: "dog-api", port: 8080 }
+set svc.port to 8443
+
+fn format_status(s: Status) -> text
+    match s
+        case Status.Ready(code) if code >= 200
+            return $"OK ({code})"
+        case Status.Failed(msg)
+            return $"ERR: {msg}"
+        else
+            return "IDLE"
+    end
+end
+
+fn make_multiplier(factor: number) -> fn
+    return fn(n) => n * factor
+end
+
+let nums = [10, 20, 30, 40]
+let sliced = nums[1..3]
+let scaled = map(sliced, make_multiplier(3))
+print($"Service={svc.name}:{svc.port} | {format_status(Status.Ready(204))}")
+print($"Sliced={join(sliced, ",")} | Scaled={join(scaled, ",")}")`,
+  },
+  {
+    id: "db_crypto_tasks",
+    label: "SQLite, Ed25519, AES-256 & Tasks",
+    code: `# Relational SQLite, authenticated encryption, Ed25519, and concurrent tasks
+let db = db_open(":memory:")
+db_exec(db, "CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT, qty INTEGER)")
+db_exec(db, "INSERT INTO items (label, qty) VALUES (?, ?)", ["bolts", 12])
+db_begin(db)
+db_exec(db, "INSERT INTO items (label, qty) VALUES (?, ?)", ["temp-item", 99])
+db_rollback(db)
+
+let rows = db_query(db, "SELECT label, qty FROM items WHERE qty > ?", [5])
+let cipher = encrypt_aes256("dog-secret", "token=ok")
+let plain = decrypt_aes256("dog-secret", cipher)
+let kp = ed25519_keypair("demo")
+let sig = ed25519_sign(kp["private_key"], plain)
+let sig_ok = ed25519_verify(kp["public_key"], plain, sig)
+
+let tasks = [spawn_task(fn(x) => x * 10, 4), spawn_task(fn(x) => x * 10, 7)]
+let done = await_all(tasks)
+print($"Rows={len(rows)} | AES={plain} | Ed25519={sig_ok} | Tasks={join(done, ",")}")`,
+  },
 ];
 
 export const INSTALL_METHODS = [
   {
     id: "termux_apt",
-    label: "Android Termux (APT & Updater)",
-    subtitle: "Zero-error Termux install & upgrade script (bypasses broken Termux mirrors, clears APT cache, and auto-installs the newest .deb).",
+    label: "Android Termux (Bulletproof Updater)",
+    subtitle: "Zero-error Termux install & upgrade: purges stale DOG APT caches, rejects HTML 404s, verifies .deb/SHA-256, backs up & rolls back cleanly.",
     commands: `curl -fsSL https://kaydankotze17-lang.github.io/Dog/update.sh | bash
 dog --version
 dog learn`,
-    altLabel: "Once installed, upgrade anytime straight from DOG (or check GitHub vs APT):",
+    altLabel: "Check versions, force reinstall, or upgrade directly from CLI:",
     altCommands: `dog update
 dog update --check
 dog update --force`,
@@ -544,7 +826,7 @@ dog update`,
 ];
 
 export const CLI_COMMANDS = [
-  { cmd: "dog update [--check|--force]", desc: "Compare installed CLI vs GitHub main & Termux APT, then upgrade cleanly with cache-free .deb fallback." },
+  { cmd: "dog update [--check|--force|--from-source]", desc: "Compare installed CLI vs GitHub main & Termux APT, purge stale caches, verify .deb/SHA-256, and upgrade with atomic rollback." },
   { cmd: "dog learn [topic] [--run]", desc: "7 interactive beginner lessons with live execution (`basics`, `english`, `input`, `functions`, `data`, `errors`, `web`)." },
   { cmd: "dog web <build|css|serve>", desc: "Compile `.dg` browser apps + inline `style` / `.dgss` DOG CSS stylesheets into standalone HTML/CSS/JS websites." },
   { cmd: "dog run <file.dg | file.dgb>", desc: "Run scripts or SHA-256 verified bytecode bundles with stack traces." },
@@ -868,5 +1150,298 @@ let card = web_card("Styled Inline in DOG", $"Votes: <strong id=\\"like-count\\"
 dom_mount("#app", html_el("main", {"class": "dg-shell"}, card))
 dom_on("#like-btn", "click", "add_like")`,
     css: "",
+  },
+  {
+    id: "accessible_form",
+    label: "Accessible Form, Validation & Autoprefix",
+    title: "DOG Accessible Form",
+    code: `# Accessible UI builders + ARIA validation + submit preventDefault
+use "std.web"
+
+define render_form() returns void
+    let badge = web_badge("v1.0 Ready", "success")
+    let fields = $"{web_field("contact-name", "Your Name", "Ada Lovelace", "text")}{web_field("contact-email", "Email Address", "ada@example.org", "email")}"
+    let form = web_form("signup-form", fields, "Create Account")
+    let card = web_card("Sign Up", $"<div style=\\"margin-bottom:10px;\\">{badge}</div>{form}")
+    let notice = html_el("div", {"id": "form-notice"}, web_alert("Ready", "Fill both fields and submit.", "info"))
+    dom_mount("#app", html_el("main", {"class": "dg-shell"}, $"{card}{notice}"))
+    dom_on("#signup-form", "submit", "on_submit_form")
+end
+
+define on_submit_form() returns void
+    let ok_name = web_validate_required("#contact-name")
+    let ok_mail = web_validate_email("#contact-email")
+    if not ok_name then
+        dom_set_html("#form-notice", web_alert("Missing Name", "Please enter your name.", "error"))
+        dom_focus("#contact-name")
+        return
+    end
+    if not ok_mail then
+        dom_set_html("#form-notice", web_alert("Invalid Email", "Enter a valid email address.", "error"))
+        dom_focus("#contact-email")
+        return
+    end
+    let who = trim(dom_get_value("#contact-name"))
+    dom_set_html("#form-notice", web_alert("Saved", $"Welcome aboard, {who}!", "success"))
+    print($"Account created for {who}")
+end
+
+render_form()`,
+    css: `vars
+    bg: #F7F6F2
+    surface: #FFFFFF
+    ink: #181A1F
+    accent: #C85A11
+    border: #E2DFD7
+end
+
+rule body
+    margin: 0
+    bg: $bg
+    ink: $ink
+    font: system-ui, sans-serif
+end
+
+rule .dg-shell
+    max-w: 560px
+    mx: auto
+    pad: 20px
+    flex: col
+    gap: 14px
+end
+
+rule .dg-card
+    bg: $surface
+    border: 1px solid $border
+    radius: 10px
+    pad: 18px
+    backdrop-filter: blur(6px)
+end
+
+rule .dg-form
+    flex: col
+    gap: 12px
+end
+
+rule .dg-field
+    flex: col
+    gap: 6px
+end
+
+rule .dg-label
+    weight: 600
+    size: 0.88rem
+end
+
+rule .dg-input
+    w: 100%
+    py: 8px
+    px: 12px
+    radius: 6px
+    border: 1px solid $border
+end
+
+rule .dg-btn
+    bg: $accent
+    ink: #FFFFFF
+    border: none
+    radius: 6px
+    py: 9px
+    px: 14px
+    weight: 600
+    cursor: pointer
+    user-select: none
+end
+
+rule .dg-badge
+    display: inline-block
+    px: 8px
+    py: 2px
+    radius: 4px
+    size: 0.78rem
+    bg: #EAF7EE
+    ink: #166534
+end
+
+rule .dg-alert
+    pad: 10px 14px
+    radius: 6px
+    border: 1px solid $border
+    bg: $surface
+end`,
+  },
+  {
+    id: "reactive_components_treeshake",
+    label: "Reactive Components & CSS Tree-Shake",
+    title: "DOG Reactive Components",
+    code: `# Reusable web_component, reactive state watchers, dom_delegate & extend inheritance
+use "std.web"
+
+define render_summary(props: map) returns text
+    let label = map_get(props, "label")
+    let val = map_get(props, "value")
+    return web_card("Active Module", $"<strong>{label}</strong><p style=\\"margin:8px 0 0\\">{val}</p>")
+end
+
+define on_tab_selected(tab_key: text) returns void
+    web_state_set("active_tab", tab_key)
+    dom_set_text("#tab-status", $"Delegated tab switch -> {tab_key}")
+end
+
+define render_app() returns void
+    web_component("summary-box", "render_summary")
+    let tabs = web_tabs("main-tabs", {"overview": "Overview", "crypto": "Crypto", "db": "SQLite"}, "overview")
+    let box = html_el("div", {"id": "panel-host"}, web_render_component("summary-box", {"label": "overview", "value": "Reactive state & extend: .dg-card active."}))
+    let status = html_el("p", {"id": "tab-status", "class": "dg-card dg-card-accent"}, "Click any tab above to trigger dom_delegate + web_state_set.")
+    dom_mount("#app", html_el("main", {"class": "dg-shell"}, $"{tabs}{box}{status}"))
+    dom_delegate("#main-tabs", ".dg-tab-btn", "click", "on_tab_selected")
+end
+
+web_on_state("active_tab", "on_state_log")
+
+define on_state_log(next_val: text) returns void
+    dom_set_html("#panel-host", web_render_component("summary-box", {"label": next_val, "value": $"State updated cleanly to '{next_val}'."}))
+    print($"State active_tab -> {next_val}")
+end
+
+render_app()`,
+    css: `vars
+    bg: #F7F6F2
+    surface: #FFFFFF
+    ink: #181A1F
+    accent: #C85A11
+    border: #E2DFD7
+end
+
+rule body
+    margin: 0
+    bg: $bg
+    ink: $ink
+    font: system-ui, sans-serif
+end
+
+rule .dg-shell
+    max-w: 620px
+    mx: auto
+    pad: 20px
+    flex: col
+    gap: 14px
+end
+
+rule .dg-card
+    bg: $surface
+    border: 1px solid $border
+    radius: 10px
+    pad: 16px
+    shadow: sm
+end
+
+rule .dg-card-accent
+    extend: .dg-card
+    border: 1px solid $accent
+end
+
+rule .dg-tabs
+    display: flex
+    gap: 8px
+end
+
+rule .dg-tab-btn
+    bg: $surface
+    ink: $ink
+    border: 1px solid $border
+    radius: 6px
+    py: 8px
+    px: 14px
+    weight: 600
+    cursor: pointer
+end
+
+rule .unused-legacy-banner
+    bg: #181A1F
+    ink: #FFFFFF
+    pad: 24px
+end`,
+  },
+  {
+    id: "simple_web_app",
+    label: "Simple Style Web App (Table + Toast)",
+    title: "Simple Style Task Board",
+    code: `# Build websites in Simple Style: keep, make, do, when, show, bump
+use "std.web"
+
+make done_count = 1
+keep total_count = 3
+
+do render_board()
+    keep pct = round((done_count * 100) / total_count)
+    keep rows = [
+        ["Simple Style Parser", "Ready"],
+        ["Pipe |> & Nullish ??", "Ready"],
+        ["Interactive Task", if done_count >= 2 then "Done" else "Pending"]
+    ]
+    keep tbl = web_table(["Module", "Status"], rows)
+    keep prog = web_progress("board-prog", done_count, total_count)
+    keep btn = web_button("bump-btn", "Complete Task (+1)")
+    keep body = $"<div style=\\"margin-bottom:12px\\">{prog}</div>{tbl}<div style=\\"margin-top:14px;display:flex;gap:10px;align-items:center;\\">{btn}<span id=\\"pct-label\\">{pct}% complete</span></div>"
+    keep card = web_card("Simple Style Board", body)
+    keep toast = html_el("div", {"id": "toast-host"}, "")
+    dom_mount("#app", html_el("main", {"class": "dg-shell"}, $"{card}{toast}"))
+    dom_on("#bump-btn", "click", "on_complete_task")
+end
+
+do on_complete_task()
+    when done_count < total_count
+        bump done_count
+    else
+        done_count = 1
+    end
+    render_board()
+    dom_set_html("#toast-host", web_toast($"Updated progress: {done_count}/{total_count}", "success"))
+    show $"Task count -> {done_count}/{total_count}"
+end
+
+render_board()`,
+    css: `vars
+    bg: #F7F6F2
+    surface: #FFFFFF
+    ink: #181A1F
+    accent: #C85A11
+    border: #E2DFD7
+end
+
+rule body
+    margin: 0
+    bg: $bg
+    ink: $ink
+    font: system-ui, sans-serif
+end
+
+rule .dg-shell
+    max-w: 660px
+    mx: auto
+    pad: 20px
+    flex: col
+    gap: 14px
+end
+
+rule .dg-card
+    bg: $surface
+    border: 1px solid $border
+    radius: 10px
+    pad: 18px
+    shadow: sm
+end
+
+rule .dg-btn
+    bg: $accent
+    ink: #FFFFFF
+    border: none
+    radius: 6px
+    py: 8px
+    px: 14px
+    weight: 600
+    cursor: pointer
+end`,
   },
 ];

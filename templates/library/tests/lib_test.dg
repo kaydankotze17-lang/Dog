@@ -1,0 +1,6 @@
+use "../src/lib.dg"
+
+assert_eq(slugify("  DOG Lang v1  "), "dog-lang-v1", "slugify lowercases and joins dashes")
+assert_eq(clamp_score(120, 0, 100), 100, "clamp_score enforces upper bound")
+assert_eq(clamp_score(-5, 0, 100), 0, "clamp_score enforces lower bound")
+print("library template tests passed")

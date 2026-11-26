@@ -2,13 +2,25 @@
 // Shared between the official website's Web & CSS Studio and automated node:test suites.
 
 export class DogWebDiagnostic extends Error {
-  constructor({ code, title, line, why, fix }) {
+  constructor({ code, title, line, why, fix, severity = "error" }) {
     super(`[${code}] line ${line || 1}: ${title}`);
     this.code = code || "E004";
+    this.severity = severity;
     this.title = title;
     this.line = line || 1;
     this.why = why || "";
     this.fix = fix || "";
+  }
+
+  toJSON() {
+    return {
+      code: this.code,
+      severity: this.severity,
+      line: this.line,
+      title: this.title,
+      why: this.why,
+      fix: this.fix,
+    };
   }
 
   format() {
@@ -116,9 +128,139 @@ export function expandDogCssDeclaration(rawKey, rawVal) {
       };
       return [["box-shadow", presets[val.toLowerCase()] || val]];
     }
+    case "user-select":
+      return [["-webkit-user-select", val], ["user-select", val]];
+    case "backdrop-filter":
+      return [["-webkit-backdrop-filter", val], ["backdrop-filter", val]];
+    case "appearance":
+      return [["-webkit-appearance", val], ["appearance", val]];
     default:
       return [[prop, val]];
   }
+}
+
+export function minifyDogCss(cssText) {
+  return String(cssText || "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\s*{\s*/g, "{")
+    .replace(/\s*}\s*/g, "}")
+    .replace(/\s*:\s*/g, ":")
+    .replace(/\s*;\s*/g, ";")
+    .replace(/;}/g, "}")
+    .replace(/\n+/g, "")
+    .trim();
+}
+
+export function treeShakeDogCss(cssText, usageText = "") {
+  const hay = String(usageText || "");
+  const prunedSelectors = [];
+  const keptSelectors = [];
+
+  function selectorUsed(selector) {
+    const clean = selector.trim();
+    if (!clean || clean === ":root" || clean === "*" || clean === "html" || clean === "body") return true;
+    // Always retain interactive pseudo/tag rules if base class or tag appears
+    const classes = [...clean.matchAll(/\.([a-zA-Z_][a-zA-Z0-9_-]*)/g)].map((m) => m[1]);
+    const ids = [...clean.matchAll(/#([a-zA-Z_][a-zA-Z0-9_-]*)/g)].map((m) => m[1]);
+    if (classes.length === 0 && ids.length === 0) return true;
+    const hit =
+      classes.some((c) => hay.includes(c)) ||
+      ids.some((id) => hay.includes(id));
+    return hit;
+  }
+
+  function processRuleBlocks(src) {
+    const kept = [];
+    let i = 0;
+    while (i < src.length) {
+      while (i < src.length && /\s/.test(src[i])) i++;
+      if (i >= src.length) break;
+      const brace = src.indexOf("{", i);
+      if (brace < 0) {
+        kept.push(src.slice(i));
+        break;
+      }
+      const header = src.slice(i, brace).trim();
+      let depth = 1;
+      let j = brace + 1;
+      while (j < src.length && depth > 0) {
+        if (src[j] === "{") depth++;
+        else if (src[j] === "}") depth--;
+        j++;
+      }
+      const body = src.slice(brace + 1, j - 1);
+      if (header.startsWith("@keyframes")) {
+        kept.push(`${header} {${body}}`);
+      } else if (header.startsWith("@media")) {
+        const inner = processRuleBlocks(body);
+        if (inner.trim()) kept.push(`${header} {\n${inner}\n}`);
+      } else {
+        const subSelectors = header.split(",").map((s) => s.trim()).filter(Boolean);
+        const retained = subSelectors.filter((s) => selectorUsed(s));
+        const dropped = subSelectors.filter((s) => !selectorUsed(s));
+        prunedSelectors.push(...dropped);
+        if (retained.length > 0) {
+          keptSelectors.push(...retained);
+          kept.push(`${retained.join(", ")} {${body}}`);
+        }
+      }
+      i = j;
+    }
+    return kept.join("\n\n");
+  }
+
+  const shaken = processRuleBlocks(String(cssText || ""));
+  return { css: shaken, prunedSelectors, keptSelectors };
+}
+
+export function analyzeWebCompatibilityAndA11y({ code = "", css = "", userJs = "", prunedCount = 0 } = {}) {
+  const diags = [];
+  if (/-webkit-(backdrop-filter|user-select|appearance)/i.test(css)) {
+    diags.push({
+      code: "I001",
+      severity: "info",
+      line: 1,
+      title: "Safari/WebKit vendor prefixes applied automatically (-webkit-*).",
+      fix: "No action required.",
+    });
+  }
+  if (prunedCount > 0) {
+    diags.push({
+      code: "I002",
+      severity: "info",
+      line: 1,
+      title: `CSS tree-shaking removed ${prunedCount} unused selector(s).`,
+      fix: "Toggle Tree-Shake CSS off if selectors are added dynamically outside rendered templates.",
+    });
+  }
+  if (/<img\b(?![^>]*\balt=)/i.test(code) || /html_el\("img"/.test(code) && !/\"alt\"/.test(code)) {
+    diags.push({
+      code: "W101",
+      severity: "warning",
+      line: 1,
+      title: "Accessibility check: <img> element detected without 'alt' text attribute.",
+      fix: 'Add `"alt": "Description"` to `html_el("img", ...)` attributes.',
+    });
+  }
+  if (/<input\b/i.test(userJs) && !/aria-label|<label\b/i.test(userJs) && !/webField|webInput/.test(userJs)) {
+    diags.push({
+      code: "W102",
+      severity: "warning",
+      line: 1,
+      title: "Accessibility check: raw <input> lacks an associated <label> or aria-label.",
+      fix: "Prefer `web_field(id, label, placeholder, type)` for automatic accessible `<label>` pairing.",
+    });
+  }
+  if (/<(button|a)\b(?![^>]*aria-label=)[^>]*>\s*<\/\1>/i.test(code) || /<(button|a)\b(?![^>]*aria-label=)[^>]*>\s*<\/\1>/i.test(userJs)) {
+    diags.push({
+      code: "W103",
+      severity: "warning",
+      line: 1,
+      title: "Accessibility check: empty <button> or <a> detected without visible text or aria-label.",
+      fix: 'Add descriptive button/link text or `"aria-label": "..."` attribute.',
+    });
+  }
+  return diags;
 }
 
 function stripDgssComment(line) {
@@ -157,7 +299,7 @@ function renderMediaBlock(query, innerCss) {
   return `@media ${q} {\n${indented}\n}`;
 }
 
-export function compileDogCss(dsl) {
+export function compileDogCss(dsl, options = {}) {
   const lines = String(dsl || "").split(/\r?\n/);
   const stack = [];
   const roots = [];
@@ -297,6 +439,7 @@ export function compileDogCss(dsl) {
   }
 
   const out = [];
+  const ruleDeclsBySelector = new Map();
   function emitBlock(block, parentSel = null) {
     if (block.kind === "vars") {
       if (block.entries.length > 0) {
@@ -313,9 +456,19 @@ export function compileDogCss(dsl) {
           ? block.selector.replace(/&/g, parentSel)
           : `${parentSel} ${block.selector}`
         : block.selector;
-      if (block.decls.length > 0) {
+      // Support `extend: .base-card` theme/style inheritance inside rules
+      const resolvedDecls = [];
+      for (const [k, v] of block.decls) {
+        if (k.toLowerCase() === "extend" && ruleDeclsBySelector.has(v.trim())) {
+          resolvedDecls.push(...ruleDeclsBySelector.get(v.trim()));
+        } else {
+          resolvedDecls.push([k, v]);
+        }
+      }
+      ruleDeclsBySelector.set(fullSel, resolvedDecls);
+      if (resolvedDecls.length > 0) {
         const declLines = [];
-        for (const [k, v] of block.decls) {
+        for (const [k, v] of resolvedDecls) {
           for (const [ek, ev] of expandDogCssDeclaration(k, v)) {
             declLines.push(`  ${ek}: ${ev};`);
           }
@@ -386,7 +539,11 @@ export function compileDogCss(dsl) {
   }
 
   for (const b of roots) emitBlock(b);
-  return out.join("\n\n");
+  let fullCss = out.join("\n\n");
+  if (options?.treeShake && options?.usageText !== undefined) {
+    fullCss = treeShakeDogCss(fullCss, options.usageText).css;
+  }
+  return options?.minify ? minifyDogCss(fullCss) : fullCss;
 }
 
 // =========================================================================
@@ -628,7 +785,7 @@ function tokenizeDgExpr(src, line) {
       continue;
     }
     const two = src.slice(i, i + 2);
-    if (["==", "!=", ">=", "<="].includes(two)) {
+    if (["==", "!=", ">=", "<=", "..", "=>", "|>", "??"].includes(two)) {
       tokens.push({ type: "op", value: two });
       i += 2;
       continue;
@@ -673,6 +830,8 @@ function tokenizeDgExpr(src, line) {
       }
       if (id === "true" || id === "false") {
         tokens.push({ type: "bool", value: id === "true" });
+      } else if (id === "null") {
+        tokens.push({ type: "null", value: null });
       } else {
         tokens.push({ type: "id", value: id });
       }
@@ -696,11 +855,11 @@ function inferRoughType(node, envTypes) {
   if (node.kind === "bool") return "bool";
   if (node.kind === "id") return envTypes.get(node.name) || "unknown";
   if (node.kind === "call") {
-    if (["text", "lower", "upper", "trim", "join", "dog_css", "css_rule", "css_vars", "css_media", "css_keyframes", "css_theme", "css_bundle", "html_el", "html_page", "web_nav", "web_card", "web_grid", "web_button", "web_input", "dom_get_value", "web_storage_get", "web_route", "json_stringify", "html_escape"].includes(node.callee)) {
+    if (["text", "lower", "upper", "trim", "join", "dog_css", "css_rule", "css_vars", "css_media", "css_keyframes", "css_theme", "css_bundle", "html_el", "html_page", "web_nav", "web_card", "web_grid", "web_button", "web_input", "web_badge", "web_alert", "web_field", "web_form", "web_render_component", "web_tabs", "web_modal", "web_table", "web_progress", "web_toast", "dom_attr", "dom_get_value", "web_storage_get", "web_route", "json_stringify", "html_escape"].includes(node.callee)) {
       return "text";
     }
-    if (["number", "len"].includes(node.callee)) return "number";
-    if (["contains", "dom_toggle_class"].includes(node.callee)) return "bool";
+    if (["number", "len", "round", "floor", "ceil"].includes(node.callee)) return "number";
+    if (["contains", "starts_with", "ends_with", "regex_match", "dom_toggle_class", "web_validate_required", "web_validate_email"].includes(node.callee)) return "bool";
   }
   if (node.kind === "bin" && node.op === "+") {
     const l = inferRoughType(node.left, envTypes);
@@ -718,6 +877,81 @@ function parseExprNode(src, line, envTypes = new Map()) {
   let pos = 0;
   const peek = () => tokens[pos] || null;
   const peekId = () => (tokens[pos]?.type === "id" ? tokens[pos].value : null);
+
+  function hasThenAtCurrentDepth(startPos) {
+    let d = 0;
+    for (let k = startPos; k < tokens.length; k++) {
+      const t = tokens[k];
+      if (t.type === "punct" && ["(", "[", "{"].includes(t.value)) d++;
+      else if (t.type === "punct" && [")", "]", "}"].includes(t.value)) {
+        if (d === 0) return false;
+        d--;
+      } else if (d === 0 && t.type === "id" && t.value === "then") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function parseCond() {
+    if (peekId() === "if" || (peekId() === "when" && hasThenAtCurrentDepth(pos + 1))) {
+      pos++;
+      const cond = parsePipe();
+      if (peekId() !== "then") {
+        throw new DogWebDiagnostic({
+          code: "E004",
+          title: "Expected 'then' in inline 'if/when ... then ... else ...'.",
+          line,
+          why: "Inline conditionals require `then` and `else`.",
+          fix: 'Write `if ok then "a" else "b"` or `when ok then "a" else "b"`.',
+        });
+      }
+      pos++;
+      const yesExpr = parseCond();
+      if (peekId() !== "else" && peekId() !== "otherwise") {
+        throw new DogWebDiagnostic({
+          code: "E004",
+          title: "Expected 'else' in inline conditional expression.",
+          line,
+          why: "Inline conditionals require an `else` fallback.",
+          fix: 'Write `if ok then "a" else "b"`.',
+        });
+      }
+      pos++;
+      const noExpr = parseCond();
+      return { kind: "cond", cond, yesExpr, noExpr, line };
+    }
+    return parsePipe();
+  }
+
+  function parsePipe() {
+    let left = parseNullish();
+    while (peek()?.type === "op" && peek().value === "|>") {
+      pos++;
+      const right = parseNullish();
+      if (right.kind === "call") {
+        left = { kind: "call", callee: right.callee, args: [left, ...right.args], line };
+      } else if (right.kind === "id") {
+        left = { kind: "call", callee: right.name, args: [left], line };
+      } else if (right.kind === "member") {
+        const raw = right.chain.join(".");
+        const callee = raw.startsWith("std.") ? right.chain[right.chain.length - 1] : raw;
+        left = { kind: "call", callee, args: [left], line };
+      } else {
+        left = { kind: "call_expr", target: right, args: [left], line };
+      }
+    }
+    return left;
+  }
+
+  function parseNullish() {
+    let left = parseOr();
+    while (peek()?.type === "op" && peek().value === "??") {
+      pos++;
+      left = { kind: "bin", op: "??", left, right: parseOr(), line };
+    }
+    return left;
+  }
 
   function parseOr() {
     let left = parseAnd();
@@ -851,7 +1085,7 @@ function parseExprNode(src, line, envTypes = new Map()) {
         pos++;
         const args = [];
         while (peek() && !(peek().type === "punct" && peek().value === ")")) {
-          args.push(parseOr());
+          args.push(parseCond());
           if (peek()?.type === "punct" && peek().value === ",") pos++;
           else break;
         }
@@ -898,18 +1132,38 @@ function parseExprNode(src, line, envTypes = new Map()) {
       }
       if (peek().type === "punct" && peek().value === "[") {
         pos++;
-        const index = parseOr();
+        let startIdx = null;
+        let isSlice = false;
+        let endIdx = null;
+        if (peek()?.type === "op" && peek().value === "..") {
+          pos++;
+          isSlice = true;
+          if (!(peek()?.type === "punct" && peek().value === "]")) {
+            endIdx = parseOr();
+          }
+        } else {
+          startIdx = parseOr();
+          if (peek()?.type === "op" && peek().value === "..") {
+            pos++;
+            isSlice = true;
+            if (!(peek()?.type === "punct" && peek().value === "]")) {
+              endIdx = parseOr();
+            }
+          }
+        }
         if (peek()?.type !== "punct" || peek().value !== "]") {
           throw new DogWebDiagnostic({
             code: "E004",
-            title: "Expected ']' after index.",
+            title: "Expected ']' after index or slice.",
             line,
             why: "Unclosed bracket index.",
             fix: "Add closing `]`.",
           });
         }
         pos++;
-        expr = { kind: "index", target: expr, index, line };
+        expr = isSlice
+          ? { kind: "slice", target: expr, start: startIdx, end: endIdx, line }
+          : { kind: "index", target: expr, index: startIdx, line };
         continue;
       }
       break;
@@ -947,13 +1201,38 @@ function parseExprNode(src, line, envTypes = new Map()) {
       pos++;
       return { kind: "bool", value: t.value, line };
     }
+    if (t.type === "null") {
+      pos++;
+      return { kind: "null", line };
+    }
+    if ((t.type === "id" && (t.value === "fn" || t.value === "do")) && tokens[pos + 1]?.type === "punct" && tokens[pos + 1].value === "(") {
+      pos += 2; // fn ( | do (
+      const params = [];
+      while (peek() && !(peek().type === "punct" && peek().value === ")")) {
+        const pt = tokens[pos++];
+        if (pt.type === "id") params.push(pt.value);
+        if (peek()?.type === "punct" && peek().value === ",") pos++;
+        else if (peek()?.type === "punct" && peek().value === ":") {
+          pos++;
+          if (peek()) pos++;
+          if (peek()?.type === "punct" && peek().value === ",") pos++;
+        }
+      }
+      if (peek()?.type === "punct" && peek().value === ")") pos++;
+      if (!(peek()?.type === "op" && peek().value === "=>")) {
+        throw new DogWebDiagnostic({ code: "E004", title: "Expected '=>' in lambda expression.", line, why: "Inline lambda requires `=>`.", fix: "Write `fn(x) => x * 2` or `do(x) => x * 2`." });
+      }
+      pos++;
+      const body = parseCond();
+      return { kind: "lambda", params, body, line };
+    }
     if (t.type === "id") {
       pos++;
       return { kind: "id", name: t.value, line };
     }
     if (t.type === "punct" && t.value === "(") {
       pos++;
-      const inner = parseOr();
+      const inner = parseCond();
       if (peek()?.type !== "punct" || peek().value !== ")") {
         throw new DogWebDiagnostic({
           code: "E004",
@@ -970,7 +1249,7 @@ function parseExprNode(src, line, envTypes = new Map()) {
       pos++;
       const elements = [];
       while (peek() && !(peek().type === "punct" && peek().value === "]")) {
-        elements.push(parseOr());
+        elements.push(parseCond());
         if (peek()?.type === "punct" && peek().value === ",") pos++;
         else break;
       }
@@ -990,7 +1269,7 @@ function parseExprNode(src, line, envTypes = new Map()) {
       pos++;
       const entries = [];
       while (peek() && !(peek().type === "punct" && peek().value === "}")) {
-        const k = parseOr();
+        const k = parseCond();
         if (peek()?.type !== "punct" || peek().value !== ":") {
           throw new DogWebDiagnostic({
             code: "E004",
@@ -1001,7 +1280,7 @@ function parseExprNode(src, line, envTypes = new Map()) {
           });
         }
         pos++;
-        const v = parseOr();
+        const v = parseCond();
         entries.push([k, v]);
         if (peek()?.type === "punct" && peek().value === ",") pos++;
         else break;
@@ -1027,7 +1306,7 @@ function parseExprNode(src, line, envTypes = new Map()) {
     });
   }
 
-  return parseOr();
+  return parseCond();
 }
 
 function emitJsFromNode(node) {
@@ -1048,6 +1327,8 @@ function emitJsFromNode(node) {
       return String(node.value);
     case "bool":
       return node.value ? "true" : "false";
+    case "null":
+      return "null";
     case "id":
       return node.name;
     case "group":
@@ -1058,6 +1339,12 @@ function emitJsFromNode(node) {
       return `(${emitJsFromNode(node.target)}).${node.field}`;
     case "index":
       return `(${emitJsFromNode(node.target)})[${emitJsFromNode(node.index)}]`;
+    case "slice":
+      return `(${emitJsFromNode(node.target)}).slice(${node.start ? emitJsFromNode(node.start) : 0}${node.end ? `, ${emitJsFromNode(node.end)}` : ""})`;
+    case "lambda":
+      return `((${node.params.join(", ")}) => (${emitJsFromNode(node.body)}))`;
+    case "call_expr":
+      return `(${emitJsFromNode(node.target)})(${node.args.map(emitJsFromNode).join(", ")})`;
     case "list":
       return `[${node.elements.map(emitJsFromNode).join(", ")}]`;
     case "map":
@@ -1066,11 +1353,17 @@ function emitJsFromNode(node) {
       return `(${node.op}(${emitJsFromNode(node.expr)}))`;
     case "bin":
       return `(${emitJsFromNode(node.left)} ${node.op} ${emitJsFromNode(node.right)})`;
+    case "cond":
+      return `((${emitJsFromNode(node.cond)}) ? (${emitJsFromNode(node.yesExpr)}) : (${emitJsFromNode(node.noExpr)}))`;
     case "call": {
       const a = node.args.map(emitJsFromNode);
       const mapCall = {
+        show: () => `__dogWeb.print(${a[0]})`,
         say: () => `__dogWeb.print(${a[0]})`,
         print: () => `__dogWeb.print(${a[0]})`,
+        check: () => `(() => { if (!(${a[0]})) { throw new Error(${a[1] || '"Check failed"'}); } return true; })()`,
+        assert: () => `(() => { if (!(${a[0]})) { throw new Error(${a[1] || '"Assertion failed"'}); } return true; })()`,
+        assert_eq: () => `(() => { if (JSON.stringify(${a[0]}) !== JSON.stringify(${a[1]})) { throw new Error("Assertion failed: expected equal values"); } return true; })()`,
         cli_info: () => `__dogWeb.print(${a[0]})`,
         cli_success: () => `__dogWeb.print(${a[0]})`,
         cli_warn: () => `__dogWeb.print(${a[0]})`,
@@ -1078,9 +1371,18 @@ function emitJsFromNode(node) {
         text: () => `String(${a[0]})`,
         number: () => `parseInt(String(${a[0]}), 10)`,
         decimal: () => `Number(${a[0]})`,
+        abs: () => `Math.abs(${a[0]})`,
+        min: () => `Math.min(${a[0]}, ${a[1]})`,
+        max: () => `Math.max(${a[0]}, ${a[1]})`,
+        round: () => `Math.round(${a[0]})`,
+        floor: () => `Math.floor(${a[0]})`,
+        ceil: () => `Math.ceil(${a[0]})`,
+        clamp: () => `Math.min(Math.max(${a[0]}, ${a[1]}), ${a[2]})`,
         lower: () => `String(${a[0]}).toLowerCase()`,
         upper: () => `String(${a[0]}).toUpperCase()`,
         trim: () => `String(${a[0]}).trim()`,
+        starts_with: () => `String(${a[0]}).startsWith(String(${a[1]}))`,
+        ends_with: () => `String(${a[0]}).endsWith(String(${a[1]}))`,
         contains: () => `String(${a[0]}).includes(String(${a[1]}))`,
         split: () => `String(${a[0]}).split(String(${a[1]}))`,
         join: () => `(${a[0]}).join(String(${a[1]}))`,
@@ -1090,6 +1392,7 @@ function emitJsFromNode(node) {
         clear: () => (a.length === 0 ? "console.clear()" : `(${a[0]}.length = 0)`),
         range: () => `Array.from({ length: Math.max(0, (${a[1]}) - (${a[0]})) }, (_, i) => (${a[0]}) + i)`,
         map_get: () => `(${a[0]})[${a[1]}]`,
+        map_opt: () => `(Object.prototype.hasOwnProperty.call(${a[0]}, ${a[1]}) ? (${a[0]})[${a[1]}] : null)`,
         map_get_or: () => `(Object.prototype.hasOwnProperty.call(${a[0]}, ${a[1]}) ? (${a[0]})[${a[1]}] : ${a[2]})`,
         map_set: () => `((${a[0]})[${a[1]}] = ${a[2]})`,
         map_has: () => `Object.prototype.hasOwnProperty.call(${a[0]}, ${a[1]})`,
@@ -1118,6 +1421,18 @@ function emitJsFromNode(node) {
         button: () => `__dogWeb.webButton(${a[0]}, ${a[1]})`,
         web_input: () => `__dogWeb.webInput(${a[0]}, ${a[1]}, ${a[2]})`,
         input: () => `__dogWeb.webInput(${a[0]}, ${a[1]}, ${a[2]})`,
+        web_badge: () => `__dogWeb.webBadge(${a[0]}, ${a[1] || '""'})`,
+        web_alert: () => `__dogWeb.webAlert(${a[0]}, ${a[1]}, ${a[2] || '"info"'})`,
+        web_field: () => `__dogWeb.webField(${a[0]}, ${a[1]}, ${a[2] || '""'}, ${a[3] || '"text"'})`,
+        web_form: () => `__dogWeb.webForm(${a[0]}, ${a[1]}, ${a[2] || '"Submit"'})`,
+        web_table: () => `__dogWeb.webTable(${a[0]}, ${a[1]})`,
+        web_progress: () => `__dogWeb.webProgress(${a[0]}, ${a[1]}, ${a[2] || "100"})`,
+        web_toast: () => `__dogWeb.webToast(${a[0]}, ${a[1] || '"info"'})`,
+        web_validate_required: () => `__dogWeb.webValidateRequired(${a[0]}, ${a[1] || '""'})`,
+        web_validate_email: () => `__dogWeb.webValidateEmail(${a[0]})`,
+        dom_focus: () => `__dogWeb.domFocus(${a[0]})`,
+        dom_attr: () => `__dogWeb.domAttr(${a[0]}, ${a[1]})`,
+        dom_set_attr: () => `__dogWeb.domSetAttr(${a[0]}, ${a[1]}, ${a[2]})`,
         dom_mount: () => `__dogWeb.domMount(${a[0]}, ${a[1]})`,
         mount: () => `__dogWeb.domMount(${a[0]}, ${a[1]})`,
         dom_set_text: () => `__dogWeb.domSetText(${a[0]}, ${a[1]})`,
@@ -1139,6 +1454,14 @@ function emitJsFromNode(node) {
         dom_on: () => `__dogWeb.domOn(${a[0]}, ${a[1]}, ${a[2]})`,
         on: () => `__dogWeb.domOn(${a[0]}, ${a[1]}, ${a[2]})`,
         web_title: () => `__dogWeb.webTitle(${a[0]})`,
+        web_component: () => `__dogWeb.webComponent(${a[0]}, ${a[1]})`,
+        web_render_component: () => `__dogWeb.webRenderComponent(${a[0]}, ${a[1] || "{}"})`,
+        web_state_set: () => `__dogWeb.webStateSet(${a[0]}, ${a[1]})`,
+        web_state_get: () => `__dogWeb.webStateGet(${a[0]}, ${a[1] || '""'})`,
+        web_on_state: () => `__dogWeb.webOnState(${a[0]}, ${a[1]})`,
+        dom_delegate: () => `__dogWeb.domDelegate(${a[0]}, ${a[1]}, ${a[2]}, ${a[3]})`,
+        web_tabs: () => `__dogWeb.webTabs(${a[0]}, ${a[1]}, ${a[2] || '""'})`,
+        web_modal: () => `__dogWeb.webModal(${a[0]}, ${a[1]}, ${a[2]})`,
         web_storage_set: () => `__dogWeb.webStorageSet(${a[0]}, ${a[1]})`,
         storage_set: () => `__dogWeb.webStorageSet(${a[0]}, ${a[1]})`,
         web_storage_get: () => `__dogWeb.webStorageGet(${a[0]})`,
@@ -1159,17 +1482,82 @@ function emitJsFromNode(node) {
 export function compileDogSourceToJs(source) {
   const rawLines = String(source || "").split(/\r?\n/);
   const envTypes = new Map();
-  const lines = rawLines.map((raw, idx) => ({
-    line: idx + 1,
-    text: stripDgComment(raw).trim(),
-  })).filter((l) => l.text.length > 0);
+  const lines = [];
+  let bufText = "";
+  let bufLine = 1;
+  let depth = 0;
+
+  function deltaBracketDepth(str) {
+    let d = 0;
+    let inStr = false;
+    let esc = false;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str[i];
+      if (esc) { esc = false; continue; }
+      if (inStr) {
+        if (ch === "\\") esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') { inStr = true; continue; }
+      if (ch === "(" || ch === "[" || ch === "{") d++;
+      else if (ch === ")" || ch === "]" || ch === "}") d--;
+    }
+    return d;
+  }
+
+  rawLines.forEach((raw, idx) => {
+    const t = stripDgComment(raw).trim();
+    if (!t) return;
+    if (depth > 0) {
+      bufText += ` ${t}`;
+      depth += deltaBracketDepth(t);
+      if (depth <= 0) {
+        lines.push({ line: bufLine, text: bufText });
+        bufText = "";
+        depth = 0;
+      }
+    } else {
+      const d = deltaBracketDepth(t);
+      if (d > 0) {
+        bufText = t;
+        bufLine = idx + 1;
+        depth = d;
+      } else {
+        lines.push({ line: idx + 1, text: t });
+      }
+    }
+  });
+  if (bufText) lines.push({ line: bufLine, text: bufText });
 
   let cursor = 0;
+
+  function splitTopLevelRange(expr) {
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    for (let i = 0; i < expr.length - 1; i++) {
+      const ch = expr[i];
+      if (esc) { esc = false; continue; }
+      if (inStr) {
+        if (ch === "\\") esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') { inStr = true; continue; }
+      if ("([{".includes(ch)) depth++;
+      else if (")]}".includes(ch)) depth = Math.max(0, depth - 1);
+      else if (depth === 0 && ch === "." && expr[i + 1] === ".") {
+        return [expr.slice(0, i).trim(), expr.slice(i + 2).trim()];
+      }
+    }
+    return null;
+  }
 
   function parseBlock(stopTokens) {
     const out = [];
     while (cursor < lines.length) {
-      const { line, text } = lines[cursor];
+      const { text } = lines[cursor];
       if (stopTokens.some((tok) => text === tok || text.startsWith(`${tok} `))) {
         return out;
       }
@@ -1181,7 +1569,7 @@ export function compileDogSourceToJs(source) {
         title: "Missing `end` closing block.",
         line: lines[lines.length - 1]?.line || 1,
         why: `Reached end of file while expecting ${stopTokens.join(" or ")}.`,
-        fix: "Add closing `end` for each open block (`define`, `if`, `while`, `for`, `repeat`, `try`).",
+        fix: "Add closing `end` for each open block (`define`, `do`, `if`, `when`, `while`, `for`, `each`, `repeat`, `loop`, `try`).",
       });
     }
     return out;
@@ -1193,14 +1581,24 @@ export function compileDogSourceToJs(source) {
     if (text.startsWith("use ")) {
       return `// ${text}`;
     }
-    if (text === "break" || text === "continue") {
-      return `${text};`;
+    if (/^type\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=/.test(text)) {
+      return `// ${text}`;
     }
-    if (text === "return") {
+    if (text === "break" || text === "stop") {
+      return "break;";
+    }
+    if (text === "continue" || text === "skip") {
+      return "continue;";
+    }
+    if (text === "return" || text === "give") {
       return "return;";
     }
     if (text.startsWith("return ")) {
       const node = parseExprNode(text.slice(7).trim(), line, envTypes);
+      return `return ${emitJsFromNode(node)};`;
+    }
+    if (text.startsWith("give ") && !/^give\s*=/.test(text)) {
+      const node = parseExprNode(text.slice(5).trim(), line, envTypes);
       return `return ${emitJsFromNode(node)};`;
     }
 
@@ -1319,17 +1717,27 @@ export function compileDogSourceToJs(source) {
       return calls.join("\n");
     }
 
-    // Bindings: let / var / const
-    const bindMatch = text.match(/^(let|var|const)\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*:\s*[^=]+)?\s*=\s*(.+)$/);
+    // Destructuring: let / var / const / keep / make [a, b] = list
+    const destructMatch = text.match(/^(let|var|const|keep|make)\s+\[([^\]]+)\]\s*=\s*(.+)$/);
+    if (destructMatch) {
+      const [, kw, rawNames, exprStr] = destructMatch;
+      const node = parseExprNode(exprStr, line, envTypes);
+      const names = rawNames.split(",").map((s) => s.trim()).filter(Boolean);
+      const jsKw = (kw === "var" || kw === "make") ? "let" : "const";
+      return `${jsKw} [${names.join(", ")}] = ${emitJsFromNode(node)};`;
+    }
+
+    // Bindings: let / var / const / keep / make
+    const bindMatch = text.match(/^(let|var|const|keep|make)\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*:\s*[^=]+)?\s*=\s*(.+)$/);
     if (bindMatch) {
       const [, kw, name, exprStr] = bindMatch;
       const node = parseExprNode(exprStr, line, envTypes);
       envTypes.set(name, inferRoughType(node, envTypes));
-      const jsKw = kw === "var" ? "let" : "const";
+      const jsKw = (kw === "var" || kw === "make") ? "let" : "const";
       return `${jsKw} ${name} = ${emitJsFromNode(node)};`;
     }
 
-    // Natural English assignments
+    // Natural English & Simple Style assignments
     const setMatch = text.match(/^set\s+(.+?)\s+to\s+(.+)$/);
     if (setMatch) {
       const [, lhs, rhs] = setMatch;
@@ -1343,6 +1751,31 @@ export function compileDogSourceToJs(source) {
       const op = verb === "increase" ? "+=" : "-=";
       return `${lhs.trim()} ${op} ${emitJsFromNode(node)};`;
     }
+    const addToMatch = text.match(/^add\s+(.+?)\s+to\s+([a-zA-Z_][a-zA-Z0-9_.\[\]]*)$/);
+    if (addToMatch) {
+      const node = parseExprNode(addToMatch[1], line, envTypes);
+      return `${addToMatch[2].trim()} += ${emitJsFromNode(node)};`;
+    }
+    const takeFromMatch = text.match(/^take\s+(.+?)\s+from\s+([a-zA-Z_][a-zA-Z0-9_.\[\]]*)$/);
+    if (takeFromMatch) {
+      const node = parseExprNode(takeFromMatch[1], line, envTypes);
+      return `${takeFromMatch[2].trim()} -= ${emitJsFromNode(node)};`;
+    }
+    const bumpMatch = text.match(/^bump\s+([a-zA-Z_][a-zA-Z0-9_.\[\]]*)(?:\s+by\s+(.+))?$/);
+    if (bumpMatch) {
+      const deltaJs = bumpMatch[2] ? emitJsFromNode(parseExprNode(bumpMatch[2], line, envTypes)) : "1";
+      return `${bumpMatch[1].trim()} += ${deltaJs};`;
+    }
+    const showStmtMatch = text.match(/^(?:show|print|say)\s+(?![=(])(.+)$/);
+    if (showStmtMatch) {
+      const node = parseExprNode(showStmtMatch[1].trim(), line, envTypes);
+      return `__dogWeb.print(${emitJsFromNode(node)});`;
+    }
+    const checkStmtMatch = text.match(/^(?:check|assert)\s+(?![=(])(.+)$/);
+    if (checkStmtMatch) {
+      const node = parseExprNode(checkStmtMatch[1].trim(), line, envTypes);
+      return `if (!(${emitJsFromNode(node)})) { throw new Error("Check failed"); }`;
+    }
 
     // Compound assignment & direct assignment
     const compMatch = text.match(/^([a-zA-Z_][a-zA-Z0-9_.\[\]]*)\s*(\+=|-=|\*=|\/=|%=|=)\s*(.+)$/);
@@ -1352,8 +1785,30 @@ export function compileDogSourceToJs(source) {
       return `${lhs} ${op} ${emitJsFromNode(node)};`;
     }
 
-    // Functions: define / fn / function
-    const fnMatch = text.match(/^(?:define|fn|function)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)(?:\s*(?:returns|->)\s*(.+))?$/);
+    // One-liner function across all styles: define|fn|function|do name(params) [-> T | returns T] = expr
+    const simpleOneLinerMatch = text.match(/^(?:define|fn|function|do)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)(?:\s*(?:->|returns)\s*[^=]+)?\s*=\s*(.+)$/);
+    if (simpleOneLinerMatch) {
+      const [, name, rawParams, bodyExpr] = simpleOneLinerMatch;
+      const params = splitTopLevelCommas(rawParams).map((p) => {
+        const eqIdx = p.indexOf("=");
+        let defJs = "";
+        let left = p;
+        if (eqIdx >= 0) {
+          left = p.slice(0, eqIdx).trim();
+          const defNode = parseExprNode(p.slice(eqIdx + 1).trim(), line, envTypes);
+          defJs = ` = ${emitJsFromNode(defNode)}`;
+        }
+        const colonIdx = left.indexOf(":");
+        const pname = (colonIdx >= 0 ? left.slice(0, colonIdx) : left).trim();
+        envTypes.set(pname, "unknown");
+        return `${pname}${defJs}`;
+      });
+      const retNode = parseExprNode(bodyExpr.trim(), line, envTypes);
+      return `function ${name}(${params.join(", ")}) {\n  return ${emitJsFromNode(retNode)};\n}\n__dogFns[${JSON.stringify(name)}] = ${name};`;
+    }
+
+    // Functions: define / fn / function / do
+    const fnMatch = text.match(/^(?:define|fn|function|do)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)(?:\s*(?:returns|->)\s*(.+))?$/);
     if (fnMatch) {
       const [, name, rawParams] = fnMatch;
       const params = splitTopLevelCommas(rawParams).map((p) => {
@@ -1385,28 +1840,41 @@ export function compileDogSourceToJs(source) {
       return `function ${name}(${params.join(", ")}) {\n${body.map((s) => `  ${s}`).join("\n")}\n}\n__dogFns[${JSON.stringify(name)}] = ${name};`;
     }
 
-    // if / unless
-    if (text.startsWith("if ") || text.startsWith("unless ")) {
+    // if / unless / when
+    if (text.startsWith("if ") || text.startsWith("unless ") || text.startsWith("when ")) {
       const isUnless = text.startsWith("unless ");
-      const rawCond = (isUnless ? text.slice(7) : text.slice(3)).replace(/\s+then$/, "").trim();
+      const leadLen = isUnless ? 7 : text.startsWith("when ") ? 5 : 3;
+      const rawCond = text.slice(leadLen).replace(/\s+then$/, "").trim();
       const condNode = parseExprNode(rawCond, line, envTypes);
       const condJs = isUnless ? `!(${emitJsFromNode(condNode)})` : emitJsFromNode(condNode);
-      const branches = [{ condJs, body: parseBlock(["elif", "else", "otherwise", "end"]) }];
+      const branches = [{ condJs, body: parseBlock(["elif", "or when", "else", "otherwise", "end"]) }];
 
       while (cursor < lines.length && lines[cursor].text !== "end") {
         const kwLine = lines[cursor++];
         const kt = kwLine.text;
         if (kt.startsWith("elif ")) {
-          const c = kt.slice(5).replace(/\s+then$/, "").trim();
+          const c = kt.slice(5).replace(/\bthen\s*$/, "").trim();
           branches.push({
             condJs: emitJsFromNode(parseExprNode(c, kwLine.line, envTypes)),
-            body: parseBlock(["elif", "else", "otherwise", "end"]),
+            body: parseBlock(["elif", "or when", "else", "otherwise", "end"]),
+          });
+        } else if (kt.startsWith("or when ")) {
+          const c = kt.slice(8).replace(/\bthen\s*$/, "").trim();
+          branches.push({
+            condJs: emitJsFromNode(parseExprNode(c, kwLine.line, envTypes)),
+            body: parseBlock(["elif", "or when", "else", "otherwise", "end"]),
+          });
+        } else if (kt.startsWith("else if ")) {
+          const c = kt.slice(8).replace(/\bthen\s*$/, "").trim();
+          branches.push({
+            condJs: emitJsFromNode(parseExprNode(c, kwLine.line, envTypes)),
+            body: parseBlock(["elif", "or when", "else", "otherwise", "end"]),
           });
         } else if (kt.startsWith("otherwise if ")) {
-          const c = kt.slice(13).replace(/\s+then$/, "").trim();
+          const c = kt.slice(13).replace(/\bthen\s*$/, "").trim();
           branches.push({
             condJs: emitJsFromNode(parseExprNode(c, kwLine.line, envTypes)),
-            body: parseBlock(["elif", "else", "otherwise", "end"]),
+            body: parseBlock(["elif", "or when", "else", "otherwise", "end"]),
           });
         } else if (kt === "else" || kt === "otherwise") {
           branches.push({ condJs: null, body: parseBlock(["end"]) });
@@ -1418,7 +1886,7 @@ export function compileDogSourceToJs(source) {
           code: "E005",
           title: "Missing `end` after conditional block.",
           line,
-          why: "Open `if` / `unless` block has no closing `end`.",
+          why: "Open `if` / `unless` / `when` block has no closing `end`.",
           fix: "Add `end`.",
         });
       }
@@ -1434,7 +1902,7 @@ export function compileDogSourceToJs(source) {
     // while / until
     if (text.startsWith("while ") || text.startsWith("until ")) {
       const isUntil = text.startsWith("until ");
-      const rawCond = (isUntil ? text.slice(6) : text.slice(6)).replace(/\s+then$/, "").trim();
+      const rawCond = text.slice(6).replace(/\s+then$/, "").trim();
       const condJs = emitJsFromNode(parseExprNode(rawCond, line, envTypes));
       const body = parseBlock(["end"]);
       if (lines[cursor]?.text !== "end") {
@@ -1444,21 +1912,63 @@ export function compileDogSourceToJs(source) {
       return `while (${isUntil ? `!(${condJs})` : condJs}) {\n${body.map((s) => `  ${s}`).join("\n")}\n}`;
     }
 
-    // repeat N times
-    if (text.startsWith("repeat ")) {
-      const rawCount = text.slice(7).replace(/\s+times$/, "").trim();
-      const countJs = emitJsFromNode(parseExprNode(rawCount, line, envTypes));
+    // repeat N [times] / loop N [times] / loop
+    if (text.startsWith("repeat ") || text === "loop" || text.startsWith("loop ")) {
+      const isInfinite = text === "loop";
+      const rawCount = isInfinite ? "" : (text.startsWith("loop ") ? text.slice(5) : text.slice(7)).replace(/\btimes\s*$/, "").trim();
       const body = parseBlock(["end"]);
       if (lines[cursor]?.text !== "end") {
-        throw new DogWebDiagnostic({ code: "E005", title: "Missing `end` after `repeat`.", line, why: "Repeat loop is unclosed.", fix: "Add `end`." });
+        throw new DogWebDiagnostic({ code: "E005", title: "Missing `end` after loop block.", line, why: "Loop is unclosed.", fix: "Add `end`." });
       }
       cursor++;
+      if (isInfinite) {
+        return `while (true) {\n${body.map((s) => `  ${s}`).join("\n")}\n}`;
+      }
+      const countJs = emitJsFromNode(parseExprNode(rawCount, line, envTypes));
       return `for (let __rep = 0; __rep < (${countJs}); __rep++) {\n${body.map((s) => `  ${s}`).join("\n")}\n}`;
     }
 
-    // for i from A to B | for each x in list
+    // each x in a..b | each x in list | each x from A to B
+    if (text.startsWith("each ")) {
+      const eachFromMatch = text.match(/^each\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+from\s+(.+?)\s+to\s+(.+)$/);
+      let headJs = "";
+      if (eachFromMatch) {
+        const [, varName, sExpr, eExpr] = eachFromMatch;
+        const sJs = emitJsFromNode(parseExprNode(sExpr, line, envTypes));
+        const eJs = emitJsFromNode(parseExprNode(eExpr, line, envTypes));
+        headJs = `for (let ${varName} = (${sJs}); ${varName} <= (${eJs}); ${varName}++)`;
+      } else {
+        const eachMatch = text.match(/^each\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+in\s+(.+)$/);
+        if (!eachMatch) {
+          throw new DogWebDiagnostic({
+            code: "E004",
+            title: "Invalid `each` loop header.",
+            line,
+            why: `Could not parse \`${text}\`.`,
+            fix: "Use `each i in 1..5`, `each i from 1 to 5`, or `each item in list`.",
+          });
+        }
+        const [, varName, iterRaw] = eachMatch;
+        const rangeParts = splitTopLevelRange(iterRaw);
+        if (rangeParts) {
+          const sJs = emitJsFromNode(parseExprNode(rangeParts[0], line, envTypes));
+          const eJs = emitJsFromNode(parseExprNode(rangeParts[1], line, envTypes));
+          headJs = `for (let ${varName} = (${sJs}); ${varName} <= (${eJs}); ${varName}++)`;
+        } else {
+          headJs = `for (const ${varName} of ${emitJsFromNode(parseExprNode(iterRaw, line, envTypes))})`;
+        }
+      }
+      const body = parseBlock(["end"]);
+      if (lines[cursor]?.text !== "end") {
+        throw new DogWebDiagnostic({ code: "E005", title: "Missing `end` after `each` loop.", line, why: "Each loop is unclosed.", fix: "Add `end`." });
+      }
+      cursor++;
+      return `${headJs} {\n${body.map((s) => `  ${s}`).join("\n")}\n}`;
+    }
+
+    // for i from A to B | for each x in list | for i in A..B
     if (text.startsWith("for ")) {
-      const fromMatch = text.match(/^for\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+from\s+(.+?)\s+to\s+(.+)$/);
+      const fromMatch = text.match(/^for\s+(?:each\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s+from\s+(.+?)\s+to\s+(.+)$/);
       let headJs = "";
       if (fromMatch) {
         const [, varName, sExpr, eExpr] = fromMatch;
@@ -1473,11 +1983,18 @@ export function compileDogSourceToJs(source) {
             title: "Invalid `for` loop header.",
             line,
             why: `Could not parse \`${text}\`.`,
-            fix: "Use `for i from 1 to 5` or `for each item in list`.",
+            fix: "Use `for i from 1 to 5`, `for i in 1..5`, or `for each item in list`.",
           });
         }
         const [, varName, listExpr] = eachMatch;
-        headJs = `for (const ${varName} of ${emitJsFromNode(parseExprNode(listExpr, line, envTypes))})`;
+        const rangeParts = splitTopLevelRange(listExpr);
+        if (rangeParts) {
+          const sJs = emitJsFromNode(parseExprNode(rangeParts[0], line, envTypes));
+          const eJs = emitJsFromNode(parseExprNode(rangeParts[1], line, envTypes));
+          headJs = `for (let ${varName} = (${sJs}); ${varName} <= (${eJs}); ${varName}++)`;
+        } else {
+          headJs = `for (const ${varName} of ${emitJsFromNode(parseExprNode(listExpr, line, envTypes))})`;
+        }
       }
       const body = parseBlock(["end"]);
       if (lines[cursor]?.text !== "end") {
@@ -1487,13 +2004,13 @@ export function compileDogSourceToJs(source) {
       return `${headJs} {\n${body.map((s) => `  ${s}`).join("\n")}\n}`;
     }
 
-    // try ... catch err ... end
+    // try ... catch err / oops err ... end
     if (text === "try") {
-      const tryBody = parseBlock(["catch", "end"]);
+      const tryBody = parseBlock(["catch", "oops", "end"]);
       let catchVar = "err";
       let catchBody = [];
-      if (lines[cursor]?.text.startsWith("catch ")) {
-        catchVar = lines[cursor].text.slice(6).trim() || "err";
+      if (lines[cursor]?.text.startsWith("catch") || lines[cursor]?.text.startsWith("oops")) {
+        catchVar = lines[cursor].text.replace(/^(catch|oops)\s*/, "").trim() || "err";
         cursor++;
         catchBody = parseBlock(["end"]);
       }
@@ -1692,6 +2209,14 @@ const __dogWeb = {
   webGrid(cols, items) { return '<div class="dg-grid" style="grid-template-columns:repeat(' + cols + ',minmax(0,1fr));">' + (items || []).join("\\n") + "</div>"; },
   webButton(id, label) { return '<button id="' + __dogEscape(id) + '" class="dg-btn" type="button">' + __dogEscape(label) + "</button>"; },
   webInput(id, ph, val) { return '<input id="' + __dogEscape(id) + '" class="dg-input" type="text" placeholder="' + __dogEscape(ph) + '" value="' + __dogEscape(val) + '" />'; },
+  webBadge(label, tone) { return '<span class="dg-badge dg-badge-' + __dogEscape(tone || "neutral") + '">' + __dogEscape(label) + "</span>"; },
+  webAlert(title, msg, tone) { return '<div class="dg-alert dg-alert-' + __dogEscape(tone || "info") + '" role="' + (tone === "error" ? "alert" : "status") + '"><strong>' + __dogEscape(title) + '</strong>: ' + __dogEscape(msg) + "</div>"; },
+  webField(id, label, ph, typ) { return '<div class="dg-field"><label class="dg-label" for="' + __dogEscape(id) + '">' + __dogEscape(label) + '</label><input id="' + __dogEscape(id) + '" class="dg-input" type="' + __dogEscape(typ || "text") + '" placeholder="' + __dogEscape(ph || "") + '" /></div>'; },
+  webForm(id, inner, btnLabel) { return '<form id="' + __dogEscape(id) + '" class="dg-form" novalidate>' + String(inner || "") + '<button type="submit" class="dg-btn">' + __dogEscape(btnLabel || "Submit") + "</button></form>"; },
+  webValidateRequired(sel) { const el = __dogQ(sel); const ok = Boolean(el && String(el.value || "").trim().length > 0); if (el && el.setAttribute) el.setAttribute("aria-invalid", String(!ok)); return ok; },
+  webValidateEmail(sel) { const el = __dogQ(sel); const v = el ? String(el.value || "").trim() : ""; const ok = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(v); if (el && el.setAttribute) el.setAttribute("aria-invalid", String(!ok)); return ok; },
+  domFocus(sel) { const el = __dogQ(sel); if (el && el.focus) el.focus(); },
+  domSetAttr(sel, attr, val) { const el = __dogQ(sel); if (el && el.setAttribute) el.setAttribute(String(attr), String(val)); },
   domMount(sel, html) {
     const el = __dogQ(sel) || (typeof document !== "undefined" ? document.body : null);
     if (el) el.innerHTML = String(html);
@@ -1707,12 +2232,72 @@ const __dogWeb = {
   domOn(sel, ev, fnName) {
     const el = __dogQ(sel);
     if (!el) return;
-    el.addEventListener(String(ev), () => {
+    el.addEventListener(String(ev), (e) => {
+      if (String(ev) === "submit" && e && typeof e.preventDefault === "function") e.preventDefault();
       const fn = __dogFns[fnName];
       if (typeof fn === "function") fn();
     });
   },
   webTitle(t) { if (typeof document !== "undefined") document.title = String(t); },
+  webComponent(name, fnName) { if (!this._components) this._components = Object.create(null); this._components[String(name)] = String(fnName); },
+  webRenderComponent(name, props) {
+    const fnName = this._components && this._components[String(name)];
+    const fn = fnName ? __dogFns[fnName] : __dogFns[String(name)];
+    return typeof fn === "function" ? String(fn(props || {})) : "";
+  },
+  webStateSet(k, v) {
+    if (!this._state) this._state = Object.create(null);
+    if (!this._watchers) this._watchers = Object.create(null);
+    this._state[String(k)] = v;
+    const list = this._watchers[String(k)] || [];
+    for (const fnName of list) { const fn = __dogFns[fnName]; if (typeof fn === "function") fn(v); }
+    return v;
+  },
+  webStateGet(k, fallback) {
+    if (!this._state) return fallback;
+    return Object.prototype.hasOwnProperty.call(this._state, String(k)) ? this._state[String(k)] : fallback;
+  },
+  webOnState(k, fnName) {
+    if (!this._watchers) this._watchers = Object.create(null);
+    const key = String(k);
+    if (!this._watchers[key]) this._watchers[key] = [];
+    this._watchers[key].push(String(fnName));
+  },
+  domDelegate(rootSel, childSel, ev, fnName) {
+    const root = __dogQ(rootSel) || (typeof document !== "undefined" ? document : null);
+    if (!root || !root.addEventListener) return;
+    root.addEventListener(String(ev), (e) => {
+      const target = e.target && e.target.closest ? e.target.closest(String(childSel)) : null;
+      if (target) {
+        const fn = __dogFns[fnName];
+        if (typeof fn === "function") fn(target.dataset ? (target.dataset.tab || target.id || "") : "");
+      }
+    });
+  },
+  webTabs(id, tabsMap, activeKey) {
+    const entries = Object.entries(tabsMap || {});
+    const active = activeKey || (entries[0] ? entries[0][0] : "");
+    const btns = entries.map(([k, lbl]) => '<button type="button" class="dg-tab-btn' + (k === active ? ' is-active' : '') + '" data-tab="' + __dogEscape(k) + '" role="tab" aria-selected="' + String(k === active) + '">' + __dogEscape(lbl) + '</button>').join("");
+    return '<div id="' + __dogEscape(id) + '" class="dg-tabs" role="tablist">' + btns + '</div>';
+  },
+  webModal(id, title, body) {
+    return '<dialog id="' + __dogEscape(id) + '" class="dg-modal" aria-label="' + __dogEscape(title) + '"><div class="dg-modal-head"><strong>' + __dogEscape(title) + '</strong></div><div class="dg-modal-body">' + String(body || "") + '</div></dialog>';
+  },
+  webTable(headers, rows) {
+    const ths = (Array.isArray(headers) ? headers : []).map((h) => '<th scope="col">' + __dogEscape(h) + '</th>').join("");
+    const trs = (Array.isArray(rows) ? rows : []).map((r) => '<tr>' + (Array.isArray(r) ? r : [r]).map((c) => '<td>' + __dogEscape(c) + '</td>').join("") + '</tr>').join("");
+    return '<table class="dg-table"><thead><tr>' + ths + '</tr></thead><tbody>' + trs + '</tbody></table>';
+  },
+  webProgress(id, value, max) {
+    return '<progress id="' + __dogEscape(id) + '" class="dg-progress" value="' + __dogEscape(value) + '" max="' + __dogEscape(max || 100) + '"></progress>';
+  },
+  webToast(msg, tone) {
+    return '<div class="dg-toast dg-toast-' + __dogEscape(tone || "info") + '" role="status">' + __dogEscape(msg) + '</div>';
+  },
+  domAttr(sel, attr) {
+    const el = __dogQ(sel);
+    return el && el.getAttribute ? (el.getAttribute(String(attr)) || "") : "";
+  },
   webStorageSet(k, v) { try { localStorage.setItem(String(k), String(v)); } catch { __dogStorageFallback[k] = String(v); } },
   webStorageGet(k) { try { return localStorage.getItem(String(k)) || ""; } catch { return __dogStorageFallback[k] || ""; } },
   webRoute() { return typeof location !== "undefined" ? (location.hash || location.pathname || "/") : "/"; },
@@ -1723,14 +2308,12 @@ function escapeHtml(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-export function compileDogWebsite({ code, css = "", title = "DOG Web App" }) {
+export function compileDogWebsite({ code, css = "", title = "DOG Web App", minify = false, treeShake = false }) {
   try {
-    const dgssCss = css.trim() ? compileDogCss(css) : "";
+    const rawDgss = css.trim() ? compileDogCss(css, { minify: false }) : "";
     const userJs = compileDogSourceToJs(code);
     const fullJs = `${RUNTIME_HEADER}\n\n${userJs}\n__dogFlushStyles();`;
 
-    // Also harvest any inline `style ... end` rules produced at top level in an isolated scope
-    // (shadowing browser globals so compiling never mutates the host studio page).
     let inlineCss = "";
     try {
       const collectFn = new Function(
@@ -1748,7 +2331,15 @@ export function compileDogWebsite({ code, css = "", title = "DOG Web App" }) {
       inlineCss = "";
     }
 
-    const compiledCss = [dgssCss, inlineCss].filter((s) => s && s.trim().length > 0).join("\n\n");
+    let combinedCss = [rawDgss, inlineCss].filter((s) => s && s.trim().length > 0).join("\n\n");
+    let prunedSelectors = [];
+    if (treeShake && combinedCss) {
+      const shaken = treeShakeDogCss(combinedCss, `${code}\n${userJs}\ndg-nav dg-nav-links dg-card dg-grid dg-btn dg-input dg-badge dg-alert dg-field dg-form dg-tabs dg-tab-btn dg-modal dg-table dg-progress dg-toast`);
+      combinedCss = shaken.css;
+      prunedSelectors = shaken.prunedSelectors;
+    }
+    const compiledCss = minify && combinedCss ? minifyDogCss(combinedCss) : combinedCss;
+    const diags = analyzeWebCompatibilityAndA11y({ code, css: combinedCss, userJs, prunedCount: prunedSelectors.length });
     const safeJs = fullJs.replace(/<\/script/gi, "<\\/script");
     const indexHtml = `<!doctype html>
 <html lang="en">
@@ -1767,13 +2358,30 @@ ${safeJs}
   </script>
 </body>
 </html>`;
-    return { ok: true, css: compiledCss, js: userJs, runtimeJs: fullJs, indexHtml };
+    return {
+      ok: true,
+      css: compiledCss,
+      js: userJs,
+      runtimeJs: fullJs,
+      indexHtml,
+      prunedSelectors,
+      diagnostics: diags,
+      diagnosticsJson: JSON.stringify({
+        ok: true,
+        engine: "dog-web/1.0.0",
+        minified: Boolean(minify),
+        treeShaken: Boolean(treeShake),
+        prunedSelectors,
+        diagnostics: diags,
+      }, null, 2),
+    };
   } catch (err) {
     if (err instanceof DogWebDiagnostic) {
       return {
         ok: false,
         errorCode: err.code,
         error: err.format(),
+        diagnosticsJson: JSON.stringify({ ok: false, engine: "dog-web/1.0.0", diagnostics: [err.toJSON()] }, null, 2),
         css: "",
         js: "",
         indexHtml: "",
@@ -1783,6 +2391,7 @@ ${safeJs}
       ok: false,
       errorCode: "E004",
       error: String(err.message || err),
+      diagnosticsJson: JSON.stringify({ ok: false, engine: "dog-web/1.0.0", diagnostics: [{ code: "E004", severity: "error", line: 1, title: String(err.message || err) }] }, null, 2),
       css: "",
       js: "",
       indexHtml: "",

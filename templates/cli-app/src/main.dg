@@ -1,0 +1,17 @@
+# Official DOG CLI Application Template
+use "std.cli"
+use "std.text"
+use "std.collections"
+
+define format_greeting(name: text, loud: bool = false) returns text
+    let trimmed = trim(name)
+    let clean = if trimmed is "" then "Developer" else trimmed
+    if loud then
+        return upper($"Hello, {clean}!")
+    end
+    return $"Hello, {clean}!"
+end
+
+cli_info("Starting DOG CLI Template")
+let msg = format_greeting("Termux Builder", false)
+cli_success(msg)

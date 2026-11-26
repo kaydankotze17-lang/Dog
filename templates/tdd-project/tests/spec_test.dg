@@ -1,0 +1,14 @@
+# Test-Driven Specification Suite
+use "std.crypto"
+use "std.data"
+
+define checksum_record(id: text, payload: text) returns text
+    return sha256($"{id}:{payload}")
+end
+
+let hash_a = checksum_record("doc-1", "hello")
+let hash_b = checksum_record("doc-1", "hello")
+assert_eq(hash_a, hash_b, "deterministic SHA-256 digest")
+assert(secure_eq(hash_a, hash_b), "constant-time equality matches")
+assert_contains(json_stringify({"ok": true, "id": "doc-1"}), "doc-1", "JSON contains id")
+print("tdd-project suite passed")

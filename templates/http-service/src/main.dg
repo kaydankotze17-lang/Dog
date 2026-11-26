@@ -1,0 +1,28 @@
+# Official DOG HTTP Service Template
+use "std.net"
+use "std.data"
+use "std.cli"
+
+define route_health() returns text
+    return json_stringify({"status": "ok", "service": "dog-http-template"})
+end
+
+let params = http_route_match("/users/:id", "/users/42")
+assert_eq(map_get(params, "id"), "42", "dynamic route matching")
+
+let srv = http_listen("127.0.0.1:8080")
+cli_success("HTTP service listening on http://127.0.0.1:8080")
+while true
+    let req = http_accept(srv)
+    let path = map_get(req, "path")
+    if path is "/health" then
+        http_reply(req, 200, "application/json", route_health())
+    else
+        let match_user = http_route_match("/users/:id", path)
+        if map_has(match_user, "id") then
+            http_reply(req, 200, "application/json", json_stringify(match_user))
+        else
+            http_reply(req, 404, "application/json", "{\"error\":\"not_found\"}")
+        end
+    end
+end

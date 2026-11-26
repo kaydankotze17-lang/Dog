@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DOG Language Cheat Sheet — Official Reference</title>
+    <meta
+      name="description"
+      content="Complete DOG Programming Language (dog-lang) Cheat Sheet: English, Classic, and Simple syntax styles, structs, enums, pattern matching, lambdas, pipes, SQLite, Ed25519/AES-256, .dgss stylesheets, std.web, diagnostics, and Termux CLI."
+    />
+    <meta property="og:title" content="DOG Language Cheat Sheet — Official Reference" />
+    <meta
+      property="og:description"
+      content="Searchable, printable reference for DOG (.dg & .dgss) across English, Classic, and Simple styles with one-click Playground execution."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a href="/" class="brand-wordmark">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 6L9 3L14 6L19 4L20 12L15 19L9 21L4 14V6Z" stroke="#181A1F" stroke-width="1.8" stroke-linejoin="round" />
+            <path d="M9 3L14 6L12 13L7 11L9 3Z" fill="#C85A11" />
+          </svg>
+          <span>DOG Language</span>
+        </a>
+
+        <nav class="nav-links" aria-label="Primary navigation">
+          <a href="/#stats" class="nav-link">Stats</a>
+          <a href="/#playground" class="nav-link">Playground</a>
+          <a href="/#web-studio" class="nav-link">Web Studio</a>
+          <a href="/cheatsheet" class="nav-link is-current" aria-current="page">Cheat Sheet</a>
+          <a href="/#roadmap" class="nav-link">v1.0 Roadmap</a>
+        </nav>
+
+        <div class="header-actions">
+          <a href="/#install" class="btn btn-primary header-cta">Get Started</a>
+          <button
+            id="mobile-menu-toggle"
+            type="button"
+            class="mobile-menu-btn"
+            aria-label="Toggle navigation menu"
+            aria-expanded="false"
+            aria-controls="mobile-drawer"
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M3 5H17M3 10H17M3 15H17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <nav id="mobile-drawer" class="mobile-drawer" aria-label="Mobile navigation">
+        <a href="/#stats">Live Stats &amp; Adoption</a>
+        <a href="/#syntax">Syntax</a>
+        <a href="/#playground">Playground</a>
+        <a href="/#web-studio">Web Studio</a>
+        <a href="/cheatsheet" aria-current="page">Language Cheat Sheet</a>
+        <a href="/#stdlib">Standard Library</a>
+        <a href="/#install">Install</a>
+        <a href="/#docs">Docs</a>
+        <a href="/#roadmap">v1.0.0 Roadmap (10,150 Ideas)</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="cheatsheet-hero">
+        <div class="container">
+          <div class="cheatsheet-hero-row">
+            <div>
+              <p class="eyebrow-meta">
+                DOG v1.0.0 <span aria-hidden="true">·</span> <code>.dg</code> &amp; <code>.dgss</code> <span aria-hidden="true">·</span> Complete Language Reference
+              </p>
+              <h1 class="cheatsheet-title">DOG Language Cheat Sheet</h1>
+              <p class="cheatsheet-subtitle">
+                Every core construct, 3-style dialect mapping (English, Classic, Simple), pattern matching, lambdas, pipes, SQLite/crypto helpers, <code>.dgss</code> style shorthands, and Termux CLI workflows on one clean, printable page.
+              </p>
+            </div>
+            <div class="cheatsheet-hero-actions">
+              <button type="button" id="cheatsheet-print-btn" class="btn btn-secondary">Print / Save PDF</button>
+              <button type="button" id="cheatsheet-download-md-btn" class="btn btn-secondary">Download .md</button>
+              <a href="/#playground" class="btn btn-accent">Open Playground</a>
+            </div>
+          </div>
+
+          <div class="cheatsheet-controls-bar" role="region" aria-label="Filter cheat sheet">
+            <div class="cheatsheet-search-wrap">
+              <label for="cheatsheet-search" class="sr-only">Search DOG cheat sheet entries</label>
+              <input
+                id="cheatsheet-search"
+                type="search"
+                class="search-field cheatsheet-search-input"
+                placeholder="Search syntax or built-ins (e.g. simple, match, dgss, ed25519, sqlite)..."
+                aria-label="Search DOG cheat sheet entries"
+              />
+              <span id="cheatsheet-count" class="cheatsheet-count-label" aria-live="polite">16 topics</span>
+              <button type="button" id="cheatsheet-reset-btn" class="btn btn-secondary btn-compact is-hidden">Reset</button>
+            </div>
+            <div id="cheatsheet-category-tabs" class="segmented-bar cheatsheet-category-tabs" role="tablist" aria-label="Cheat sheet categories"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section cheatsheet-cards-section">
+        <div class="container">
+          <div id="cheatsheet-cards" class="cheatsheet-cards-grid" role="region" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Quick Comparison &amp; Operator Tables</h2>
+              <p class="section-lead">
+                English Style, Classic Style, and Simple Style compile to the exact same strictly typed runtime. Use one style or mix them cleanly across modules.
+              </p>
+            </div>
+          </div>
+
+          <div class="cheatsheet-tables-grid">
+            <div class="cheatsheet-table-card">
+              <div class="cheatsheet-table-head">
+                <h3>English vs Classic vs Simple Style (12 Core Forms)</h3>
+              </div>
+              <div class="cheatsheet-table-scroll">
+                <table class="cheatsheet-ref-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Concept</th>
+                      <th scope="col">English Style</th>
+                      <th scope="col">Classic Style</th>
+                      <th scope="col">Simple Style</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dialect-table-body"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="cheatsheet-table-card">
+              <div class="cheatsheet-table-head">
+                <h3>Operator Precedence (Highest to Lowest)</h3>
+              </div>
+              <div class="cheatsheet-table-scroll">
+                <table class="cheatsheet-ref-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Level</th>
+                      <th scope="col">Operators</th>
+                      <th scope="col">Behavior</th>
+                    </tr>
+                  </thead>
+                  <tbody id="precedence-table-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <div>
+          <strong>DOG Programming Language</strong> <span aria-hidden="true">·</span> v1.0.0 <span aria-hidden="true">·</span> Apache-2.0 License
+        </div>
+        <div class="footer-links">
+          <a href="/">Home</a>
+          <a href="/#stats">Stats</a>
+          <a href="/#syntax">Syntax</a>
+          <a href="/#playground">Playground</a>
+          <a href="/#web-studio">Web Studio</a>
+          <a href="/cheatsheet" aria-current="page">Cheat Sheet</a>
+          <a href="/#stdlib">Standard Library</a>
+          <a href="/#install">Install</a>
+          <a href="/#docs">Docs</a>
+          <a href="/#roadmap">10,150 Ideas</a>
+        </div>
+      </div>
+    </footer>
+
+    <script type="module" src="/cheatsheet.js"></script>
+  </body>
+</html>

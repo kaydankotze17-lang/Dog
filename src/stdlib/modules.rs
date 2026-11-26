@@ -434,7 +434,7 @@ pub fn render_std_docs(topic: Option<&str>) -> String {
     }
 
     let mut out = String::from(
-        "DOG Standard Library Modules (v0.3.0)\n\
+        "DOG Standard Library Modules (v1.0.0)\n\
          -------------------------------------\n\
          Import with `use \"std.io\"` or call directly via `std.<module>.<fn>(...)`.\n\
          All flat global built-ins remain available without prefixes.\n\n",

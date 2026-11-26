@@ -1,13 +1,13 @@
 {
   "name": "dog-lang-workspace",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "node server.mjs",
     "start": "node server.mjs",
-    "build": "node --check server.mjs && node --check website/sandbox.js && node --check website/dog_web.js && node --check website/data.js && node --check website/app.js",
-    "lint": "node --check server.mjs && node --check website/sandbox.js && node --check website/dog_web.js && node --check website/data.js && node --check website/app.js",
-    "test": "node --test website/sandbox.test.mjs website/dog_web.test.mjs"
+    "build": "node --check server.mjs && node --check website/sandbox.js && node --check website/dog_web.js && node --check website/data.js && node --check website/app.js && node --check website/cheatsheet_engine.mjs && node --check website/cheatsheet.js && node --check website/roadmap_engine.mjs && node --check website/stats_engine.mjs && node --check website/readiness_engine.mjs",
+    "lint": "node --check server.mjs && node --check website/sandbox.js && node --check website/dog_web.js && node --check website/data.js && node --check website/app.js && node --check website/cheatsheet_engine.mjs && node --check website/cheatsheet.js && node --check website/roadmap_engine.mjs && node --check website/stats_engine.mjs && node --check website/readiness_engine.mjs",
+    "test": "node --test website/sandbox.test.mjs website/dog_web.test.mjs website/cheatsheet_engine.test.mjs website/roadmap_engine.test.mjs website/stats_engine.test.mjs website/readiness_engine.test.mjs website/updater.test.mjs"
   }
 }

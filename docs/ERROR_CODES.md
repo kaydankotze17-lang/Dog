@@ -31,3 +31,13 @@ Every DOG diagnostic follows a 4-part structure:
 - `E035`: Explicit runtime error raised via `fail()`
 - `E040`: I/O, module read, or HTTP network error
 - `E041`: Circular module import detected (`use "..."`)
+
+## Compiler Warnings & Hints (`--diagnostics=json`)
+- `W001`: Unreachable statement detected after `return`, `break`, or `continue`
+- `W002`: Constant-foldable expression or redundant condition
+- `W003`: Unused local variable declared without `_` prefix (prefix with `_` to silence)
+- `W101`: Accessibility hint — `<img>` rendered without `alt` attribute
+- `W102`: Accessibility hint — form input rendered without matching `<label>` or `aria-label`
+- `I001`: Web compatibility info — vendor `-webkit-` prefixes emitted automatically
+- `I002`: CSS tree-shaking summary — unused selectors pruned from compiled `.dgss` bundle
+

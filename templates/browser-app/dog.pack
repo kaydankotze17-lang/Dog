@@ -1,0 +1,8 @@
+[package]
+name = "dog-browser-app-template"
+version = "0.1.0"
+edition = "2026"
+entry = "src/app.dg"
+style = "src/style.dgss"
+license = "Apache-2.0"
+description = "Official DOG Web + DOG CSS (.dgss) browser application template"

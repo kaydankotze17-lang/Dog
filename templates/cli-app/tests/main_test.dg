@@ -1,0 +1,8 @@
+use "std.text"
+
+define format_test_badge(label: text) returns text
+    return $"[{upper(trim(label))}]"
+end
+
+assert_eq(format_test_badge("  ready "), "[READY]", "format_test_badge normalizes whitespace and case")
+print("cli-app template tests passed")

@@ -1,0 +1,22 @@
+# Simple-Style Parity Fixture (matches examples/parity_english.dg & examples/parity_classic.dg)
+do classify_score(score, bonus = 5)
+    keep total = score + bonus
+    when total >= 90
+        give $"A:{total}"
+    or when total >= 75
+        give $"B:{total}"
+    else
+        give $"C:{total}"
+    end
+end
+
+make passed = 0
+keep scores = [72, 86, 60]
+each s in scores
+    keep grade = classify_score(s)
+    show grade
+    when s >= 70
+        add 1 to passed
+    end
+end
+show $"Passed={passed}"

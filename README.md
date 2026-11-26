@@ -2,12 +2,13 @@
 
 DOG is a strictly typed, readable, general-purpose programming language implemented in Rust with zero external crate dependencies and zero `unsafe` blocks, built to run natively on Linux, macOS, Windows, and Android Termux (ARMv7 & AArch64).
 
-## Implemented Features (v0.3.0)
+## Implemented Features (v1.0.0)
 
 ### Language Engine (`src/`)
 - **Lexer & Recursive-Descent Parser**: Exact `file:line:col` spans, `"""..."""` multi-line triple-quoted strings, `0x`/`0b` integer literals, `_` numeric separators (`1_000_000`), and `end`-delimited blocks independent of indentation.
+- **Three Interoperable Syntax Styles**: Classic (`fn ... ->`, `let`/`var`), English (`define ... returns`, `set x to v`, `is at least`), and Simple (`do`/`keep`/`make`/`when`/`show`/`give`/`loop`/`bump`), all freely mixable in the same file and lowering to identical ASTs.
 - **Strict Static Type Checker**: Primitives (`text`, `number`, `decimal`, `bool`, `void`), generics (`list<T>`, `map<K, V>`), user-defined `struct` and `enum`, default function parameters (`fn greet(name: text, prefix: text = "Hi") -> text`), return-path verification (`E026`), mutability enforcement (`E012`), and loop bounds checks (`E025`).
-- **Bindings & Modules**: `let` (immutable), `var` (mutable), `const`, optional `: type` annotations, `$"..."` string interpolation, local module imports (`use "path.dg"`) with cycle detection (`E041`), and 10 modular standard library namespaces (`use "std.<mod>"` + direct `std.<mod>.<fn>(...)` calls across `std.io`, `std.text`, `std.math`, `std.files`, `std.net`, `std.system`, `std.data`, `std.crypto`, `std.cli`, `std.collections`).
+- **Bindings & Modules**: `let` / `keep` (immutable), `var` / `make` (mutable), `const`, optional `: type` annotations, `$"..."` string interpolation, local module imports (`use "path.dg"`) with cycle detection (`E041`), and 12 modular standard library namespaces (`use "std.<mod>"` + direct `std.<mod>.<fn>(...)` calls across `std.io`, `std.text`, `std.math`, `std.files`, `std.net`, `std.system`, `std.data`, `std.crypto`, `std.cli`, `std.collections`, `std.css`, `std.web`).
 - **Control Flow & Error Handling**: `if ... [then]` / `otherwise if` (`else if` / `elif`) / `otherwise` (`else`) / `end`, `unless ... [then] ... end`, `match` / `case` / `otherwise` (`else`) / `end`, `try` / `catch err` / `end`, `while`, `until`, `repeat N [times]`, `for [each] ... in ...`, `for [each] i from A to B`, `break`, `continue`, `fn` (`define` / `function`) with `->` or `returns`, and recursion (depth limit 256) with runtime `STACK TRACE:` capture.
 - **Operators & English Comparisons**: `==`, `!=`, `>`, `<`, `>=`, `<=`, natural English comparisons (`is`, `is not`, `equals`, `is equal to`, `is not equal to`, `is greater than`, `is less than`, `is at least`, `is at most`, `is over`, `is under`), `and`, `or`, `not`, `+`, `-`, `*`, `/`, `%`, `+=`, `-=`, `*=`, `/=`, `%=`, English updates (`set x to v`, `increase x by n`, `decrease x by n`), `.` field/enum/module access, `[]` indexing.
 - **Standard Library Built-ins & `std.*` Modules**:

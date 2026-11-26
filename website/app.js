@@ -17,6 +17,8 @@ const KEYWORDS = new Set([
   "most", "over", "under", "fn", "define", "function", "returns",
   "return", "while", "until", "repeat", "times", "for", "each", "from",
   "in", "break", "continue", "true", "false",
+  "keep", "make", "do", "give", "show", "when", "loop", "stop", "skip",
+  "oops", "bump", "add", "take", "check", "null",
 ]);
 
 const TYPES = new Set(["text", "number", "decimal", "bool", "void", "list", "map"]);
@@ -119,6 +121,19 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // Telemetry Session Helper
+  const SESSION_STORAGE_KEY = "dog_site_session_id";
+  let sessionId = "";
+  try {
+    sessionId = window.sessionStorage.getItem(SESSION_STORAGE_KEY) || "";
+    if (!sessionId) {
+      sessionId = `dg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      window.sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+    }
+  } catch {
+    sessionId = `dg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
   // Image fallback handlers
   document.querySelectorAll("img[data-fallback-id]").forEach((img) => {
     img.addEventListener("error", () => {
@@ -126,6 +141,156 @@ document.addEventListener("DOMContentLoaded", () => {
       const fb = document.getElementById(img.dataset.fallbackId);
       if (fb) fb.style.display = "flex";
     });
+  });
+
+  // 01. Live Usage & Community Adoption Stats
+  const statsUpdatedEl = document.getElementById("stats-updated-label");
+  const refreshStatsBtn = document.getElementById("refresh-stats-btn");
+  const statActiveUsersEl = document.getElementById("stat-active-users");
+  const statUniqueVisitorsEl = document.getElementById("stat-unique-visitors");
+  const statTotalVisitsEl = document.getElementById("stat-total-visits");
+  const statPlaygroundRunsEl = document.getElementById("stat-playground-runs");
+  const statWebBuildsEl = document.getElementById("stat-web-builds");
+  const statWebExportsEl = document.getElementById("stat-web-exports");
+  const statsPlatformRowsEl = document.getElementById("stats-platform-rows");
+  const statGhStarsEl = document.getElementById("stat-gh-stars");
+  const statGhForksEl = document.getElementById("stat-gh-forks");
+  const statGhDownloadsEl = document.getElementById("stat-gh-downloads");
+  const statGhDebDownloadsEl = document.getElementById("stat-gh-deb-downloads");
+  const statGhReleaseEl = document.getElementById("stat-gh-release");
+  const statAptVersionEl = document.getElementById("stat-apt-version");
+  const statGhNoteEl = document.getElementById("stat-gh-note");
+  const statRustFilesEl = document.getElementById("stat-rust-files");
+  const statRustLinesEl = document.getElementById("stat-rust-lines");
+  const statExamplesCountEl = document.getElementById("stat-examples-count");
+  const statDocsCountEl = document.getElementById("stat-docs-count");
+  const statIdeasImplEl = document.getElementById("stat-ideas-implemented");
+  const statIdeasPlanEl = document.getElementById("stat-ideas-planned");
+
+  const fmtNum = (val) => (typeof val === "number" && Number.isFinite(val) ? val.toLocaleString("en-US") : "--");
+
+  function renderSiteMetrics(site) {
+    if (!site) return;
+    if (statActiveUsersEl) statActiveUsersEl.textContent = fmtNum(site.activeUsersNow);
+    if (statUniqueVisitorsEl) statUniqueVisitorsEl.textContent = fmtNum(site.uniqueVisitors);
+    if (statTotalVisitsEl) statTotalVisitsEl.textContent = fmtNum(site.totalVisits);
+    if (statPlaygroundRunsEl) statPlaygroundRunsEl.textContent = fmtNum(site.playgroundRuns);
+    if (statWebBuildsEl) statWebBuildsEl.textContent = fmtNum(site.webStudioBuilds);
+    if (statWebExportsEl) statWebExportsEl.textContent = fmtNum(site.webStudioExports);
+
+    if (statsPlatformRowsEl && site.platformCounts) {
+      statsPlatformRowsEl.textContent = "";
+      const entries = Object.entries(site.platformCounts).filter(([, c]) => c > 0);
+      if (entries.length === 0) {
+        const emptyRow = document.createElement("div");
+        emptyRow.className = "stats-breakdown-row";
+        emptyRow.innerHTML = "<span>No sessions recorded yet</span><strong>0</strong>";
+        statsPlatformRowsEl.appendChild(emptyRow);
+      } else {
+        entries
+          .sort((a, b) => b[1] - a[1])
+          .forEach(([platform, count]) => {
+            const row = document.createElement("div");
+            row.className = "stats-breakdown-row";
+            const lbl = document.createElement("span");
+            lbl.textContent = platform;
+            const val = document.createElement("strong");
+            val.textContent = `${fmtNum(count)} session${count === 1 ? "" : "s"}`;
+            row.appendChild(lbl);
+            row.appendChild(val);
+            statsPlatformRowsEl.appendChild(row);
+          });
+      }
+    }
+  }
+
+  function renderFullStats(data) {
+    if (!data) return;
+    renderSiteMetrics(data.site);
+
+    const gh = data.github || {};
+    if (statGhStarsEl) statGhStarsEl.textContent = gh.githubReachable ? fmtNum(gh.stars) : "Offline";
+    if (statGhForksEl) statGhForksEl.textContent = gh.githubReachable ? fmtNum(gh.forks) : "--";
+    if (statGhDownloadsEl) {
+      statGhDownloadsEl.textContent =
+        typeof gh.totalReleaseDownloads === "number" ? fmtNum(gh.totalReleaseDownloads) : "--";
+    }
+    if (statGhDebDownloadsEl) {
+      statGhDebDownloadsEl.textContent =
+        typeof gh.latestDebDownloads === "number"
+          ? fmtNum(gh.latestDebDownloads)
+          : gh.githubReachable
+          ? "0 (pending)"
+          : "--";
+    }
+    if (statGhReleaseEl) statGhReleaseEl.textContent = gh.latestReleaseTag || "--";
+    if (statAptVersionEl) {
+      statAptVersionEl.textContent =
+        gh.aptReachable && gh.aptVersion
+          ? String(gh.aptVersion)
+          : gh.aptReachable
+          ? "Active"
+          : gh.githubReachable
+          ? "Pending"
+          : "--";
+    }
+    if (statGhNoteEl) {
+      if (gh.githubReachable) {
+        const synced = gh.fetchedAt ? new Date(gh.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now";
+        const aptNote = gh.aptReachable ? "Termux APT live." : "Termux APT awaiting gh-pages release.";
+        statGhNoteEl.textContent = `Synced live from GitHub API (${gh.repo}) at ${synced}. ${gh.releaseCount || 0} release(s), ${fmtNum(gh.openIssues)} open issue(s). ${aptNote}`;
+      } else {
+        statGhNoteEl.textContent = `${gh.githubError || "GitHub API unreachable in this sandbox"} — local server usage counters remain active.`;
+      }
+    }
+
+    const cb = data.codebase || {};
+    if (statRustFilesEl) statRustFilesEl.textContent = fmtNum(cb.rustFiles);
+    if (statRustLinesEl) statRustLinesEl.textContent = fmtNum(cb.rustLines);
+    if (statExamplesCountEl) statExamplesCountEl.textContent = fmtNum(cb.exampleFiles);
+    if (statDocsCountEl) statDocsCountEl.textContent = fmtNum(cb.docFiles);
+
+    const rm = data.roadmapSummary || {};
+    const st = rm.countsByStatus || {};
+    if (statIdeasImplEl) statIdeasImplEl.textContent = fmtNum(st.implemented);
+    if (statIdeasPlanEl) {
+      const remaining = typeof st.planned === "number" && typeof st.partial === "number" ? st.planned + st.partial : null;
+      statIdeasPlanEl.textContent = fmtNum(remaining);
+    }
+    if (statsUpdatedEl) {
+      statsUpdatedEl.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+    }
+  }
+
+  async function fetchStatsSnapshot() {
+    try {
+      const res = await fetch("/api/stats");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      renderFullStats(data);
+    } catch {
+      if (statsUpdatedEl) statsUpdatedEl.textContent = "Stats API unavailable";
+    }
+  }
+
+  async function recordSiteEvent(eventName) {
+    try {
+      const res = await fetch("/api/stats/event", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, event: eventName }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.site) renderSiteMetrics(data.site);
+    } catch {
+      // Non-fatal in static preview mode
+    }
+  }
+
+  refreshStatsBtn?.addEventListener("click", () => {
+    if (statsUpdatedEl) statsUpdatedEl.textContent = "Refreshing...";
+    fetchStatsSnapshot();
   });
 
   // 1. Syntax Showcase
@@ -141,6 +306,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function getActiveSyntaxCode() {
     const item = SYNTAX_SHOWCASE[activeTopic];
+    if (activeDialect === "simple") return item.simpleCode || item.englishCode;
     return activeDialect === "english" ? item.englishCode : item.classicCode;
   }
 
@@ -157,7 +323,13 @@ document.addEventListener("DOMContentLoaded", () => {
       btn.classList.toggle("is-active", isMatch);
       btn.setAttribute("aria-selected", String(isMatch));
     });
-    syntaxFileEl.textContent = `${item.file} (${activeDialect === "english" ? "English style" : "Classic style"})`;
+    const dialectLabel =
+      activeDialect === "simple"
+        ? "Simple style"
+        : activeDialect === "english"
+        ? "English style"
+        : "Classic style";
+    syntaxFileEl.textContent = `${item.file} (${dialectLabel})`;
     renderHighlightedCode(syntaxCodeEl, code);
     syntaxNotesEl.textContent = "";
     item.notes.forEach((note) => {
@@ -221,13 +393,16 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!lastSandboxResult) return;
     outputBody.textContent = "";
     if (lastSandboxResult.ok) {
+      const warnCount = Array.isArray(lastSandboxResult.warnings) ? lastSandboxResult.warnings.length : 0;
       outputStatus.className = "output-status is-ok";
-      outputStatus.textContent = `Passed · ${lastSandboxResult.steps} steps · ${lastSandboxResult.elapsedMs} ms`;
+      outputStatus.textContent = `Passed · ${lastSandboxResult.steps} steps · ${lastSandboxResult.elapsedMs} ms${warnCount ? ` · ${warnCount} warning${warnCount === 1 ? "" : "s"}` : ""}`;
       if (activeOutputTab === "console") {
         outputBody.textContent =
           lastSandboxResult.output.length > 0
             ? lastSandboxResult.output.join("\n")
             : "(Program completed with no console output.)";
+      } else if (activeOutputTab === "json") {
+        outputBody.textContent = lastSandboxResult.diagnosticsJson || "{}";
       } else {
         outputBody.textContent =
           lastSandboxResult.astSummary.length > 0
@@ -249,27 +424,32 @@ document.addEventListener("DOMContentLoaded", () => {
           prior.textContent = `Prior output:\n${lastSandboxResult.output.join("\n")}`;
           outputBody.appendChild(prior);
         }
+      } else if (activeOutputTab === "json") {
+        outputBody.textContent = lastSandboxResult.diagnosticsJson || "{}";
       } else {
         outputBody.textContent = lastSandboxResult.astSummary.join("\n") || "Stopped before type trace completion.";
       }
     }
   }
 
-  function executePlayground() {
+  function executePlayground(trackUsage = false) {
     lastSandboxResult = runDogSandbox(editorTextarea.value);
     renderPlaygroundOutput();
+    if (trackUsage) {
+      recordSiteEvent("playground_run");
+    }
   }
 
-  function loadPreset(id) {
+  function loadPreset(id, trackUsage = false) {
     const preset = PLAYGROUND_PRESETS.find((p) => p.id === id) || PLAYGROUND_PRESETS[0];
     presetSelect.value = preset.id;
     editorTextarea.value = preset.code;
-    executePlayground();
+    executePlayground(trackUsage);
   }
 
-  presetSelect.addEventListener("change", () => loadPreset(presetSelect.value));
-  runBtn.addEventListener("click", executePlayground);
-  resetBtn.addEventListener("click", () => loadPreset(presetSelect.value));
+  presetSelect.addEventListener("change", () => loadPreset(presetSelect.value, true));
+  runBtn.addEventListener("click", () => executePlayground(true));
+  resetBtn.addEventListener("click", () => loadPreset(presetSelect.value, false));
   outputTabBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
       activeOutputTab = btn.dataset.outputTab;
@@ -279,12 +459,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   openInPlaygroundBtn?.addEventListener("click", () => {
     editorTextarea.value = getActiveSyntaxCode();
-    executePlayground();
+    executePlayground(true);
     document.getElementById("playground")?.scrollIntoView({ behavior: "smooth" });
   });
 
   // 2.5 Web & CSS Studio
   const webPresetSelect = document.getElementById("web-studio-preset");
+  const webTreeshakeToggle = document.getElementById("web-studio-treeshake-toggle");
+  const webMinifyToggle = document.getElementById("web-studio-minify-toggle");
   const webDgEditor = document.getElementById("web-studio-dg-editor");
   const webDgssEditor = document.getElementById("web-studio-dgss-editor");
   const webBuildBtn = document.getElementById("web-studio-build-btn");
@@ -337,6 +519,10 @@ document.addEventListener("DOMContentLoaded", () => {
       webPreviewWrap.style.display = "none";
       webCodeOutEl.style.display = "block";
       webCodeOutEl.textContent = "";
+      if (activeWebView === "json") {
+        webCodeOutEl.textContent = lastWebBuild.diagnosticsJson || "{}";
+        return;
+      }
       const box = document.createElement("div");
       box.className = "output-error-box";
       box.textContent = lastWebBuild.error;
@@ -345,7 +531,13 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     webStatusEl.className = "output-status is-ok";
-    webStatusEl.textContent = "Built (.dg + .dgss)";
+    const modes = [];
+    if (webTreeshakeToggle?.checked) modes.push("tree-shaken");
+    if (webMinifyToggle?.checked) modes.push("minified");
+    const prunedCount = Array.isArray(lastWebBuild.prunedSelectors) ? lastWebBuild.prunedSelectors.length : 0;
+    webStatusEl.textContent = modes.length
+      ? `Built (${modes.join(" + ")}${prunedCount ? ` · -${prunedCount} unused` : ""})`
+      : "Built (.dg + .dgss)";
 
     if (activeWebView === "preview") {
       webPreviewWrap.style.display = "flex";
@@ -357,19 +549,23 @@ document.addEventListener("DOMContentLoaded", () => {
         webCodeOutEl.textContent = lastWebBuild.css || "/* Empty stylesheet */";
       } else if (activeWebView === "js") {
         webCodeOutEl.textContent = lastWebBuild.js || "// Empty script";
+      } else if (activeWebView === "json") {
+        webCodeOutEl.textContent = lastWebBuild.diagnosticsJson || "{}";
       } else {
         webCodeOutEl.textContent = lastWebBuild.indexHtml;
       }
     }
   }
 
-  function buildWebStudio() {
+  function buildWebStudio(trackUsage = false) {
     if (!webDgEditor || !webDgssEditor || !webPresetSelect) return;
     const preset = WEB_STUDIO_PRESETS.find((p) => p.id === webPresetSelect.value) || WEB_STUDIO_PRESETS[0];
     const result = compileDogWebsite({
       code: webDgEditor.value,
       css: webDgssEditor.value,
       title: preset.title || "DOG Web App",
+      minify: Boolean(webMinifyToggle?.checked),
+      treeShake: Boolean(webTreeshakeToggle?.checked),
     });
     lastWebBuild = result;
     if (result.ok && webIframeEl) {
@@ -379,14 +575,17 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
     renderWebStudioOutput();
+    if (trackUsage) {
+      recordSiteEvent("web_build");
+    }
   }
 
-  function loadWebPreset(id) {
+  function loadWebPreset(id, trackUsage = false) {
     const preset = WEB_STUDIO_PRESETS.find((p) => p.id === id) || WEB_STUDIO_PRESETS[0];
     if (webPresetSelect) webPresetSelect.value = preset.id;
     if (webDgEditor) webDgEditor.value = preset.code;
     if (webDgssEditor) webDgssEditor.value = preset.css;
-    buildWebStudio();
+    buildWebStudio(trackUsage);
   }
 
   webFileTabs.forEach((btn) => {
@@ -403,13 +602,16 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  webPresetSelect?.addEventListener("change", () => loadWebPreset(webPresetSelect.value));
-  webBuildBtn?.addEventListener("click", buildWebStudio);
-  webResetBtn?.addEventListener("click", () => loadWebPreset(webPresetSelect?.value || WEB_STUDIO_PRESETS[0].id));
+  webPresetSelect?.addEventListener("change", () => loadWebPreset(webPresetSelect.value, true));
+  webTreeshakeToggle?.addEventListener("change", () => buildWebStudio(false));
+  webMinifyToggle?.addEventListener("change", () => buildWebStudio(false));
+  webBuildBtn?.addEventListener("click", () => buildWebStudio(true));
+  webResetBtn?.addEventListener("click", () => loadWebPreset(webPresetSelect?.value || WEB_STUDIO_PRESETS[0].id, false));
 
   webDownloadBtn?.addEventListener("click", () => {
-    buildWebStudio();
+    buildWebStudio(false);
     if (!lastWebBuild?.ok) return;
+    recordSiteEvent("web_export");
     const blob = new Blob([lastWebBuild.indexHtml], { type: "text/html;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -584,7 +786,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const copyDocBtn = document.getElementById("copy-doc-btn");
 
   async function loadDocFile(kind, name) {
-    docTitleEl.textContent = `${kind === "doc" ? "docs" : "examples"}/${name}`;
+    const dirLabel = kind === "doc" ? "docs" : kind === "template" ? "templates" : "examples";
+    docTitleEl.textContent = `${dirLabel}/${name}`;
     docContentEl.textContent = "Loading workspace file...";
     docsListEl.querySelectorAll(".doc-item-btn").forEach((b) => {
       b.classList.toggle("is-active", b.dataset.kind === kind && b.dataset.name === name);
@@ -638,6 +841,24 @@ document.addEventListener("DOMContentLoaded", () => {
         docsListEl.appendChild(btn);
       });
 
+      if (Array.isArray(data.templates) && data.templates.length > 0) {
+        const tplLabel = document.createElement("div");
+        tplLabel.className = "doc-group-label";
+        tplLabel.textContent = "Templates (5 official)";
+        docsListEl.appendChild(tplLabel);
+
+        data.templates.forEach((name) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "doc-item-btn";
+          btn.dataset.kind = "template";
+          btn.dataset.name = name;
+          btn.textContent = name;
+          btn.addEventListener("click", () => loadDocFile("template", name));
+          docsListEl.appendChild(btn);
+        });
+      }
+
       if (data.docs?.includes("STANDARD_LIBRARY.md")) {
         loadDocFile("doc", "STANDARD_LIBRARY.md");
       } else if (data.docs?.length) {
@@ -652,12 +873,467 @@ document.addEventListener("DOMContentLoaded", () => {
     copyWithFeedback(copyDocBtn, docContentEl.textContent || "");
   });
 
+  // 08. DOG v1.0.0 — 10,150 Upgrade Ideas Explorer
+  const roadmapScopeLeadEl = document.getElementById("roadmap-scope-lead");
+  const roadmapHowToEl = document.getElementById("roadmap-how-to-use");
+  const roadmapNotesEl = document.getElementById("roadmap-file-notes");
+  const auditTotalEl = document.getElementById("audit-total-count");
+  const auditImplEl = document.getElementById("audit-implemented-count");
+  const auditPartEl = document.getElementById("audit-partial-count");
+  const auditPlanEl = document.getElementById("audit-planned-count");
+  const auditBarImplEl = document.getElementById("audit-bar-implemented");
+  const auditBarPartEl = document.getElementById("audit-bar-partial");
+  const auditBarPlanEl = document.getElementById("audit-bar-planned");
+  const roadmapPartADomainsEl = document.getElementById("roadmap-part-a-domains");
+  const roadmapPartTabsEl = document.getElementById("roadmap-part-tabs");
+  const roadmapPartSummaryEl = document.getElementById("roadmap-part-summary");
+  const roadmapSearchEl = document.getElementById("roadmap-search");
+  const roadmapSubsystemEl = document.getElementById("roadmap-subsystem");
+  const roadmapStatusTabs = document.querySelectorAll("[data-roadmap-status]");
+  const roadmapClearBtn = document.getElementById("roadmap-clear-btn");
+  const roadmapResultSummaryEl = document.getElementById("roadmap-result-summary");
+  const roadmapPageLabelEl = document.getElementById("roadmap-page-label");
+  const roadmapPrevBtn = document.getElementById("roadmap-prev-btn");
+  const roadmapNextBtn = document.getElementById("roadmap-next-btn");
+  const roadmapRowsEl = document.getElementById("roadmap-rows");
+  const roadmapFooterRangeEl = document.getElementById("roadmap-footer-range");
+  const roadmapJumpInput = document.getElementById("roadmap-jump-page");
+  const roadmapJumpBtn = document.getElementById("roadmap-jump-btn");
+
+  const roadmapState = {
+    part: "ALL",
+    subsystem: "ALL",
+    status: "all",
+    q: "",
+    page: 1,
+    limit: 50,
+    initializedMeta: false,
+    partDescriptions: {},
+    totalPages: 1,
+  };
+
+  let roadmapDebounceTimer = null;
+
+  function formatStatusLabel(status) {
+    if (status === "implemented") return "Implemented";
+    if (status === "partial") return "Partial";
+    return "Planned v1.0";
+  }
+
+  function renderRoadmapMeta(data) {
+    if (!data || roadmapState.initializedMeta) return;
+    roadmapState.initializedMeta = true;
+
+    if (roadmapScopeLeadEl && data.meta?.scope) {
+      roadmapScopeLeadEl.textContent = `Version: ${data.meta.version || "planning draft"} · Scope: ${data.meta.scope}`;
+    }
+
+    if (roadmapHowToEl && Array.isArray(data.howToUse) && data.howToUse.length > 0) {
+      roadmapHowToEl.textContent = "";
+      data.howToUse.forEach((rule) => {
+        const li = document.createElement("li");
+        li.textContent = rule.text;
+        roadmapHowToEl.appendChild(li);
+      });
+    }
+
+    if (roadmapNotesEl && Array.isArray(data.meta?.notes)) {
+      roadmapNotesEl.textContent = data.meta.notes.join(" ");
+    }
+
+    const total = data.total || 10150;
+    const cs = data.countsByStatus || { implemented: 0, partial: 0, planned: total };
+    if (auditTotalEl) auditTotalEl.textContent = fmtNum(total);
+    if (auditImplEl) auditImplEl.textContent = fmtNum(cs.implemented);
+    if (auditPartEl) auditPartEl.textContent = fmtNum(cs.partial);
+    if (auditPlanEl) auditPlanEl.textContent = fmtNum(cs.planned);
+
+    const pImpl = ((cs.implemented / total) * 100).toFixed(1);
+    const pPart = ((cs.partial / total) * 100).toFixed(1);
+    const pPlan = Math.max(0, 100 - Number(pImpl) - Number(pPart)).toFixed(1);
+    if (auditBarImplEl) auditBarImplEl.style.width = `${pImpl}%`;
+    if (auditBarPartEl) auditBarPartEl.style.width = `${pPart}%`;
+    if (auditBarPlanEl) auditBarPlanEl.style.width = `${pPlan}%`;
+
+    if (roadmapPartADomainsEl && Array.isArray(data.partADomains)) {
+      roadmapPartADomainsEl.textContent = "";
+      data.partADomains.forEach((dom) => {
+        const div = document.createElement("div");
+        div.className = "part-a-domain-item";
+        const nameEl = document.createElement("span");
+        nameEl.textContent = dom.name;
+        const countEl = document.createElement("span");
+        countEl.className = "part-a-domain-count";
+        countEl.textContent = `${dom.implemented}/${dom.total} done`;
+        div.appendChild(nameEl);
+        div.appendChild(countEl);
+        roadmapPartADomainsEl.appendChild(div);
+      });
+    }
+
+    if (roadmapPartTabsEl && data.countsByPart) {
+      roadmapPartTabsEl.textContent = "";
+      const allBtn = document.createElement("button");
+      allBtn.type = "button";
+      allBtn.className = "tab-btn is-active";
+      allBtn.dataset.roadmapPart = "ALL";
+      allBtn.textContent = `All (${fmtNum(total)})`;
+      allBtn.addEventListener("click", () => {
+        roadmapState.part = "ALL";
+        roadmapState.page = 1;
+        loadRoadmapPage();
+      });
+      roadmapPartTabsEl.appendChild(allBtn);
+
+      Object.values(data.countsByPart).forEach((partObj) => {
+        roadmapState.partDescriptions[partObj.id] = `${partObj.title} (${partObj.range}) — ${partObj.description}`;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "tab-btn";
+        btn.dataset.roadmapPart = partObj.id;
+        btn.textContent = `${partObj.shortLabel} (${fmtNum(partObj.total)})`;
+        btn.addEventListener("click", () => {
+          roadmapState.part = partObj.id;
+          roadmapState.page = 1;
+          loadRoadmapPage();
+        });
+        roadmapPartTabsEl.appendChild(btn);
+      });
+    }
+
+    if (roadmapSubsystemEl && Array.isArray(data.subsystems)) {
+      roadmapSubsystemEl.textContent = "";
+      const allOpt = document.createElement("option");
+      allOpt.value = "ALL";
+      allOpt.textContent = `All Subsystems & Domains (${data.subsystems.length})`;
+      roadmapSubsystemEl.appendChild(allOpt);
+      data.subsystems.forEach((sub) => {
+        const opt = document.createElement("option");
+        opt.value = sub.name;
+        opt.textContent = `${sub.name} (${fmtNum(sub.total)})`;
+        roadmapSubsystemEl.appendChild(opt);
+      });
+    }
+  }
+
+  function updateRoadmapControlsUI(data) {
+    roadmapPartTabsEl?.querySelectorAll("[data-roadmap-part]").forEach((btn) => {
+      const match = btn.dataset.roadmapPart === roadmapState.part;
+      btn.classList.toggle("is-active", match);
+      btn.setAttribute("aria-selected", String(match));
+    });
+
+    roadmapStatusTabs.forEach((btn) => {
+      const match = btn.dataset.roadmapStatus === roadmapState.status;
+      btn.classList.toggle("is-active", match);
+      btn.setAttribute("aria-selected", String(match));
+    });
+
+    if (roadmapPartSummaryEl) {
+      if (roadmapState.part === "ALL") {
+        roadmapPartSummaryEl.textContent =
+          "Showing all 10,150 items across Parts A–G. Filter by Part, Subsystem, Status, or keyword below.";
+      } else {
+        roadmapPartSummaryEl.textContent = roadmapState.partDescriptions[roadmapState.part] || "";
+      }
+    }
+
+    const hasFilters =
+      roadmapState.part !== "ALL" ||
+      roadmapState.subsystem !== "ALL" ||
+      roadmapState.status !== "all" ||
+      roadmapState.q.trim() !== "";
+    if (roadmapClearBtn) {
+      roadmapClearBtn.style.display = hasFilters ? "inline-flex" : "none";
+    }
+
+    if (!data) return;
+    roadmapState.totalPages = data.totalPages || 1;
+    const filteredTotal = data.filteredTotal ?? 0;
+    const page = data.page || 1;
+    const startItem = filteredTotal === 0 ? 0 : (page - 1) * data.limit + 1;
+    const endItem = Math.min(filteredTotal, page * data.limit);
+
+    if (roadmapResultSummaryEl) {
+      roadmapResultSummaryEl.textContent =
+        filteredTotal === data.total
+          ? `Showing ${fmtNum(startItem)}–${fmtNum(endItem)} of ${fmtNum(data.total)} proposals`
+          : `Matched ${fmtNum(filteredTotal)} of ${fmtNum(data.total)} proposals`;
+    }
+    if (roadmapPageLabelEl) {
+      roadmapPageLabelEl.textContent = `Page ${fmtNum(page)} of ${fmtNum(roadmapState.totalPages)}`;
+    }
+    if (roadmapFooterRangeEl) {
+      roadmapFooterRangeEl.textContent =
+        filteredTotal === 0
+          ? "0 matching proposals"
+          : `Showing items ${fmtNum(startItem)}–${fmtNum(endItem)} of ${fmtNum(filteredTotal)}`;
+    }
+    if (roadmapPrevBtn) roadmapPrevBtn.disabled = page <= 1;
+    if (roadmapNextBtn) roadmapNextBtn.disabled = page >= roadmapState.totalPages;
+    if (roadmapJumpInput) {
+      roadmapJumpInput.max = String(roadmapState.totalPages);
+      roadmapJumpInput.value = String(page);
+    }
+  }
+
+  function renderRoadmapRows(data) {
+    if (!roadmapRowsEl) return;
+    roadmapRowsEl.textContent = "";
+    const items = data?.items || [];
+    if (items.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "roadmap-empty-state";
+      const msg = document.createElement("p");
+      msg.textContent = "No v1.0.0 upgrade proposals matched your current search and filter criteria.";
+      const resetAction = document.createElement("button");
+      resetAction.type = "button";
+      resetAction.className = "btn btn-secondary";
+      resetAction.textContent = "Reset Filters";
+      resetAction.addEventListener("click", resetRoadmapFilters);
+      empty.appendChild(msg);
+      empty.appendChild(resetAction);
+      roadmapRowsEl.appendChild(empty);
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+    items.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "roadmap-row";
+
+      const idCol = document.createElement("div");
+      idCol.className = "roadmap-col-id";
+      idCol.textContent = `#${String(item.id).padStart(5, "0")}`;
+      if (String(item.id).padStart(5, "0") !== item.sourceNumber) {
+        const ref = document.createElement("span");
+        ref.className = "roadmap-col-ref";
+        ref.textContent = `txt ${item.sourceNumber}.`;
+        idCol.appendChild(ref);
+      }
+
+      const subCol = document.createElement("div");
+      subCol.className = "roadmap-col-sub";
+      const partSpan = document.createElement("span");
+      partSpan.className = "roadmap-col-part";
+      partSpan.textContent = `Part ${item.part}`;
+      subCol.appendChild(partSpan);
+      subCol.appendChild(document.createTextNode(` · ${item.subsystem}`));
+
+      const titleCol = document.createElement("div");
+      titleCol.className = "roadmap-col-title";
+      titleCol.textContent = item.title;
+      if (item.tag) {
+        const tagSpan = document.createElement("span");
+        tagSpan.className = "roadmap-col-tag";
+        tagSpan.textContent = `[${item.tag}]`;
+        titleCol.appendChild(tagSpan);
+      }
+
+      const statusCol = document.createElement("div");
+      statusCol.className = `roadmap-col-status is-${item.status}`;
+      statusCol.textContent = formatStatusLabel(item.status);
+
+      row.appendChild(idCol);
+      row.appendChild(subCol);
+      row.appendChild(titleCol);
+      row.appendChild(statusCol);
+      frag.appendChild(row);
+    });
+    roadmapRowsEl.appendChild(frag);
+  }
+
+  async function loadRoadmapPage() {
+    if (roadmapRowsEl && !roadmapRowsEl.children.length) {
+      roadmapRowsEl.innerHTML = '<div class="roadmap-empty-state">Loading proposals from DOG_v1.0.0_10150_Upgrade_Ideas.txt...</div>';
+    }
+    const params = new URLSearchParams({
+      q: roadmapState.q.trim(),
+      part: roadmapState.part,
+      subsystem: roadmapState.subsystem,
+      status: roadmapState.status,
+      page: String(roadmapState.page),
+      limit: String(roadmapState.limit),
+    });
+    try {
+      const res = await fetch(`/api/roadmap?${params.toString()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      renderRoadmapMeta(data);
+      updateRoadmapControlsUI(data);
+      renderRoadmapRows(data);
+    } catch (err) {
+      if (roadmapRowsEl) {
+        roadmapRowsEl.textContent = "";
+        const box = document.createElement("div");
+        box.className = "roadmap-empty-state";
+        box.textContent = `Could not load roadmap catalogue (${err.message}). `;
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "btn btn-secondary";
+        retry.textContent = "Retry";
+        retry.addEventListener("click", loadRoadmapPage);
+        box.appendChild(retry);
+        roadmapRowsEl.appendChild(box);
+      }
+    }
+  }
+
+  function resetRoadmapFilters() {
+    roadmapState.part = "ALL";
+    roadmapState.subsystem = "ALL";
+    roadmapState.status = "all";
+    roadmapState.q = "";
+    roadmapState.page = 1;
+    if (roadmapSearchEl) roadmapSearchEl.value = "";
+    if (roadmapSubsystemEl) roadmapSubsystemEl.value = "ALL";
+    loadRoadmapPage();
+  }
+
+  roadmapSearchEl?.addEventListener("input", () => {
+    clearTimeout(roadmapDebounceTimer);
+    roadmapDebounceTimer = setTimeout(() => {
+      roadmapState.q = roadmapSearchEl.value;
+      roadmapState.page = 1;
+      loadRoadmapPage();
+    }, 180);
+  });
+
+  roadmapSubsystemEl?.addEventListener("change", () => {
+    roadmapState.subsystem = roadmapSubsystemEl.value;
+    roadmapState.page = 1;
+    loadRoadmapPage();
+  });
+
+  roadmapStatusTabs.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      roadmapState.status = btn.dataset.roadmapStatus;
+      roadmapState.page = 1;
+      loadRoadmapPage();
+    });
+  });
+
+  roadmapClearBtn?.addEventListener("click", resetRoadmapFilters);
+
+  roadmapPrevBtn?.addEventListener("click", () => {
+    if (roadmapState.page > 1) {
+      roadmapState.page -= 1;
+      loadRoadmapPage();
+    }
+  });
+
+  roadmapNextBtn?.addEventListener("click", () => {
+    if (roadmapState.page < roadmapState.totalPages) {
+      roadmapState.page += 1;
+      loadRoadmapPage();
+    }
+  });
+
+  roadmapJumpBtn?.addEventListener("click", () => {
+    const target = Number(roadmapJumpInput?.value || 1);
+    if (Number.isFinite(target)) {
+      roadmapState.page = Math.min(Math.max(Math.trunc(target), 1), roadmapState.totalPages);
+      loadRoadmapPage();
+    }
+  });
+
+  roadmapJumpInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      roadmapJumpBtn?.click();
+    }
+  });
+
+  const readinessSummaryEl = document.getElementById("readiness-summary-label");
+  const readinessChecksEl = document.getElementById("readiness-checks-list");
+  const readinessSbomMetaEl = document.getElementById("readiness-sbom-meta");
+  const readinessMatrixEl = document.getElementById("readiness-matrix-list");
+
+  async function loadReadinessGate() {
+    if (!readinessChecksEl) return;
+    try {
+      const res = await fetch("/api/readiness");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      if (readinessSummaryEl) {
+        readinessSummaryEl.textContent = `${data.passedCount}/${data.totalChecks} release checks passed for v${data.version} (${data.gatePassed ? "v1.0.0 Release Gate Green" : "Attention Needed"})`;
+      }
+
+      readinessChecksEl.textContent = "";
+      (data.checks || []).forEach((chk) => {
+        const row = document.createElement("div");
+        row.className = `readiness-check-row ${chk.passed ? "is-ok" : "is-err"}`;
+        const left = document.createElement("div");
+        const title = document.createElement("div");
+        title.className = "readiness-check-title";
+        title.textContent = chk.label;
+        const detail = document.createElement("div");
+        detail.className = "readiness-check-detail";
+        detail.textContent = chk.detail;
+        left.appendChild(title);
+        left.appendChild(detail);
+
+        const badge = document.createElement("span");
+        badge.className = `readiness-check-status ${chk.passed ? "is-ok" : "is-err"}`;
+        badge.textContent = chk.passed ? "PASS" : "FAIL";
+        row.appendChild(left);
+        row.appendChild(badge);
+        readinessChecksEl.appendChild(row);
+      });
+
+      if (readinessSbomMetaEl && data.sbom) {
+        const s = data.sbom;
+        readinessSbomMetaEl.textContent = `${s.specFormat} · ${s.packageName} v${s.packageVersion} · ${s.license} · ${s.externalRustCrates} Rust crates · ${s.unsafeBlocksInCore} unsafe blocks · ${s.rustModuleInventoryCount} core modules`;
+      }
+
+      if (readinessMatrixEl && Array.isArray(data.compatibilityMatrix)) {
+        readinessMatrixEl.textContent = "";
+        data.compatibilityMatrix.forEach((target) => {
+          const row = document.createElement("div");
+          row.className = "readiness-matrix-row";
+          const osEl = document.createElement("span");
+          osEl.textContent = `${target.os} (${target.arch})`;
+          const pkgEl = document.createElement("span");
+          pkgEl.className = "readiness-matrix-pkg";
+          pkgEl.textContent = `${target.tier} · ${target.packaging}`;
+          row.appendChild(osEl);
+          row.appendChild(pkgEl);
+          readinessMatrixEl.appendChild(row);
+        });
+      }
+    } catch (err) {
+      if (readinessSummaryEl) readinessSummaryEl.textContent = `Could not load readiness report (${err.message}).`;
+    }
+  }
+
   // Initialize all sections
+  const urlParams = new URLSearchParams(window.location.search);
+  const queryCode = urlParams.get("code");
+  const queryPreset = urlParams.get("preset");
+
   renderSyntaxShowcase();
-  loadPreset("english_tour");
+  if (queryCode && editorTextarea) {
+    editorTextarea.value = queryCode;
+    executePlayground(false);
+  } else if (queryPreset) {
+    loadPreset(queryPreset, false);
+  } else {
+    loadPreset("english_tour", false);
+  }
   renderWebFileEditor();
-  loadWebPreset(WEB_STUDIO_PRESETS[0].id);
+  loadWebPreset(WEB_STUDIO_PRESETS[0].id, false);
   renderStdlib();
   renderInstall();
   initWorkspaceBrowser();
+  loadReadinessGate();
+  loadRoadmapPage();
+
+  // Record real visit + fetch full live stats + maintain heartbeat while visible
+  recordSiteEvent("visit").then(fetchStatsSnapshot);
+  setInterval(() => {
+    if (document.visibilityState === "visible") {
+      recordSiteEvent("heartbeat");
+    }
+  }, 60_000);
 });

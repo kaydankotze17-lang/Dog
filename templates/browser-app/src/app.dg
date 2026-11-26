@@ -1,0 +1,16 @@
+# Official DOG Browser App Template (.dg + .dgss)
+use "std.web"
+
+var count = 0
+
+define on_increment() returns void
+    increase count by 1
+    dom_set_text("#counter-val", text(count))
+    dom_set_text("#status", $"Updated count to {count}")
+end
+
+let nav = web_nav("DOG Browser App", {"Home": "#top", "Form": "#signup"})
+let card = web_card("Interactive Counter", $"Count: <strong id=\\"counter-val\\">{count}</strong><div style=\\"margin-top:12px;\\">{web_button("inc-btn", "Increment")}</div>")
+let banner = web_alert("Ready", "Interactive DOM wired via DOG std.web.", "info")
+dom_mount("#app", html_el("main", {"class": "dg-shell"}, $"{nav}{card}{banner}"))
+dom_on("#inc-btn", "click", "on_increment")

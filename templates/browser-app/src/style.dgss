@@ -1,0 +1,34 @@
+# Official DOG Style Sheet (.dgss)
+vars
+    bg: #F7F6F2
+    surface: #FFFFFF
+    ink: #181A1F
+    accent: #C85A11
+    border: #E2DFD7
+end
+
+rule body
+    m: 0
+    bg: $bg
+    ink: $ink
+    font: system-ui, sans-serif
+end
+
+rule .dg-shell
+    max-w: 680px
+    mx: auto
+    pad: 20px
+    flex: col
+    gap: 16px
+end
+
+rule .dg-btn
+    bg: $accent
+    ink: #FFFFFF
+    border: none
+    radius: 6px
+    py: 8px
+    px: 14px
+    weight: 600
+    cursor: pointer
+end

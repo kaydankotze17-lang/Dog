@@ -33,11 +33,11 @@
         </a>
 
         <nav class="nav-links" aria-label="Primary navigation">
-          <a href="#syntax" class="nav-link">Syntax</a>
+          <a href="#stats" class="nav-link">Stats</a>
           <a href="#playground" class="nav-link">Playground</a>
           <a href="#web-studio" class="nav-link">Web Studio</a>
-          <a href="#stdlib" class="nav-link">Stdlib</a>
-          <a href="#install" class="nav-link">Install</a>
+          <a href="/cheatsheet" class="nav-link">Cheat Sheet</a>
+          <a href="#roadmap" class="nav-link">v1.0 Roadmap</a>
         </nav>
 
         <div class="header-actions">
@@ -58,12 +58,15 @@
       </div>
 
       <nav id="mobile-drawer" class="mobile-drawer" aria-label="Mobile navigation">
+        <a href="#stats">Live Stats &amp; Adoption</a>
         <a href="#syntax">Syntax</a>
         <a href="#playground">Playground</a>
         <a href="#web-studio">Web Studio</a>
+        <a href="/cheatsheet">Language Cheat Sheet</a>
         <a href="#stdlib">Standard Library</a>
         <a href="#install">Install</a>
         <a href="#docs">Docs</a>
+        <a href="#roadmap">v1.0.0 Roadmap (10,150 Ideas)</a>
       </nav>
     </header>
 
@@ -73,7 +76,7 @@
           <div class="hero-grid">
             <div class="hero-copy">
               <p class="eyebrow-meta">
-                DOG v0.3.0 <span aria-hidden="true">·</span> Zero-Unsafe Rust Core <span aria-hidden="true">·</span> Linux, macOS, Windows &amp; Android Termux
+                DOG v1.0.0 <span aria-hidden="true">·</span> Zero-Unsafe Rust Core <span aria-hidden="true">·</span> Linux, macOS, Windows &amp; Android Termux
               </p>
               <h1 class="hero-title">Code that reads like English. Safety that compiles cleanly.</h1>
               <p class="hero-subtitle">
@@ -121,9 +124,148 @@
               <p class="proof-label">Discoverable std.* modules</p>
             </div>
             <div class="proof-item">
-              <p class="proof-value">237</p>
-              <p class="proof-label">Strictly typed built-in functions</p>
+              <p class="proof-value">10,150</p>
+              <p class="proof-label">v1.0.0 upgrade ideas audited</p>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="stats" class="section">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">01. Live Usage &amp; Community Adoption</h2>
+              <p class="section-lead">
+                Real server-tracked visitors, interactive sandbox &amp; Web Studio activity on this host, plus live public GitHub &amp; Termux APT release metrics.
+              </p>
+            </div>
+            <div class="stats-header-actions">
+              <span id="stats-updated-label" class="stats-updated-text">Loading live telemetry...</span>
+              <button type="button" id="refresh-stats-btn" class="btn btn-secondary">Refresh Stats</button>
+            </div>
+          </div>
+
+          <div class="stats-dashboard-grid">
+            <article class="stats-panel" aria-labelledby="stats-site-heading">
+              <div class="stats-panel-head">
+                <h3 id="stats-site-heading" class="stats-panel-title">Live Website &amp; Tooling</h3>
+                <span class="stats-panel-source">Persisted Server Telemetry</span>
+              </div>
+              <div class="stats-kpi-grid">
+                <div class="stats-kpi">
+                  <div id="stat-active-users" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">Active users now (3m window)</div>
+                </div>
+                <div class="stats-kpi">
+                  <div id="stat-unique-visitors" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">Unique browser sessions</div>
+                </div>
+                <div class="stats-kpi">
+                  <div id="stat-total-visits" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">Total page visits</div>
+                </div>
+                <div class="stats-kpi">
+                  <div id="stat-playground-runs" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">Playground runs executed</div>
+                </div>
+                <div class="stats-kpi">
+                  <div id="stat-web-builds" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">Web Studio builds</div>
+                </div>
+                <div class="stats-kpi">
+                  <div id="stat-web-exports" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">HTML exports downloaded</div>
+                </div>
+              </div>
+              <div class="stats-subblock">
+                <div class="stats-subblock-title">Visitor Platforms (Observed User-Agents)</div>
+                <div id="stats-platform-rows" class="stats-breakdown-list">
+                  <div class="stats-breakdown-row"><span>Loading platform metrics...</span><span>--</span></div>
+                </div>
+              </div>
+            </article>
+
+            <article class="stats-panel" aria-labelledby="stats-github-heading">
+              <div class="stats-panel-head">
+                <h3 id="stats-github-heading" class="stats-panel-title">GitHub &amp; Termux APT</h3>
+                <a
+                  href="https://github.com/kaydankotze17-lang/Dog"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="stats-panel-link"
+                >kaydankotze17-lang/Dog</a>
+              </div>
+              <div class="stats-kpi-grid">
+                <div class="stats-kpi">
+                  <div id="stat-gh-stars" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">GitHub stars</div>
+                </div>
+                <div class="stats-kpi">
+                  <div id="stat-gh-forks" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">Repository forks</div>
+                </div>
+                <div class="stats-kpi">
+                  <div id="stat-gh-downloads" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">Release asset downloads</div>
+                </div>
+                <div class="stats-kpi">
+                  <div id="stat-gh-deb-downloads" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">Latest .deb downloads</div>
+                </div>
+                <div class="stats-kpi">
+                  <div id="stat-gh-release" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">Latest GitHub release</div>
+                </div>
+                <div class="stats-kpi">
+                  <div id="stat-apt-version" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">Termux APT version</div>
+                </div>
+              </div>
+              <div class="stats-subblock">
+                <div class="stats-subblock-title">Upstream Sync Status</div>
+                <p id="stat-gh-note" class="stats-note-text">Checking GitHub API and Termux APT pages...</p>
+              </div>
+            </article>
+
+            <article class="stats-panel" aria-labelledby="stats-codebase-heading">
+              <div class="stats-panel-head">
+                <h3 id="stats-codebase-heading" class="stats-panel-title">Codebase &amp; v1.0 Audit</h3>
+                <a href="#roadmap" class="stats-panel-link">Inspect 10,150 items</a>
+              </div>
+              <div class="stats-kpi-grid">
+                <div class="stats-kpi">
+                  <div id="stat-rust-files" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">Rust source modules</div>
+                </div>
+                <div class="stats-kpi">
+                  <div id="stat-rust-lines" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">Lines of Rust core</div>
+                </div>
+                <div class="stats-kpi">
+                  <div id="stat-examples-count" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">Shipped .dg / .dgss examples</div>
+                </div>
+                <div class="stats-kpi">
+                  <div id="stat-docs-count" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">Specification &amp; doc files</div>
+                </div>
+                <div class="stats-kpi">
+                  <div id="stat-ideas-implemented" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">v1.0 ideas shipped in v1.0.0</div>
+                </div>
+                <div class="stats-kpi">
+                  <div id="stat-ideas-planned" class="stats-kpi-value">--</div>
+                  <div class="stats-kpi-label">Planned / partial items</div>
+                </div>
+              </div>
+              <div class="stats-subblock">
+                <div class="stats-subblock-title">Interactive Counter Feedback</div>
+                <p class="stats-note-text">
+                  Run code in <a href="#playground" class="inline-accent-link">Playground</a> or build in <a href="#web-studio" class="inline-accent-link">Web Studio</a> to watch live usage increment immediately.
+                </p>
+              </div>
+            </article>
           </div>
         </div>
       </section>
@@ -132,9 +274,9 @@
         <div class="container">
           <div class="section-header">
             <div>
-              <h2 class="section-title">01. Natural Syntax, Strict Guarantees</h2>
+              <h2 class="section-title">02. Natural Syntax, Strict Guarantees</h2>
               <p class="section-lead">
-                Read and write natural English phrases or concise classic syntax—both lower to the exact same strictly typed AST and Rust transpiler.
+                Write natural English phrases, concise classic syntax, or ultra-short Simple Style (<code>keep</code>, <code>make</code>, <code>do</code>, <code>when</code>, <code>show</code>)—all three share one strictly typed runtime and are freely mixable.
               </p>
             </div>
             <div class="segmented-bar" role="tablist" aria-label="Syntax dialect comparison">
@@ -143,6 +285,9 @@
               </button>
               <button type="button" class="tab-btn" data-syntax-dialect="classic" role="tab" aria-selected="false">
                 Classic Style
+              </button>
+              <button type="button" class="tab-btn" data-syntax-dialect="simple" role="tab" aria-selected="false">
+                Simple Style
               </button>
             </div>
           </div>
@@ -196,7 +341,7 @@
         <div class="container">
           <div class="section-header">
             <div>
-              <h2 class="section-title">02. Live Browser Playground</h2>
+              <h2 class="section-title">03. Live Browser Playground</h2>
               <p class="section-lead">
                 Run DOG syntax directly in your browser with strict type checks, English control flow, string interpolation, and structured diagnostics.
               </p>
@@ -244,6 +389,9 @@
                   <button type="button" class="tab-btn" data-output-tab="ast" role="tab" aria-selected="false">
                     Declarations &amp; Types
                   </button>
+                  <button type="button" class="tab-btn" data-output-tab="json" role="tab" aria-selected="false">
+                    JSON Diagnostics
+                  </button>
                 </div>
                 <span id="playground-status" class="output-status">Ready</span>
               </div>
@@ -257,7 +405,7 @@
         <div class="container">
           <div class="section-header">
             <div>
-              <h2 class="section-title">03. DOG Web &amp; CSS Studio</h2>
+              <h2 class="section-title">04. DOG Web &amp; CSS Studio</h2>
               <p class="section-lead">
                 Write interactive browser logic in <code>.dg</code> (DOM events, state, localStorage) and style it with DOG CSS (<code>.dgss</code>) using clean shorthands like <code>bg:</code>, <code>ink:</code>, <code>pad:</code>, and <code>on hover</code>.
               </p>
@@ -277,6 +425,14 @@
               ></select>
             </div>
             <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <label class="web-minify-toggle" for="web-studio-treeshake-toggle">
+                <input id="web-studio-treeshake-toggle" type="checkbox" />
+                <span>Tree-Shake CSS</span>
+              </label>
+              <label class="web-minify-toggle" for="web-studio-minify-toggle">
+                <input id="web-studio-minify-toggle" type="checkbox" />
+                <span>Minify CSS</span>
+              </label>
               <button type="button" id="web-studio-reset-btn" class="btn btn-secondary">Reset</button>
               <button type="button" id="web-studio-download-btn" class="btn btn-secondary">Export index.html</button>
               <button type="button" id="web-studio-build-btn" class="btn btn-accent">Build &amp; Preview</button>
@@ -326,6 +482,9 @@
                   <button type="button" class="tab-btn" data-web-view="html" role="tab" aria-selected="false" title="Standalone index.html bundle">
                     HTML
                   </button>
+                  <button type="button" class="tab-btn" data-web-view="json" role="tab" aria-selected="false" title="Structured JSON diagnostics">
+                    JSON
+                  </button>
                 </div>
                 <span id="web-studio-status" class="output-status">Ready</span>
               </div>
@@ -335,7 +494,7 @@
                   id="web-studio-iframe"
                   class="web-preview-iframe"
                   title="Compiled DOG Website Live Preview"
-                  sandbox="allow-scripts"
+                  sandbox="allow-scripts allow-forms"
                 ></iframe>
                 <div id="web-studio-log-line" class="web-studio-log" aria-live="polite">
                   Preview Console: ready (interact with the compiled site above).
@@ -351,7 +510,7 @@
         <div class="container">
           <div class="section-header">
             <div>
-              <h2 class="section-title">04. Modular Standard Library</h2>
+              <h2 class="section-title">05. Modular Standard Library</h2>
               <p class="section-lead">
                 12 clean namespaces covering interactive browser DOM &amp; DOG CSS, terminal UI, HTTP/WebSockets, JSON/TOML/CSV, SHA-256 cryptography, and local KV persistence.
               </p>
@@ -412,7 +571,7 @@
         <div class="container">
           <div class="section-header">
             <div>
-              <h2 class="section-title">05. Install &amp; CLI Toolchain</h2>
+              <h2 class="section-title">06. Install &amp; CLI Toolchain</h2>
               <p class="section-lead">
                 Install prebuilt Termux APT packages in seconds or compile from source on desktop and mobile hosts.
               </p>
@@ -445,7 +604,7 @@
         <div class="container">
           <div class="section-header">
             <div>
-              <h2 class="section-title">06. Official Documentation &amp; Examples</h2>
+              <h2 class="section-title">07. Official Documentation &amp; Examples</h2>
               <p class="section-lead">
                 Browse the live specification, error code reference, capability catalog, and real `.dg` examples straight from the repository.
               </p>
@@ -466,19 +625,191 @@
           </div>
         </div>
       </section>
+
+      <section id="roadmap" class="section">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">08. DOG v1.0.0 — 10,150 Upgrade Ideas Catalogue</h2>
+              <p id="roadmap-scope-lead" class="section-lead">
+                Complete proposal catalogue across language, compiler, runtime, standard library, updater, tooling, web, security, portability, ecosystem, and release quality — audited against DOG v1.0.0.
+              </p>
+            </div>
+            <div class="roadmap-header-actions">
+              <a
+                href="/assets/aistudio/DOG_v1.0.0_10150_Upgrade_Ideas_89683764.txt"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="btn btn-secondary"
+              >View Raw .txt</a>
+              <a
+                href="/assets/aistudio/DOG_v1.0.0_10150_Upgrade_Ideas_89683764.txt?download=1"
+                class="btn btn-primary"
+              >Download .txt</a>
+            </div>
+          </div>
+
+          <div id="readiness-gate-card" class="readiness-gate-card" aria-labelledby="readiness-gate-heading">
+            <div class="readiness-gate-head">
+              <div>
+                <h3 id="readiness-gate-heading" class="roadmap-card-heading" style="margin-bottom: 4px;">
+                  v1.0.0 Release Readiness, SBOM &amp; Verification Gate
+                </h3>
+                <p id="readiness-summary-label" class="readiness-summary-text">
+                  Checking workspace documentation, zero-unsafe SBOM, templates, syntax parity, and OS targets...
+                </p>
+              </div>
+              <a
+                href="/api/readiness?download=1"
+                download="dog-v1-readiness-sbom.json"
+                class="btn btn-secondary btn-compact"
+              >Download SBOM &amp; Readiness JSON</a>
+            </div>
+            <div class="readiness-gate-grid">
+              <div id="readiness-checks-list" class="readiness-checks-list">
+                <div class="readiness-check-row"><span>Running verification checks...</span><span>--</span></div>
+              </div>
+              <div class="readiness-sbom-box">
+                <div id="readiness-sbom-meta" class="readiness-sbom-meta">Loading SBOM metadata...</div>
+                <div id="readiness-matrix-list" class="readiness-matrix-list"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="roadmap-intro-grid">
+            <div class="roadmap-guide-card">
+              <h3 class="roadmap-card-heading">How to Use This File</h3>
+              <ol id="roadmap-how-to-use" class="roadmap-rules-list">
+                <li>Verify each idea against DOG v0.3.0 and the current source tree.</li>
+                <li>Mark existing functionality as implemented rather than rebuilding it.</li>
+                <li>Promote only tested, scoped work into the v1.0.0 release plan.</li>
+                <li>Keep experimental features out of the stable compatibility promise unless they are ready.</li>
+                <li>Prioritize correctness, updater reliability, reproducible builds, and cross-platform tests.</li>
+              </ol>
+              <p id="roadmap-file-notes" class="roadmap-meta-note"></p>
+            </div>
+
+            <div class="roadmap-audit-card">
+              <h3 class="roadmap-card-heading">v1.0.0 Verification Summary</h3>
+              <div class="audit-metrics-row">
+                <div class="audit-metric">
+                  <div id="audit-total-count" class="audit-metric-val">10,150</div>
+                  <div class="audit-metric-lbl">Total proposals</div>
+                </div>
+                <div class="audit-metric">
+                  <div id="audit-implemented-count" class="audit-metric-val is-ok">--</div>
+                  <div class="audit-metric-lbl">Implemented in v1.0.0</div>
+                </div>
+                <div class="audit-metric">
+                  <div id="audit-partial-count" class="audit-metric-val is-warn">--</div>
+                  <div class="audit-metric-lbl">Partial / foundation</div>
+                </div>
+                <div class="audit-metric">
+                  <div id="audit-planned-count" class="audit-metric-val">--</div>
+                  <div class="audit-metric-lbl">Future roadmap</div>
+                </div>
+              </div>
+              <div class="audit-bar-track" aria-hidden="true">
+                <div id="audit-bar-implemented" class="audit-bar-seg is-ok" style="width: 0%;"></div>
+                <div id="audit-bar-partial" class="audit-bar-seg is-warn" style="width: 0%;"></div>
+                <div id="audit-bar-planned" class="audit-bar-seg is-planned" style="width: 100%;"></div>
+              </div>
+              <div id="roadmap-part-a-domains" class="part-a-domain-strip"></div>
+            </div>
+          </div>
+
+          <div id="roadmap-part-tabs" class="segmented-bar roadmap-part-tabs" role="tablist" aria-label="Roadmap parts A through G"></div>
+
+          <p id="roadmap-part-summary" class="roadmap-part-desc"></p>
+
+          <div class="roadmap-filters-bar">
+            <div class="roadmap-filter-group">
+              <label for="roadmap-search" class="sr-only">Search 10,150 upgrade ideas</label>
+              <input
+                id="roadmap-search"
+                type="search"
+                class="search-field roadmap-search-input"
+                placeholder="Search 10,150 ideas (e.g. atomic, lexer, #00151)..."
+                aria-label="Search all 10,150 proposals"
+              />
+
+              <label for="roadmap-subsystem" class="sr-only">Filter by subsystem or category</label>
+              <select
+                id="roadmap-subsystem"
+                class="search-field roadmap-select"
+                aria-label="Filter proposals by subsystem or domain"
+              >
+                <option value="ALL">All Subsystems &amp; Domains</option>
+              </select>
+            </div>
+
+            <div class="roadmap-filter-group">
+              <div id="roadmap-status-tabs" class="segmented-bar" role="tablist" aria-label="Filter by v1.0.0 status">
+                <button type="button" class="tab-btn is-active" data-roadmap-status="all" role="tab" aria-selected="true">All</button>
+                <button type="button" class="tab-btn" data-roadmap-status="implemented" role="tab" aria-selected="false">Implemented</button>
+                <button type="button" class="tab-btn" data-roadmap-status="partial" role="tab" aria-selected="false">Partial</button>
+                <button type="button" class="tab-btn" data-roadmap-status="planned" role="tab" aria-selected="false">Planned</button>
+              </div>
+              <button type="button" id="roadmap-clear-btn" class="btn btn-secondary" style="display: none;">Reset Filters</button>
+            </div>
+          </div>
+
+          <div class="roadmap-table-card">
+            <div class="roadmap-table-meta">
+              <span id="roadmap-result-summary">Loading 10,150 upgrade ideas...</span>
+              <div class="roadmap-pagination" aria-label="Roadmap pagination">
+                <button type="button" id="roadmap-prev-btn" class="btn btn-secondary btn-compact" disabled>Previous</button>
+                <span id="roadmap-page-label" class="roadmap-page-indicator">Page 1 of 1</span>
+                <button type="button" id="roadmap-next-btn" class="btn btn-secondary btn-compact" disabled>Next</button>
+              </div>
+            </div>
+
+            <div class="roadmap-table-header" aria-hidden="true">
+              <span># / Ref</span>
+              <span>Part &amp; Subsystem</span>
+              <span>Upgrade Proposal</span>
+              <span>v1.0.0 Audit</span>
+            </div>
+
+            <div id="roadmap-rows" class="roadmap-rows" role="region" aria-live="polite"></div>
+
+            <div class="roadmap-table-meta roadmap-table-footer">
+              <span id="roadmap-footer-range">Showing items 1–50 of 10,150</span>
+              <div class="roadmap-pagination">
+                <label for="roadmap-jump-page" class="roadmap-jump-label">Go to page</label>
+                <input
+                  id="roadmap-jump-page"
+                  type="number"
+                  min="1"
+                  max="203"
+                  value="1"
+                  class="search-field roadmap-jump-input"
+                  aria-label="Jump to page number"
+                />
+                <button type="button" id="roadmap-jump-btn" class="btn btn-secondary btn-compact">Go</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
 
     <footer class="site-footer">
       <div class="container footer-inner">
         <div>
-          <strong>DOG Programming Language</strong> <span aria-hidden="true">·</span> v0.3.0 <span aria-hidden="true">·</span> MIT License
+          <strong>DOG Programming Language</strong> <span aria-hidden="true">·</span> v1.0.0 <span aria-hidden="true">·</span> Apache-2.0 License
         </div>
         <div class="footer-links">
+          <a href="#stats">Stats</a>
           <a href="#syntax">Syntax</a>
           <a href="#playground">Playground</a>
+          <a href="#web-studio">Web Studio</a>
+          <a href="/cheatsheet">Cheat Sheet</a>
           <a href="#stdlib">Standard Library</a>
           <a href="#install">Install</a>
           <a href="#docs">Docs</a>
+          <a href="#roadmap">10,150 Ideas</a>
+          <a href="/assets/aistudio/DOG_v1.0.0_10150_Upgrade_Ideas_89683764.txt" target="_blank" rel="noopener noreferrer">Raw .txt</a>
           <a href="https://github.com/kaydankotze17-lang/Dog" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
         </div>
       </div>

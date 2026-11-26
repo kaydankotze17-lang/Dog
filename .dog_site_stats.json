@@ -1,0 +1,55 @@
+{
+  "startedAt": "2026-11-24T11:00:33.426Z",
+  "totalVisits": 25,
+  "playgroundRuns": 18,
+  "webStudioBuilds": 14,
+  "webStudioExports": 0,
+  "knownSessions": [
+    "dg_mwul2xtk_b8yrz6",
+    "dg_mwul4m7r_xx0mlt",
+    "dg_mww3jkid_lxzxqe",
+    "dg_mww3us6u_u3erf4",
+    "dg_mww3v5qe_zo3q1h",
+    "dg_mww3vg66_k29al3",
+    "dg_mww3w6nr_ymqym5",
+    "dg_mww3wqyh_rc3y5i",
+    "dg_mww3ydwx_ns9eo4",
+    "dg_mww3yvjt_ydwujl",
+    "dg_mww3z1zo_adzqo9",
+    "dg_mww3zfc8_b1cj93",
+    "dg_mww3zkvl_i6elxs",
+    "dg_mww531bx_73a5gw",
+    "dg_mww53lts_hw126h",
+    "dg_mwwgfusd_kow7u8",
+    "dg_mwwgsrz4_no5hb4",
+    "dg_mwx9styc_yt0qj3",
+    "dg_mwxa678j_io0dzt",
+    "dg_mwxa6kzx_o1s39i",
+    "dg_mwxa7l0r_9ovd5n",
+    "dg_mwxafmn1_ub4r5c",
+    "dg_mwxagatk_ol8z0d"
+  ],
+  "activeSessions": {
+    "dg_mwx9styc_yt0qj3": {
+      "lastSeenMs": 1795681484772,
+      "platform": "Android / Termux"
+    },
+    "dg_mwxafmn1_ub4r5c": {
+      "lastSeenMs": 1795681565078,
+      "platform": "Linux"
+    },
+    "dg_mwxagatk_ol8z0d": {
+      "lastSeenMs": 1795681609042,
+      "platform": "Linux"
+    }
+  },
+  "platformCounts": {
+    "Android / Termux": 4,
+    "Linux": 19,
+    "macOS": 0,
+    "Windows": 0,
+    "iOS": 0,
+    "Other": 0
+  },
+  "lastEventAt": "2026-11-26T08:26:49.042Z"
+}

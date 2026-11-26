@@ -1,0 +1,22 @@
+# Classic-Style Parity Fixture (matches examples/parity_english.dg)
+fn classify_score(score: number, bonus: number = 5) -> text
+    let total = score + bonus
+    if total >= 90
+        return $"A:{total}"
+    otherwise if total >= 75
+        return $"B:{total}"
+    otherwise
+        return $"C:{total}"
+    end
+end
+
+var passed = 0
+let scores = [72, 86, 60]
+for each s in scores
+    let grade = classify_score(s)
+    say(grade)
+    if not (s < 70)
+        passed += 1
+    end
+end
+say($"Passed={passed}")
